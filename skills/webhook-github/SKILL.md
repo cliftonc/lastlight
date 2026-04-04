@@ -77,6 +77,7 @@ Use the right tool for the job:
 - **GitHub API calls** (comments, labels, PRs, issues): always use `mcp_github_*` tools. Never use `gh` CLI, `curl`, or raw HTTP requests for these.
 - **Building features** (reading code, editing files, running tests): clone the repo and work locally via terminal. This is much faster than reading files one-by-one through MCP.
 - **Git auth**: always call `mcp_github_setup_git_auth` before cloning or pushing.
+- **Be fast**: webhook sessions have a timeout (default 30 min). Don't over-explore. Read what you need, make the changes, test, push.
 
 ## Always Ignore
 
