@@ -1,0 +1,34 @@
+services:
+  agent:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./secrets:/opt/lastlight/secrets:ro
+      - agent-state:/opt/lastlight/sessions
+      - agent-logs:/opt/lastlight/logs
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    networks:
+      - internal
+
+volumes:
+  agent-state:
+  agent-logs:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:

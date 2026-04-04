@@ -1,0 +1,69 @@
+# Secrets — never bake into the image
+.env
+*.pem
+secrets/
+.gh-token
+.github-token-cache.json
+auth.json
+auth.lock
+
+# Runtime state
+sessions/
+logs/
+memories/
+cache/
+checkpoints/
+sandboxes/
+pairing/
+hooks/
+
+# Git & editor
+.git/
+.gitignore
+.DS_Store
+.vscode/
+
+# Dependencies (rebuilt in image)
+mcp-github-app/node_modules/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Bundled Hermes skills (agent installs its own)
+skills/.bundled_manifest
+skills/apple/
+skills/autonomous-ai-agents/
+skills/creative/
+skills/data-science/
+skills/diagramming/
+skills/domain/
+skills/email/
+skills/feeds/
+skills/gaming/
+skills/gifs/
+skills/inference-sh/
+skills/leisure/
+skills/media/
+skills/mlops/
+skills/note-taking/
+skills/productivity/
+skills/red-teaming/
+skills/research/
+skills/smart-home/
+skills/social-media/
+
+# Misc
+*.pid
+*.lock
+gateway_state.json
+gateway.pid
+channel_directory.json
+discord_threads.json
+modal_snapshots.json
+response_store.db*
+state.db*
+.hermes_history
+.update_check
+.skills_prompt_snapshot.json
