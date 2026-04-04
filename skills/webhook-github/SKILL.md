@@ -48,7 +48,9 @@ When triggered:
 1. Use `mcp_github_add_issue_comment` to acknowledge the request
 2. Use `mcp_github_get_issue` and `mcp_github_list_issue_comments` to read full context
 3. Use `mcp_github_setup_git_auth` to configure git credentials
-4. Clone the repo via terminal: `git clone https://github.com/{owner}/{repo}.git /tmp/{repo} && cd /tmp/{repo}`
+4. Clone the repo via terminal. **Use separate, short commands** — do not chain everything into one giant command:
+   - `git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}`
+   - `cd /tmp/{repo}`
 5. Create a feature branch: `git checkout -b lastlight/{issue-number}-{short-description}`
 6. **Work locally via terminal** — read files, edit code, install deps, run tests. This is much faster than reading files one-by-one via MCP
 7. Commit and push via terminal: `git add . && git commit -m "..." && git push origin lastlight/...`
@@ -78,7 +80,11 @@ Use the right tool for the job:
 - **Building features** (reading code, editing files, running tests): clone the repo and work locally via terminal. This is much faster than reading files one-by-one through MCP.
 - **Git auth**: always call `mcp_github_setup_git_auth` before cloning or pushing.
 - **Be fast**: webhook sessions have a timeout (default 30 min). Don't over-explore. Read what you need, make the changes, test, push.
-- **Suppress spinners**: when running terminal commands like `npm install` or `npm test`, prefix with `CI=true` to disable progress bars and spinners (e.g. `CI=true npm install`). This keeps output clean.
+- **Suppress spinners and progress bars**: always use quiet/non-interactive flags to avoid noisy output that floods the logs:
+  - `git clone --quiet` / `git push --quiet`
+  - `CI=true npm install` / `CI=true npm test`
+  - `pip install --quiet`
+  - Never use commands that produce progress spinners or animated output.
 
 ## Always Ignore
 
