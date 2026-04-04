@@ -42,20 +42,18 @@ You will receive a GitHub event with an event type, action, repository, and payl
 **@mention from a maintainer — build request:**
 If the comment contains the bot's @mention name (provided in the prompt as "Bot mention name") AND the commenter has `admin` or `maintain` permission on the repo, treat it as a work request.
 
-**IMPORTANT: Use MCP tools for all GitHub operations. Do NOT use `gh` CLI, `curl`, or raw HTTP requests.**
-
-To check permissions, use the `mcp_github_search_issues` or similar MCP tool. If no direct permission-check tool exists, check if the sender matches the repository owner from the payload (`repository.owner.login`).
+To check permissions: check if the sender matches the repository owner from the payload (`repository.owner.login`). If not, check `sender.type` — only humans with maintainer access should trigger builds.
 
 When triggered:
-1. Use `mcp_github_add_issue_comment` to acknowledge the request on the issue
+1. Use `mcp_github_add_issue_comment` to acknowledge the request
 2. Use `mcp_github_get_issue` and `mcp_github_list_issue_comments` to read full context
-3. Use `mcp_github_get_file_contents` to read relevant source files
-4. Use `mcp_github_create_branch` to create a feature branch: `lastlight/{issue-number}-{short-description}`
-5. Implement the changes and use `mcp_github_push_files` to commit them
-6. Use `mcp_github_create_pull_request` to open a PR linking back to the issue
-7. Use `mcp_github_add_issue_comment` to post the PR link on the original issue
-
-Do NOT clone repos via terminal. Do NOT install packages via apt. Do NOT use `gh` CLI. All GitHub operations go through MCP tools.
+3. Use `mcp_github_setup_git_auth` to configure git credentials
+4. Clone the repo via terminal: `git clone https://github.com/{owner}/{repo}.git /tmp/{repo} && cd /tmp/{repo}`
+5. Create a feature branch: `git checkout -b lastlight/{issue-number}-{short-description}`
+6. **Work locally via terminal** — read files, edit code, install deps, run tests. This is much faster than reading files one-by-one via MCP
+7. Commit and push via terminal: `git add . && git commit -m "..." && git push origin lastlight/...`
+8. Use `mcp_github_create_pull_request` to open the PR linking back to the issue
+9. Use `mcp_github_add_issue_comment` to post the PR link on the original issue
 
 **@mention from a non-maintainer:**
 Reply politely that you only take build requests from repository maintainers.
@@ -74,13 +72,11 @@ Only respond if someone explicitly asks a question or requests help. Ignore stat
 
 ## Tool Usage
 
-**Always use MCP tools** (`mcp_github_*`) for GitHub operations. Never fall back to:
-- `gh` CLI
-- `curl` or `python` HTTP requests
-- `git clone` via terminal
-- Installing packages via `apt`
+Use the right tool for the job:
 
-The MCP server already has authentication configured. Use it.
+- **GitHub API calls** (comments, labels, PRs, issues): always use `mcp_github_*` tools. Never use `gh` CLI, `curl`, or raw HTTP requests for these.
+- **Building features** (reading code, editing files, running tests): clone the repo and work locally via terminal. This is much faster than reading files one-by-one through MCP.
+- **Git auth**: always call `mcp_github_setup_git_auth` before cloning or pushing.
 
 ## Always Ignore
 
