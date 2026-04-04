@@ -47,15 +47,19 @@ To check permissions: check if the sender matches the repository owner from the 
 When triggered:
 1. Use `mcp_github_add_issue_comment` to acknowledge the request
 2. Use `mcp_github_get_issue` and `mcp_github_list_issue_comments` to read full context
-3. Use `mcp_github_setup_git_auth` to configure git credentials
-4. Clone the repo via terminal. **Use separate, short commands** — do not chain everything into one giant command:
+3. Use `mcp_github_create_branch` to create a feature branch: `lastlight/{issue-number}-{short-description}`
+4. Use `mcp_github_setup_git_auth` to configure git credentials
+5. Clone the repo via terminal. **Use separate, short commands** — do not chain everything into one giant command:
    - `git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}`
    - `cd /tmp/{repo}`
-5. Create a feature branch: `git checkout -b lastlight/{issue-number}-{short-description}`
-6. **Work locally via terminal** — read files, edit code, install deps, run tests. This is much faster than reading files one-by-one via MCP
-7. Commit and push via terminal: `git add . && git commit -m "..." && git push origin lastlight/...`
-8. Use `mcp_github_create_pull_request` to open the PR linking back to the issue
-9. Use `mcp_github_add_issue_comment` to post the PR link on the original issue
+   - `git checkout lastlight/{issue-number}-{short-description}`
+6. **Work locally via terminal** — use `cat` to read files (not python scripts), edit code, install deps with `CI=true`, run tests
+7. Commit locally: `git add . && git commit -m "feat: description (#issue)"`
+8. **Use `mcp_github_push_files` to push changes** — do NOT use `git push` via terminal (auth doesn't work reliably). Collect the changed files and push them via MCP
+9. Use `mcp_github_create_pull_request` to open the PR linking back to the issue
+10. Use `mcp_github_add_issue_comment` to post the PR link on the original issue
+
+**IMPORTANT**: Never use `python3` for reading files — use `cat`. Never use `git push` via terminal — use `mcp_github_push_files`.
 
 **@mention from a non-maintainer:**
 Reply politely that you only take build requests from repository maintainers.
