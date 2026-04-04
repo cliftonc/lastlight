@@ -6,6 +6,7 @@
 config.yaml
 .github-token-cache.json
 .gh-token
+.gitconfig-bot
 
 # Runtime state
 sessions/

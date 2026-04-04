@@ -108,19 +108,34 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`, `perf`
 git push -u origin HEAD
 ```
 
-### Hermes MCP fallback when local git push/auth is unavailable
+### Auth setup
 
-If the environment can edit files locally but cannot authenticate `git push`/`gh`, use the GitHub MCP tools instead:
+The token file (`.gh-token`) and git config (`.gitconfig-bot`) are auto-synced into the sandbox by Hermes before each command via `terminal.credential_files`. To activate:
+
+1. Call `setup_git_auth` MCP tool (refreshes the token)
+2. Run the returned `configure_git` command (one-time per session)
+3. `git push -u origin HEAD` should just work
+
+### MCP fallback when git push fails
+
+If `git push` fails with `Invalid username or token` / `Authentication failed`, fall back to the GitHub MCP tools:
 
 1. Create the remote branch with `mcp_github_create_branch`
 2. Push changed files with `mcp_github_push_files`
 3. Open the PR with `mcp_github_create_pull_request`
 
-Important limitation discovered in practice:
-- `mcp_github_push_files` supports creating/updating files, but **not deleting/renaming** files directly
-- If your fix requires a deletion/rename, prefer authenticated git push, or emulate the rename by creating the new file and leave a note if the old file cannot be removed through MCP in the current environment
+Limitation: `mcp_github_push_files` supports creating/updating files, but **not deleting/renaming** files. Prefer `git push` when possible.
 
-Use this fallback only when normal git/GitHub CLI auth is blocked; otherwise prefer the standard git workflow.
+### Last resort when no push path works
+
+If both `git push` and MCP push fail, post a concise issue comment summarizing:
+- what was implemented locally
+- exact validation commands/results
+- local commit SHA and commit message
+- files touched
+- that PR creation was blocked by sandbox auth
+
+This gives the maintainer a reproducible handoff instead of a vague failure report.
 
 ### Create the PR
 

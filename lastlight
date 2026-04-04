@@ -34,6 +34,10 @@ if [[ -n "${GITHUB_APP_ID:-}" && -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" && -n "${
   }
   if [[ -n "$token" ]]; then
     export GITHUB_PERSONAL_ACCESS_TOKEN="$token"
+    # Write token file so Hermes credential_files sync picks it up
+    # in all sandbox backends (Modal, Docker, SSH, Daytona, local).
+    printf '%s' "$token" > "$SCRIPT_DIR/.gh-token"
+    chmod 600 "$SCRIPT_DIR/.gh-token"
   fi
 # Fall back to GITHUB_TOKEN as a PAT
 elif [[ -n "${GITHUB_TOKEN:-}" ]]; then

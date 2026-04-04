@@ -47,7 +47,7 @@ async function run(fn) {
 
 server.tool(
   "setup_git_auth",
-  "Refresh the GitHub App token and write it to the credential file. The token is automatically synced into the terminal sandbox before each command. Call this ONCE at the start of a task, and again if git auth fails (token expired). After calling, run the configure_git command in the terminal to set up the credential helper.",
+  "Refresh the GitHub App token and write it to the credential file. The token file and .gitconfig-bot are automatically synced into the terminal sandbox by Hermes before each command (via terminal.credential_files). Call this ONCE at the start of a task, and again if git auth fails (token expired). After calling, run the single configure_git command in the terminal.",
   { owner: z.string().describe("Repository owner"), repo: z.string().describe("Repository name") },
   async ({ owner, repo }) => {
     try {
@@ -55,8 +55,9 @@ server.tool(
       const fs = await import("fs");
       const path = await import("path");
 
-      // Write token to HERMES_HOME/.gh-token — Modal syncs credential files
-      // from HERMES_HOME before each command execution.
+      // Write token to HERMES_HOME/.gh-token — Hermes syncs credential_files
+      // from HERMES_HOME into the sandbox before each command execution
+      // (Modal, Docker, SSH, Daytona all support this).
       const hermesHome = process.env.HERMES_HOME || (process.env.HOME + "/.hermes");
       const tokenPath = path.join(hermesHome, ".gh-token");
       fs.writeFileSync(tokenPath, token, { mode: 0o600 });
@@ -64,14 +65,11 @@ server.tool(
       return jsonResult({
         expires_at: auth.expiresAt?.toISOString(),
         token_file: tokenPath,
-        configure_git: [
-          `git config --global credential.helper '!f() { echo "password=$(cat /root/.hermes/.gh-token)"; echo "username=x-access-token"; }; f'`,
-          `git config --global user.name "lastlight[bot]"`,
-          `git config --global user.email "${appId}+lastlight[bot]@users.noreply.github.com"`,
-        ],
+        configure_git: `git config --global include.path /root/.hermes/.gitconfig-bot`,
+        configure_gh: `export GITHUB_TOKEN="$(cat /root/.hermes/.gh-token)"`,
         install_gh: "(command -v gh >/dev/null 2>&1) || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt-get update -qq && apt-get install gh -y -qq)",
         clone_with: `git clone https://github.com/${owner}/${repo}.git`,
-        instructions: "1. Run configure_git commands (one-time per session). 2. Optionally run install_gh if you need gh CLI. 3. git clone/push/pull will use the credential helper to read the token file — no tokens in URLs or commands. Token file is auto-synced by Modal before each command.",
+        instructions: "1. Run configure_git (one-time per session — sets up credential helper + bot identity via .gitconfig-bot include). 2. git clone/push/pull just work — credential helper reads the auto-synced token file. 3. For gh CLI: run configure_gh or install_gh if needed.",
       });
     } catch (e) {
       return jsonResult({ error: e.message });

@@ -23,7 +23,7 @@ model:
 
 # ── Agent ────────────────────────────────────────────────────────
 agent:
-  max_turns: 90
+  max_turns: 200
   tool_use_enforcement: auto
   reasoning_effort: medium
 
@@ -54,6 +54,11 @@ terminal:
   container_persistent: true
   persistent_shell: true
   lifetime_seconds: 3600
+
+# ── Delegation ───────────────────────────────────────────────────
+# Controls sub-agent spawning (e.g. for parallel tasks).
+delegation:
+  max_iterations: 200
 
 # ── MCP Servers ──────────────────────────────────────────────────
 # The GitHub App MCP server provides 28 tools for repo management.

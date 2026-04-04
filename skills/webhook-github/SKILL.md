@@ -47,19 +47,26 @@ To check permissions: check if the sender matches the repository owner from the 
 When triggered:
 1. Use `mcp_github_add_issue_comment` to acknowledge the request
 2. Use `mcp_github_get_issue` and `mcp_github_list_issue_comments` to read full context
-3. Use `mcp_github_create_branch` to create a feature branch: `lastlight/{issue-number}-{short-description}`
-4. Use `mcp_github_setup_git_auth` to configure git credentials
+3. Use `mcp_github_setup_git_auth` to refresh the token and get the configure command
+4. Run the `configure_git` command returned by `setup_git_auth` (one-time per session)
 5. Clone the repo via terminal. **Use separate, short commands** — do not chain everything into one giant command:
    - `git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}`
    - `cd /tmp/{repo}`
-   - `git checkout lastlight/{issue-number}-{short-description}`
+   - `git checkout -b lastlight/{issue-number}-{short-description}`
 6. **Work locally via terminal** — use `cat` to read files (not python scripts), edit code, install deps with `CI=true`, run tests
 7. Commit locally: `git add . && git commit -m "feat: description (#issue)"`
-8. **Use `mcp_github_push_files` to push changes** — do NOT use `git push` via terminal (auth doesn't work reliably). Collect the changed files and push them via MCP
+8. Push via git: `git push --quiet -u origin HEAD 2>&1 | cat`
+   - **IMPORTANT**: Always pipe to `cat` and **check the output text for "fatal:"** — `git push` can exit 0 even when the push fails (e.g. credential helper errors)
 9. Use `mcp_github_create_pull_request` to open the PR linking back to the issue
 10. Use `mcp_github_add_issue_comment` to post the PR link on the original issue
 
-**IMPORTANT**: Never use `python3` for reading files — use `cat`. Never use `git push` via terminal — use `mcp_github_push_files`.
+**If `git push` fails** (auth errors, or output contains "fatal:"), fall back to the MCP path immediately — don't retry git:
+- `mcp_github_create_branch` to create the remote branch from `main`
+- `mcp_github_push_files` to push changed files via API (read each changed file's content first)
+- Note: `mcp_github_push_files` cannot delete/rename files — prefer `git push` when possible
+- Use `git diff HEAD~1 --name-only` to get the list of changed files, then read and push them
+
+**IMPORTANT**: Never use `python3` for reading files — use `cat`. Suppress spinners with `--quiet` flags.
 
 **@mention from a non-maintainer:**
 Reply politely that you only take build requests from repository maintainers.
@@ -83,7 +90,11 @@ Use the right tool for the job:
 - **GitHub API calls** (comments, labels, PRs, issues): always use `mcp_github_*` tools. Never use `gh` CLI, `curl`, or raw HTTP requests for these.
 - **Building features** (reading code, editing files, running tests): clone the repo and work locally via terminal. This is much faster than reading files one-by-one through MCP.
 - **Git auth**: always call `mcp_github_setup_git_auth` before cloning or pushing.
-- **Be fast**: webhook sessions have a timeout (default 30 min). Don't over-explore. Read what you need, make the changes, test, push.
+- **Be fast — budget your iterations**: webhook sessions have a timeout (default 30 min) AND a tool-call iteration limit. Build requests are iteration-heavy (clone, explore, edit, test, push, PR). Minimize exploratory reads:
+  - Use `execute_code` to batch multiple grep/file reads into one tool call
+  - Once you understand the pattern from 1-2 files, apply changes to all files without re-reading each one individually
+  - Use `search_files` with targeted patterns instead of reading whole files
+  - Reserve iterations for: editing, building/testing, pushing, and creating the PR
 - **Suppress spinners and progress bars**: always use quiet/non-interactive flags to avoid noisy output that floods the logs:
   - `git clone --quiet` / `git push --quiet`
   - `CI=true npm install` / `CI=true npm test`
