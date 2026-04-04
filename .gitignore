@@ -1,0 +1,73 @@
+# OS
+.DS_Store
+
+# Secrets
+.env
+.github-token-cache.json
+.gh-token
+
+# Runtime state
+sessions/
+logs/
+memories/
+*.db
+*.db-shm
+*.db-wal
+*.pid
+*.lock
+*.pem
+
+# Caches
+cache/
+audio_cache/
+image_cache/
+images/
+sandboxes/
+
+# Debug
+interrupt_debug.log
+
+# Dependencies
+node_modules/
+
+# Bundled skills we don't use (Hermes may regenerate these)
+skills/.bundled_manifest
+skills/apple/
+skills/autonomous-ai-agents/
+skills/creative/
+skills/data-science/
+skills/diagramming/
+skills/domain/
+skills/email/
+skills/feeds/
+skills/gaming/
+skills/gifs/
+skills/inference-sh/
+skills/leisure/
+skills/media/
+skills/mlops/
+skills/note-taking/
+skills/productivity/
+skills/red-teaming/
+skills/research/
+skills/smart-home/
+skills/social-media/
+
+# Hermes internals
+.skills_prompt_snapshot.json
+.hermes_history
+.update_check
+auth.json
+auth.lock
+gateway_state.json
+gateway.pid
+channel_directory.json
+discord_threads.json
+modal_snapshots.json
+response_store.db*
+state.db*
+pairing/
+hooks/
+bin/
+checkpoints/
+whatsapp/
