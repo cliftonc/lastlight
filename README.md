@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>GitHub Repository Maintenance Agent</strong><br/>
-  <a href="https://lastlight.dev">lastlight.dev</a>
+  <a href="https://lastlight.dev">lastlight.dev</a> · <a href="https://github.com/users/cliftonc/projects/4">Roadmap</a>
 </p>
 
 A [Hermes Agent](https://hermes-agent.nousresearch.com/) bot that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features.
