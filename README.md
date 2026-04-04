@@ -44,6 +44,7 @@ The bot posts as its own identity (custom name, avatar, `[bot]` badge) via a Git
 
 ```bash
 cp .env.example .env
+cp config.yaml.example config.yaml
 ```
 
 Edit `.env` and fill in:
@@ -152,7 +153,8 @@ These run when the agent is active. Manage them inside a session with `/cron`, o
 ```
 lastlight/
 ├── lastlight                      # Launcher (sets HERMES_HOME, generates GitHub token)
-├── config.yaml                  # Hermes config (model, MCP servers, terminal backend)
+├── config.yaml                  # Your local config (not committed — copy from config.yaml.example)
+├── config.yaml.example          # Template config with all options documented
 ├── .env                         # Secrets: GitHub App credentials, LLM keys, Modal tokens
 ├── .env.example                 # Template for .env
 ├── SOUL.md                      # Agent personality — who the bot is, how it behaves

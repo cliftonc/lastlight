@@ -1,8 +1,9 @@
 # OS
 .DS_Store
 
-# Secrets
+# Secrets & local config
 .env
+config.yaml
 .github-token-cache.json
 .gh-token
 

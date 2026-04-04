@@ -1,0 +1,127 @@
+# ── Last Light — Configuration ────────────────────────────────────
+# Copy to config.yaml and customise:  cp config.yaml.example config.yaml
+# Full reference: https://hermes-agent.nousresearch.com/docs/user-guide/configuration
+
+# ── Model ────────────────────────────────────────────────────────
+# Choose your LLM provider and model. Set the matching API key in .env.
+#
+# Provider options:
+#   openrouter     → OPENROUTER_API_KEY    (many models, one key)
+#   anthropic      → ANTHROPIC_API_KEY     (Claude models)
+#   openai         → OPENAI_API_KEY        (GPT models)
+#   openai-codex   → ChatGPT Codex         (needs base_url below)
+#   bedrock        → AWS credentials       (Claude/Titan via AWS)
+#   nous           → OAuth (hermes login)  (Nous Portal)
+#   zai            → ZAI_API_KEY           (Z.AI / GLM models)
+#   kimi-coding    → KIMI_API_KEY          (Kimi / Moonshot)
+#   minimax        → MINIMAX_API_KEY       (MiniMax)
+#
+model:
+  default: anthropic/claude-sonnet-4    # change to your preferred model
+  provider: openrouter                  # change to your preferred provider
+# base_url: https://chatgpt.com/backend-api/codex  # only needed for openai-codex
+
+# ── Agent ────────────────────────────────────────────────────────
+agent:
+  max_turns: 90
+  tool_use_enforcement: auto
+  reasoning_effort: medium
+
+# ── Terminal Backend ─────────────────────────────────────────────
+# Where the agent runs commands.
+# Options: local, docker, modal, ssh, daytona, singularity
+#
+# local       → runs on your machine (no isolation — not recommended)
+# docker      → sandboxed container (needs Docker installed)
+# modal       → cloud VM sandbox (needs MODAL_TOKEN_ID/SECRET in .env)
+# ssh         → remote server (needs TERMINAL_SSH_HOST/USER in .env)
+# daytona     → managed cloud env (needs DAYTONA_API_KEY in .env)
+# singularity → HPC clusters (needs apptainer/singularity in $PATH)
+#
+terminal:
+  backend: docker                       # change to your preferred backend
+  cwd: .
+  timeout: 180
+  env_passthrough:
+  - GITHUB_TOKEN
+  docker_image: nikolaik/python-nodejs:python3.11-nodejs20
+  modal_image: nikolaik/python-nodejs:python3.11-nodejs20
+  daytona_image: nikolaik/python-nodejs:python3.11-nodejs20
+  singularity_image: docker://nikolaik/python-nodejs:python3.11-nodejs20
+  container_cpu: 1
+  container_memory: 5120        # MB
+  container_disk: 51200         # MB
+  container_persistent: true
+  persistent_shell: true
+  lifetime_seconds: 3600
+
+# ── MCP Servers ──────────────────────────────────────────────────
+# The GitHub App MCP server provides 28 tools for repo management.
+# Update the env values to match your GitHub App credentials from .env.
+mcp_servers:
+  github:
+    command: node
+    args:
+    - ${HERMES_HOME}/mcp-github-app/src/index.js
+    env:
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID}
+
+# ── Display ──────────────────────────────────────────────────────
+display:
+  compact: true
+  personality: concise
+  streaming: true
+  show_cost: true
+
+# ── Memory ───────────────────────────────────────────────────────
+memory:
+  memory_enabled: true
+
+# ── Cron ─────────────────────────────────────────────────────────
+cron:
+  wrap_response: true
+
+# ── Gateway Platforms ────────────────────────────────────────────
+# Which tools each platform can use when connected via gateway.
+discord:
+  require_mention: true
+  auto_thread: true
+  reactions: true
+
+platform_toolsets:
+  cli:
+  - browser
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - memory
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - vision
+  - web
+  discord:
+  - browser
+  - code_execution
+  - cronjob
+  - delegation
+  - file
+  - memory
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - vision
+  - web
+
+# ── Fallback Model (optional) ───────────────────────────────────
+# Automatic provider failover when primary is unavailable.
+# Triggers on rate limits (429), overload (529), service errors (503).
+#
+# fallback_model:
+#   provider: openrouter
+#   model: anthropic/claude-sonnet-4
