@@ -135,6 +135,51 @@ Run the bot as a persistent service connected to a messaging platform:
 ./lastlight gateway install    # install as a system service (launchd on macOS)
 ```
 
+### GitHub Webhooks
+
+React to repo events (new issues, PRs, comments) in real time. This uses a single webhook endpoint — your GitHub App sends all events to it, and the agent decides what to act on based on the prompt.
+
+Add to `config.yaml`:
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      host: "0.0.0.0"
+      port: 8644
+      routes:
+        github:
+          secret: "your-webhook-secret"
+          events: ["issues", "pull_request", "issue_comment"]
+          skills: ["webhook-github"]
+          prompt: |
+            GitHub event: {_event_type}, action: {action}
+            Repository: {repository.full_name}
+            Issue/PR: #{issue.number} {issue.title}
+            Author: {issue.user.login}
+            Body: {issue.body}
+          deliver: log
+```
+
+The `prompt` passes event data to the agent. The logic for what to act on lives in `skills/webhook-github/SKILL.md` — edit that file to customise the behaviour.
+
+Then configure your GitHub App's webhook:
+- **URL**: `http://your-host:8644/webhooks/github`
+- **Secret**: same as in `config.yaml`
+
+The endpoint must be publicly reachable — use [ngrok](https://ngrok.com) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) if running locally.
+
+**Delivery options:**
+
+| Option | What it does |
+|--------|-------------|
+| `log` | Log to gateway output (good for testing) |
+| `github_comment` | Post back on the issue/PR that triggered it |
+| `discord` / `slack` / `telegram` | Forward to your messaging channel |
+
+Filter by event type with `events` — only listed types trigger the agent. Finer-grained filtering (ignore edits, bot authors, etc.) is handled by the agent via the prompt.
+
 ## Scheduled Jobs (Cron)
 
 Four cron jobs are pre-configured in `cron/jobs.json`:
