@@ -78,6 +78,7 @@ Use the right tool for the job:
 - **Building features** (reading code, editing files, running tests): clone the repo and work locally via terminal. This is much faster than reading files one-by-one through MCP.
 - **Git auth**: always call `mcp_github_setup_git_auth` before cloning or pushing.
 - **Be fast**: webhook sessions have a timeout (default 30 min). Don't over-explore. Read what you need, make the changes, test, push.
+- **Suppress spinners**: when running terminal commands like `npm install` or `npm test`, prefix with `CI=true` to disable progress bars and spinners (e.g. `CI=true npm install`). This keeps output clean.
 
 ## Always Ignore
 
