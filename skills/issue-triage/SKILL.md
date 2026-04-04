@@ -42,6 +42,10 @@ When asked to triage issues, or on a scheduled basis to process new/stale issues
 2. **Post a gentle reminder** asking if they still need help
 3. **After 30 days** of no response: close with a kind message explaining why, and note they can reopen
 
+## Tool Usage
+
+**Always use MCP tools** (`mcp_github_*`) for all GitHub operations — listing issues, adding labels, posting comments, closing issues. Never use `gh` CLI, `curl`, or raw HTTP requests. The MCP server handles authentication.
+
 ## Pitfalls
 - Don't close issues too aggressively — when in doubt, leave open
 - Don't change priority on issues already triaged by maintainers

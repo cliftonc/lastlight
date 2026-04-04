@@ -42,6 +42,10 @@ When asked to review a pull request, or when triggered by a cron job to check fo
    - Use `create_pull_request_review` if available
    - Otherwise post as a regular comment
 
+## Tool Usage
+
+**Always use MCP tools** (`mcp_github_*`) for all GitHub operations — fetching PRs, reading diffs, posting reviews. Never use `gh` CLI, `curl`, or raw HTTP requests. The MCP server handles authentication.
+
 ## Pitfalls
 - Don't nitpick generated files (lock files, compiled assets)
 - Don't repeat what linters/CI already catch

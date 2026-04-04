@@ -118,6 +118,35 @@ platform_toolsets:
   - vision
   - web
 
+# ── Webhook Platform (optional) ──────────────────────────────────
+# React to GitHub events in real time. Point your GitHub App's webhook
+# URL at http://your-host:8644/webhooks/github with the same secret.
+# The webhook-github skill handles the logic — edit skills/webhook-github/SKILL.md.
+#
+# platforms:
+#   webhook:
+#     enabled: true
+#     extra:
+#       host: "0.0.0.0"
+#       port: 8644
+#       routes:
+#         github:
+#           secret: "your-webhook-secret"
+#           events: ["issues", "pull_request", "issue_comment", "pull_request_review_comment", "pull_request_review"]
+#           skills: ["webhook-github"]
+#           prompt: |
+#             GitHub event: {_event_type}, action: {action}
+#             Repository: {repository.full_name}
+#             Issue/PR: #{issue.number} {issue.title}
+#             Issue author: {issue.user.login}
+#             Issue body: {issue.body}
+#             Comment by: {comment.user.login}
+#             Comment: {comment.body}
+#             Sender: {sender.login}
+#             Sender type: {sender.type}
+#             Bot mention name: @your-app-name
+#           deliver: log
+
 # ── Fallback Model (optional) ───────────────────────────────────
 # Automatic provider failover when primary is unavailable.
 # Triggers on rate limits (429), overload (529), service errors (503).
