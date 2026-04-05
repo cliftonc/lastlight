@@ -90,6 +90,40 @@ display:
 memory:
   memory_enabled: true
 
+# ── Auxiliary LLM calls ──────────────────────────────────────────
+# Hermes uses LLMs for internal tasks (session summarisation, compression,
+# vision, web extraction, etc). If you don't set these, Hermes picks a
+# default that may not match your configured provider and will 401.
+# Point these at a cheap/fast model using the same provider as your main
+# model so they share credentials. gpt-4o-mini works well for all of these.
+compression:
+  enabled: true
+  summary_provider: openrouter
+  summary_model: gpt-4o-mini
+
+auxiliary:
+  session_search:
+    provider: openrouter
+    model: gpt-4o-mini
+  vision:
+    provider: openrouter
+    model: gpt-4o-mini
+  web_extract:
+    provider: openrouter
+    model: gpt-4o-mini
+  compression:
+    provider: openrouter
+    model: gpt-4o-mini
+  skills_hub:
+    provider: openrouter
+    model: gpt-4o-mini
+  mcp:
+    provider: openrouter
+    model: gpt-4o-mini
+  flush_memories:
+    provider: openrouter
+    model: gpt-4o-mini
+
 # ── Cron ─────────────────────────────────────────────────────────
 cron:
   wrap_response: true
