@@ -5,11 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev python3-venv \
     build-essential gcc libffi-dev \
     nodejs npm \
-    git ripgrep curl openssh-client ca-certificates \
+    git ripgrep curl jq openssh-client ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Hermes Agent with all extras (fully non-interactive)
-RUN pip install --no-cache-dir --break-system-packages "hermes-agent[all]"
+# Install Hermes Agent from source (not published on PyPI)
+RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /opt/hermes && \
+    pip install --no-cache-dir --break-system-packages -e "/opt/hermes[all]"
 
 WORKDIR /opt/lastlight
 
@@ -19,7 +20,7 @@ COPY skills/ skills/
 COPY mcp-github-app/ mcp-github-app/
 COPY scripts/ scripts/
 COPY deploy/ deploy/
-COPY lastlight config.yaml.example .env.example .gitconfig-bot ./
+COPY lastlight config.yaml.example .env.example ./
 
 # Install MCP server Node.js dependencies
 RUN cd mcp-github-app && npm install --prefer-offline --no-audit \

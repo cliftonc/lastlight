@@ -5,16 +5,20 @@
 # ── Model ────────────────────────────────────────────────────────
 # Choose your LLM provider and model. Set the matching API key in .env.
 #
-# Provider options:
-#   openrouter     → OPENROUTER_API_KEY    (many models, one key)
+# Provider options (API key providers — work unattended in Docker):
+#   openrouter     → OPENROUTER_API_KEY    (many models, one key — recommended)
 #   anthropic      → ANTHROPIC_API_KEY     (Claude models)
-#   openai         → OPENAI_API_KEY        (GPT models)
-#   openai-codex   → ChatGPT Codex         (needs base_url below)
-#   bedrock        → AWS credentials       (Claude/Titan via AWS)
-#   nous           → OAuth (hermes login)  (Nous Portal)
 #   zai            → ZAI_API_KEY           (Z.AI / GLM models)
 #   kimi-coding    → KIMI_API_KEY          (Kimi / Moonshot)
 #   minimax        → MINIMAX_API_KEY       (MiniMax)
+#
+# OAuth providers (require interactive `hermes login` — won't work headless):
+#   openai-codex   → ChatGPT Codex         (needs browser login + base_url)
+#   nous           → OAuth (hermes login)  (Nous Portal)
+#
+# To use OpenAI models (GPT-4o, GPT-5.4, etc.) with an API key, use
+# openrouter as the provider and set OPENROUTER_BASE_URL=https://api.openai.com/v1
+# with OPENROUTER_API_KEY set to your OpenAI sk-proj-... key.
 #
 model:
   default: anthropic/claude-sonnet-4    # change to your preferred model
