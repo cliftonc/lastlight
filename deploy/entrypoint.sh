@@ -3,8 +3,8 @@
 # Symlinks secrets from the mounted volume into HERMES_HOME, then starts the agent.
 set -euo pipefail
 
-SECRETS="/opt/lastlight/secrets"
-HOME_DIR="/opt/lastlight"
+SECRETS="/root/secrets"
+HOME_DIR="/root"
 
 # Symlink config files from secrets volume (if mounted)
 for f in .env config.yaml; do

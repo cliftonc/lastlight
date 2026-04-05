@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /opt/hermes && \
     pip install --no-cache-dir --break-system-packages -e "/opt/hermes[all]"
 
-WORKDIR /opt/lastlight
+WORKDIR /root
 
 # Layers ordered from least-frequently-changed to most-frequently-changed
 # so small edits (e.g. SOUL.md tweaks) don't bust expensive layers.
@@ -29,13 +29,13 @@ COPY deploy/ deploy/
 
 # Runtime dirs, mount points, env, port
 RUN mkdir -p sessions logs memories
-VOLUME ["/opt/lastlight/secrets"]
-ENV HERMES_HOME=/opt/lastlight
+VOLUME ["/root/secrets"]
+ENV HERMES_HOME=/root
 EXPOSE 8644
 
 # Launcher + config templates — occasional changes
 COPY lastlight config.yaml.example .env.example ./
-RUN chmod +x /opt/lastlight/deploy/entrypoint.sh /opt/lastlight/lastlight
+RUN chmod +x /root/deploy/entrypoint.sh /root/lastlight
 
 # Scheduled jobs — occasional changes
 COPY cron/ cron/
@@ -46,5 +46,5 @@ COPY skills/ skills/
 # Project context & personality — most frequently changed
 COPY .hermes.md SOUL.md ./
 
-ENTRYPOINT ["/opt/lastlight/deploy/entrypoint.sh"]
+ENTRYPOINT ["/root/deploy/entrypoint.sh"]
 CMD ["gateway"]

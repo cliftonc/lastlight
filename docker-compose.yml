@@ -3,9 +3,9 @@ services:
     build: .
     restart: unless-stopped
     volumes:
-      - ./secrets:/opt/lastlight/secrets:ro
-      - agent-state:/opt/lastlight/sessions
-      - agent-logs:/opt/lastlight/logs
+      - ./secrets:/root/secrets:ro
+      - agent-state:/root/sessions
+      - agent-logs:/root/logs
     networks:
       - internal
 
