@@ -18,7 +18,7 @@ Use this skill when the user wants a plan instead of execution.
 
 If this plan will lead to implementation work (code changes, PRs), ensure a **GitHub issue**
 exists to track it before writing the plan. If the request came from Discord, Slack, or CLI
-with no linked issue, create one in the appropriate managed repo (see `.hermes.md`).
+with no linked issue, create one in the appropriate managed repo.
 The plan should reference the issue number and the plan file path should be posted to the issue.
 
 ## Core behavior

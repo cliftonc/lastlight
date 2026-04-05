@@ -55,7 +55,7 @@ When triggered, follow the **Architect→Executor→Reviewer** cycle:
 Before any work begins, ensure there is a GitHub issue to coordinate on:
 - **If triggered from an issue comment:** The issue already exists — use it.
 - **If triggered from a PR comment:** Check if the PR links to an issue. If so, use that issue. If not, create one in the same repo with the PR context and link it.
-- **If triggered from Discord or CLI:** Create an issue in the appropriate managed repo (see `.hermes.md`) with the request as the body. Label it with the relevant type (bug, enhancement, etc.). Post all subsequent progress as comments on this issue.
+- **If triggered from Discord or CLI:** Create an issue in the appropriate managed repo with the request as the body. Label it with the relevant type (bug, enhancement, etc.). Post all subsequent progress as comments on this issue.
 
 All phases below post brief progress updates to this tracking issue.
 

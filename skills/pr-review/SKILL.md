@@ -22,7 +22,7 @@ When asked to review a pull request, or when triggered by a cron job to check fo
 
 2. **Analyze the changes** systematically:
    - Read each changed file in context (not just the diff)
-   - Check against the review guidelines in `.hermes.md`
+   - Check against the review guidelines in your project context
    - Note the PR size (files changed, lines added/removed)
 
 2b. **For complex PRs** (>300 lines changed OR >5 files changed), use **architect-style deep analysis**:

@@ -23,7 +23,7 @@ Execute implementation plans by dispatching fresh subagents per task with system
 Before starting any implementation work, ensure a **GitHub issue** exists to track it:
 - If an issue already exists (e.g. from a webhook event), use it.
 - If the request came from Discord, Slack, or CLI with no linked issue, **create one first**
-  in the appropriate managed repo (see `.hermes.md`). Use the request as the issue body.
+  in the appropriate managed repo. Use the request as the issue body.
 - Post progress updates (plan, task completion, review verdicts) as comments on the issue.
 - **Never start coding without a tracking issue.** The issue is the authorisation gate and audit trail.
 
