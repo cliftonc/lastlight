@@ -103,6 +103,11 @@ delegate_task(
     files, create files, or run mutating commands. You may only read files,
     search code, and run read-only terminal commands.
 
+    SETUP (run first — each delegated task gets its own sandbox):
+    1. mcp_github_setup_git_auth
+    2. rm -rf /tmp/{repo} && git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
+    3. Read /tmp/{repo}/CLAUDE.md and AGENTS.md first to understand repo conventions
+
     TASK: Analyze this build request and produce an implementation plan.
 
     CONTEXT SNAPSHOT:
@@ -201,11 +206,15 @@ delegate_task(
     You do not fix code — you report issues. Every finding must cite
     file:line evidence.
 
+    SETUP (run first — each delegated task gets its own sandbox):
+    1. mcp_github_setup_git_auth
+    2. rm -rf /tmp/{repo} && git clone --quiet -b {branch} https://github.com/{owner}/{repo}.git /tmp/{repo}
+    3. cd /tmp/{repo}
+
     SCOPE — CRITICAL:
     Review ONLY the files changed in this commit. Do NOT review the rest
     of the repo. Get the exact scope first:
 
-      cd /tmp/{repo}
       git diff HEAD~1 --name-only   # list of changed files
       git diff HEAD~1               # the actual changes
 
