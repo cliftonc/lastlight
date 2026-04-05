@@ -28,6 +28,13 @@ do not search for it. Clone it first:
 2. `git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}`
 3. `cd /tmp/{repo}` and work from there
 
+## Read Repo Docs First
+
+After cloning, check for `CLAUDE.md`, `AGENTS.md`, or `CONTRIBUTING.md` in the repo root.
+Read them before inspecting the test setup — they contain the correct test commands,
+test helpers, project structure, and conventions. Do not guess at test runners or commands
+when the repo documents them.
+
 ## When to use
 
 - User asks "review test coverage"
