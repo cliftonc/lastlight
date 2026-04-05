@@ -7,7 +7,7 @@ license: MIT
 metadata:
   hermes:
     tags: [delegation, subagent, implementation, workflow, parallel]
-    related_skills: [writing-plans, requesting-code-review, test-driven-development]
+    related_skills: [plan, requesting-code-review, test-driven-development]
 ---
 
 # Subagent-Driven Development
@@ -27,10 +27,18 @@ Before starting any implementation work, ensure a **GitHub issue** exists to tra
 - Post progress updates (plan, task completion, review verdicts) as comments on the issue.
 - **Never start coding without a tracking issue.** The issue is the authorisation gate and audit trail.
 
+## Guardrails Check
+
+Before dispatching the first task, run the `assure-guardrails` skill on the target repo.
+This verifies that test framework, linting, and type checking are in place. If any are
+missing (verdict: BLOCKED), create a guardrails issue, fix the foundations first, then
+resume. The build cycle depends on these: TDD needs tests, requesting-code-review needs
+lint/typecheck, the Reviewer needs tests to run.
+
 ## When to Use
 
 Use this skill when:
-- You have an implementation plan (from writing-plans skill or user requirements)
+- You have an implementation plan (from plan skill or user requirements)
 - Tasks are mostly independent
 - Quality and spec compliance are important
 - You want automated review between tasks
@@ -327,10 +335,10 @@ git add -A && git commit -m "feat: complete [feature name] implementation"
 
 ## Integration with Other Skills
 
-### With writing-plans
+### With plan
 
-This skill EXECUTES plans created by the writing-plans skill:
-1. User requirements → writing-plans → implementation plan
+This skill EXECUTES plans created by the plan skill:
+1. User requirements → plan → implementation plan
 2. Implementation plan → subagent-driven-development → working code
 
 ### With test-driven-development

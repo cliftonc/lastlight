@@ -11,7 +11,7 @@ license: MIT
 metadata:
   hermes:
     tags: [analysis, architecture, read-only, diagnosis]
-    related_skills: [plan, systematic-debugging, writing-plans]
+    related_skills: [plan, systematic-debugging, subagent-driven-development]
 ---
 
 # Architect — Read-Only Deep Analysis

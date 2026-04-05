@@ -71,6 +71,15 @@ All phases below post brief progress updates to this tracking issue.
    Likely touchpoints: {files/directories that will be affected}
    ```
 
+#### Guardrails Check (between Phase 0 and Phase 1)
+
+Before proceeding to architect analysis, run the `assure-guardrails` skill on the
+cloned repo. This verifies that test framework, linting, and type checking are present.
+
+- **READY** → proceed to Phase 1
+- **BLOCKED** → create a guardrails issue, link it to the original task, fix foundations
+  first via a separate build cycle, then resume the original task
+
 #### Phase 1: Architect Analysis (delegate_task — read-only)
 
 ```python
