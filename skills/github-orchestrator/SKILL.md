@@ -62,14 +62,23 @@ All phases below post brief progress updates to this tracking issue.
 #### Phase 0: Pre-Context Intake (you do this directly, not delegated)
 
 1. Use `mcp_github_add_issue_comment` to acknowledge the request:
-   `"🔍 Acknowledged — starting analysis. I'll post updates here as I work."`
-2. Use `mcp_github_get_issue` and `mcp_github_list_issue_comments` to read full context
-3. Use `mcp_github_get_file_contents` to read the repo's README and key structural files
-4. Assemble a context snapshot:
+   `"Acknowledged — starting analysis. I'll post updates here as I work."`
+2. Use `mcp_github_get_issue` and `mcp_github_list_issue_comments` to read issue context
+3. **Clone the repo** — do this ONCE, upfront. Do NOT fetch files individually via
+   `mcp_github_get_file_contents` (slow, one call per file). Clone and then read
+   everything locally:
+   ```
+   mcp_github_setup_git_auth
+   cd /root && rm -rf /tmp/{repo} && git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
+   ```
+4. Read repo docs from the clone: `cat /tmp/{repo}/CLAUDE.md`, `AGENTS.md`,
+   `README.md`, `package.json` via `terminal` or `read_file`. Do NOT use
+   `mcp_github_get_file_contents` for files you can read from the clone.
+5. Assemble a context snapshot:
    ```
    Task: {what the maintainer asked for}
    Desired outcome: {what success looks like}
-   Known facts: {from issue body, comments, repo structure}
+   Known facts: {from issue body, comments, repo docs}
    Constraints: {repo conventions, test framework, existing patterns}
    Unknowns: {what needs investigation before coding}
    Likely touchpoints: {files/directories that will be affected}
@@ -273,8 +282,9 @@ Only respond if someone explicitly asks a question or requests help. Ignore stat
 
 Use the right tool for the job:
 
-- **GitHub API calls** (comments, labels, PRs, issues): always use `mcp_github_*` tools. Never use `gh` CLI, `curl`, or raw HTTP requests for these.
-- **Building features** (reading code, editing files, running tests): clone the repo and work locally via terminal. This is much faster than reading files one-by-one through MCP.
+- **GitHub API calls** (comments, labels, PRs, issues, branches, PR creation): always use `mcp_github_*` tools. Never use `gh` CLI, `curl`, or raw HTTP requests for these.
+- **Reading repo files**: clone the repo ONCE and read locally via `read_file`/`cat`/`grep`. Do NOT use `mcp_github_get_file_contents` for multiple files — it's one network round-trip per file. A single `git clone` gets everything at once.
+- **Building features**: clone the repo, edit files, run tests locally via terminal. Push via git.
 - **Git auth**: always call `mcp_github_setup_git_auth` before cloning or pushing.
 - **Be fast — budget your iterations**: webhook sessions have a timeout (default 30 min) AND a tool-call iteration limit. Build requests now use the Architect→Executor→Reviewer cycle, which costs 3-5 `delegate_task` calls minimum. Each subagent gets its own iteration budget, but the orchestrator must still be efficient:
   - Keep Phase 0 (pre-context intake) lean — read only what's needed for the context snapshot
