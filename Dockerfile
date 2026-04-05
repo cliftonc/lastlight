@@ -20,7 +20,7 @@ COPY skills/ skills/
 COPY mcp-github-app/ mcp-github-app/
 COPY scripts/ scripts/
 COPY deploy/ deploy/
-COPY lastlight config.yaml.example .env.example ./
+COPY lastlight config.yaml.example .env.example .hermes.md SOUL.md ./
 
 # Install MCP server Node.js dependencies
 RUN cd mcp-github-app && npm install --prefer-offline --no-audit \
