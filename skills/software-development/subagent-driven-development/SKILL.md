@@ -200,13 +200,22 @@ After ALL tasks are complete, dispatch a final integration reviewer:
 delegate_task(
     goal="Review the entire implementation for consistency and integration issues",
     context="""
-    ROLE: You are the CODE REVIEWER performing integration review.
-    You have no shared context with the implementers. Verify the full
-    implementation works as a cohesive whole.
+    ROLE: You are the CODE REVIEWER performing integration review of
+    THIS BRANCH'S CHANGES ONLY. You have no shared context with the
+    implementers. You do not fix code — you report issues.
 
-    All tasks from the plan are complete. Review the full implementation:
-    - Do all components work together?
-    - Any inconsistencies between tasks?
+    SCOPE — CRITICAL:
+    Review ONLY the files changed on this branch vs main. Get the scope first:
+      git diff main --name-only   # list of changed files
+      git diff main               # the actual changes
+
+    Do NOT review unchanged files. Do NOT flag pre-existing issues.
+    You may read unchanged files for context only if needed to understand
+    a specific change.
+
+    CHECK (on changed files only):
+    - Do the changes work together as a cohesive whole?
+    - Any inconsistencies between the tasks just completed?
     - All tests passing? (run them — do not assume)
     - Ready for merge?
 

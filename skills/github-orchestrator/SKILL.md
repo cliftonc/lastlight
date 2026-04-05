@@ -187,24 +187,44 @@ mcp_github_add_issue_comment: "🔨 **Implementation complete.** Running indepen
 delegate_task(
     goal="Independent review of build request implementation",
     context="""
-    ROLE: You are the CODE REVIEWER. Independent verification. You have NO
-    shared context with the executor. You do not fix code — you report issues.
-    Every finding must cite file:line evidence.
+    ROLE: You are the CODE REVIEWER. Independent verification of THIS
+    COMMIT'S CHANGES ONLY. You have NO shared context with the executor.
+    You do not fix code — you report issues. Every finding must cite
+    file:line evidence.
+
+    SCOPE — CRITICAL:
+    Review ONLY the files changed in this commit. Do NOT review the rest
+    of the repo. Get the exact scope first:
+
+      cd /tmp/{repo}
+      git diff HEAD~1 --name-only   # list of changed files
+      git diff HEAD~1               # the actual changes
+
+    You may read context from unchanged files ONLY if needed to understand
+    a specific change in the diff. Do not audit the repo, do not flag
+    pre-existing issues in untouched files, do not suggest improvements
+    to code that wasn't modified.
 
     ARCHITECT'S PLAN:
     [INSERT ARCHITECT OUTPUT FROM PHASE 1]
 
-    CHECK:
+    CHECK (on changed files only):
     1. Does the implementation match the architect's plan?
-    2. Do all tests pass? (run them — do not assume)
-    3. Any security concerns? (check for hardcoded secrets, injection, eval)
-    4. Any logic errors or missed edge cases?
-    5. Code quality acceptable for merge?
+    2. Do the new/modified tests pass? Run: {test command from CLAUDE.md}
+    3. Any security concerns introduced by the changes?
+    4. Any logic errors or missed edge cases in the new code?
+    5. Is the new code quality acceptable for merge?
+
+    DO NOT:
+    - Review unchanged files
+    - Flag pre-existing issues that weren't introduced by this commit
+    - Suggest refactors to code outside the diff
+    - Run linters or tests on files not in the diff
 
     OUTPUT FORMAT:
     - Verdict: APPROVED or REQUEST_CHANGES
-    - Issues: [list with file:line references]
-    - Suggestions: [non-blocking improvements]
+    - Issues: [list with file:line references — all from changed files]
+    - Suggestions: [non-blocking improvements to the changes]
     """,
     toolsets=['terminal', 'file']
 )
