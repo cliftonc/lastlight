@@ -44,7 +44,9 @@ agent:
 #
 terminal:
   backend: docker                       # change to your preferred backend
-  cwd: .
+  # cwd: absolute path to the lastlight directory (NOT "." — gateway sessions
+  # fall back to $HOME when cwd is ".", which breaks .hermes.md discovery).
+  cwd: /opt/lastlight
   timeout: 180
   env_passthrough:
   - GITHUB_TOKEN
