@@ -16,6 +16,8 @@ checkpoints/
 sandboxes/
 pairing/
 hooks/
+cron/output/
+platforms/
 
 # Git & editor
 .git/
