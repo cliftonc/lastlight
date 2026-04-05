@@ -14,6 +14,20 @@ metadata:
 
 Use this when asked to assess a repo's current test coverage and propose a plan to improve it.
 
+## GitHub-First Gate
+
+Before starting coverage analysis on a managed repo, ensure a **GitHub issue** exists to
+track the work. If the request came from Discord, Slack, or CLI with no linked issue, create
+one in the target repo. Post the coverage review findings to the issue when complete.
+
+## Managed Repo Awareness
+
+If the user names a managed repo (listed in `.hermes.md`), you already know the full name —
+do not search for it. Clone it first:
+1. Call `mcp_github_setup_git_auth` to refresh the token
+2. `git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}`
+3. `cd /tmp/{repo}` and work from there
+
 ## When to use
 
 - User asks "review test coverage"
