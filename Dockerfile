@@ -9,33 +9,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Hermes Agent from source (not published on PyPI)
+# Expensive — keep cached across rebuilds unless Hermes itself updates.
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /opt/hermes && \
     pip install --no-cache-dir --break-system-packages -e "/opt/hermes[all]"
 
 WORKDIR /opt/lastlight
 
-# Copy project files (skills, MCP server, scripts, launcher)
-# .dockerignore excludes secrets, state, and bundled skills
-COPY skills/ skills/
-COPY mcp-github-app/ mcp-github-app/
-COPY scripts/ scripts/
-COPY deploy/ deploy/
-COPY cron/ cron/
-COPY lastlight config.yaml.example .env.example .hermes.md SOUL.md ./
+# Layers ordered from least-frequently-changed to most-frequently-changed
+# so small edits (e.g. SOUL.md tweaks) don't bust expensive layers.
 
-# Install MCP server Node.js dependencies
+# MCP server deps — rarely change
+COPY mcp-github-app/ mcp-github-app/
 RUN cd mcp-github-app && npm install --prefer-offline --no-audit \
     && npm cache clean --force
 
-# Runtime directories
+# Deploy scripts, helper scripts — rarely change
+COPY scripts/ scripts/
+COPY deploy/ deploy/
+
+# Runtime dirs, mount points, env, port
 RUN mkdir -p sessions logs memories
-
-# Secrets mount point — users bind-mount their .env, config.yaml, PEM file
 VOLUME ["/opt/lastlight/secrets"]
-
 ENV HERMES_HOME=/opt/lastlight
 EXPOSE 8644
 
+# Launcher + config templates — occasional changes
+COPY lastlight config.yaml.example .env.example ./
 RUN chmod +x /opt/lastlight/deploy/entrypoint.sh /opt/lastlight/lastlight
+
+# Scheduled jobs — occasional changes
+COPY cron/ cron/
+
+# Skills — changes often
+COPY skills/ skills/
+
+# Project context & personality — most frequently changed
+COPY .hermes.md SOUL.md ./
+
 ENTRYPOINT ["/opt/lastlight/deploy/entrypoint.sh"]
 CMD ["gateway"]
