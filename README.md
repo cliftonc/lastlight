@@ -152,7 +152,7 @@ platforms:
         github:
           secret: "your-webhook-secret"
           events: ["issues", "pull_request", "issue_comment"]
-          skills: ["webhook-github"]
+          skills: ["github-orchestrator"]
           prompt: |
             GitHub event: {_event_type}, action: {action}
             Repository: {repository.full_name}
@@ -162,7 +162,7 @@ platforms:
           deliver: log
 ```
 
-The `prompt` passes event data to the agent. The logic for what to act on lives in `skills/webhook-github/SKILL.md` — edit that file to customise the behaviour.
+The `prompt` passes event data to the agent. The logic for what to act on lives in `skills/github-orchestrator/SKILL.md` — edit that file to customise the behaviour.
 
 Then configure your GitHub App's webhook:
 - **URL**: `http://your-host:8644/webhooks/github`

@@ -1,18 +1,22 @@
 ---
-name: webhook-github
-description: Handle incoming GitHub webhook events — triage issues, review PRs, respond to comments, build features on request
-version: 1.1.0
+name: github-orchestrator
+description: >
+  Central coordinator for all GitHub work — routes events to the right action
+  (triage, review, build) and orchestrates the Architect→Executor→Reviewer cycle
+  for build requests. All work is tracked via GitHub issues.
+version: 2.0.0
 metadata:
   hermes:
-    tags: [github, webhook, maintenance]
+    tags: [github, orchestrator, webhook, build-cycle, coordination]
     category: maintenance
+    related_skills: [architect, assure-guardrails, subagent-driven-development, pr-review, issue-triage]
 ---
 
-# GitHub Webhook Handler
+# GitHub Orchestrator
 
 ## When to Use
 
-This skill is triggered automatically by incoming GitHub webhook events via the webhook platform. Do not run it manually.
+This skill is triggered automatically by incoming GitHub webhook events via the webhook platform, or invoked when a build request arrives from Discord, Slack, or CLI. It is the central coordinator for all GitHub work.
 
 ## Event Handling Rules
 

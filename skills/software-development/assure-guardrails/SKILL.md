@@ -226,7 +226,7 @@ the original task.
 
 ## Integration with the Build Cycle
 
-In the webhook-github build flow, this check runs between Phase 0 (pre-context
+In the github-orchestrator build flow, this check runs between Phase 0 (pre-context
 intake) and Phase 1 (architect analysis):
 
 ```

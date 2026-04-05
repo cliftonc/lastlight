@@ -130,7 +130,7 @@ platform_toolsets:
 # ── Webhook Platform (optional) ──────────────────────────────────
 # React to GitHub events in real time. Point your GitHub App's webhook
 # URL at http://your-host:8644/webhooks/github with the same secret.
-# The webhook-github skill handles the logic — edit skills/webhook-github/SKILL.md.
+# The github-orchestrator skill handles the logic — edit skills/github-orchestrator/SKILL.md.
 #
 # platforms:
 #   webhook:
@@ -142,7 +142,7 @@ platform_toolsets:
 #         github:
 #           secret: "your-webhook-secret"
 #           events: ["issues", "pull_request", "issue_comment", "pull_request_review_comment", "pull_request_review"]
-#           skills: ["webhook-github"]
+#           skills: ["github-orchestrator"]
 #           prompt: |
 #             GitHub event: {_event_type}, action: {action}
 #             Repository: {repository.full_name}
