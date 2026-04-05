@@ -6,6 +6,7 @@ secrets/
 .github-token-cache.json
 auth.json
 auth.lock
+.gitconfig-bot
 
 # Runtime state
 sessions/

@@ -33,5 +33,19 @@ if [ -f "$HOME_DIR/.env" ]; then
   set +a
 fi
 
+# Generate .gitconfig-bot from env vars so commits identify as the
+# configured GitHub App (synced into sandboxes via terminal.credential_files).
+if [ -n "${GITHUB_APP_BOT_NAME:-}" ] && [ -n "${GITHUB_APP_BOT_USER_ID:-}" ]; then
+  cat > "$HOME_DIR/.gitconfig-bot" <<EOF
+[credential "https://github.com"]
+	helper = !f() { echo "password=\$(cat /root/.hermes/.gh-token)"; echo "username=x-access-token"; }; f
+
+[user]
+	name = ${GITHUB_APP_BOT_NAME}[bot]
+	email = ${GITHUB_APP_BOT_USER_ID}+${GITHUB_APP_BOT_NAME}[bot]@users.noreply.github.com
+EOF
+  echo "Generated .gitconfig-bot for ${GITHUB_APP_BOT_NAME}[bot]"
+fi
+
 echo "Starting Last Light (HERMES_HOME=$HOME_DIR)..."
 exec "$HOME_DIR/lastlight" "$@"
