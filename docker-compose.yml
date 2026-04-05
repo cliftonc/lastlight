@@ -6,6 +6,7 @@ services:
       - ./secrets:/root/secrets:ro
       - agent-state:/root/sessions
       - agent-logs:/root/logs
+      - agent-db:/root/db
     networks:
       - internal
 
@@ -27,6 +28,7 @@ services:
 volumes:
   agent-state:
   agent-logs:
+  agent-db:
   caddy-data:
   caddy-config:
 

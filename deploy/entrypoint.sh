@@ -23,7 +23,17 @@ for pem in "$SECRETS"/*.pem; do
 done
 
 # Ensure runtime directories exist
-mkdir -p "$HOME_DIR"/{sessions,logs,memories,cache}
+mkdir -p "$HOME_DIR"/{sessions,logs,memories,cache,db}
+
+# If /root/db is a mounted volume (sharing state.db with hermes-watch etc),
+# symlink state.db through it so Hermes's writes land in the shared volume.
+if [ -d "$HOME_DIR/db" ] && [ ! -e "$HOME_DIR/state.db" ]; then
+  ln -sf "$HOME_DIR/db/state.db" "$HOME_DIR/state.db"
+  # Also link the WAL/SHM sidecars so they land in the same volume
+  ln -sf "$HOME_DIR/db/state.db-wal" "$HOME_DIR/state.db-wal"
+  ln -sf "$HOME_DIR/db/state.db-shm" "$HOME_DIR/state.db-shm"
+  echo "Linked state.db into /root/db (shared volume)"
+fi
 
 # Source .env if available
 if [ -f "$HOME_DIR/.env" ]; then
