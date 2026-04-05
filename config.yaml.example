@@ -127,6 +127,20 @@ platform_toolsets:
   - vision
   - web
 
+# ── Skills ───────────────────────────────────────────────────────
+# Internal skills (architect, plan, TDD, etc.) are disabled from auto-selection
+# so the LLM doesn't bypass the github-orchestrator workflow. They're still
+# usable via delegate_task inside the orchestrator.
+skills:
+  disabled:
+    - architect
+    - assure-guardrails
+    - subagent-driven-development
+    - requesting-code-review
+    - test-driven-development
+    - systematic-debugging
+    - plan
+
 # ── Webhook Platform (optional) ──────────────────────────────────
 # React to GitHub events in real time. Point your GitHub App's webhook
 # URL at http://your-host:8644/webhooks/github with the same secret.
