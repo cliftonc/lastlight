@@ -25,6 +25,15 @@ When asked to review a pull request, or when triggered by a cron job to check fo
    - Check against the review guidelines in `.hermes.md`
    - Note the PR size (files changed, lines added/removed)
 
+2b. **For complex PRs** (>300 lines changed OR >5 files changed), use **architect-style deep analysis**:
+   - Clone the repo locally via terminal (not just API reads)
+   - Read changed files in FULL context — understand the surrounding code, not just the diff
+   - Trace data flow through modified functions: what calls them, what they call
+   - Check callers of modified functions for regression risk (`grep -rn "function_name"`)
+   - Look for assumptions the PR makes about the rest of the codebase
+   - Check if tests cover the actual risk areas, not just happy paths
+   - For small PRs (<300 lines, <5 files), the standard API-only flow is sufficient
+
 3. **Categorize findings** into four tiers:
    - **Critical**: Security issues, data loss, breaking changes — these block merge
    - **Important**: Missing tests, perf issues, type errors — should fix
@@ -35,6 +44,10 @@ When asked to review a pull request, or when triggered by a cron job to check fo
    - Start with a 1-2 sentence summary of what the PR does
    - List findings grouped by tier, with file:line references
    - Include inline code suggestions where helpful
+   - For complex PRs, include an **Impact Analysis** section:
+     - What other code paths are affected by these changes
+     - What could break (with file:line refs to callers/dependents)
+     - What assumptions the PR makes about the rest of the codebase
    - End with an overall assessment: approve, request changes, or comment
    - Thank the contributor
 
@@ -51,6 +64,7 @@ When asked to review a pull request, or when triggered by a cron job to check fo
 - Don't repeat what linters/CI already catch
 - Don't block PRs over style preferences alone
 - Large PRs (>500 lines): focus on architecture and critical issues first
+- Complex PRs: clone locally for deep analysis — API-only reads miss context
 
 ## Verification
 - Confirm the review was posted by checking the PR comments

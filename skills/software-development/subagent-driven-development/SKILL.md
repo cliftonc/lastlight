@@ -18,6 +18,15 @@ Execute implementation plans by dispatching fresh subagents per task with system
 
 **Core principle:** Fresh subagent per task + two-stage review (spec then quality) = high quality, fast iteration.
 
+## GitHub-First Gate
+
+Before starting any implementation work, ensure a **GitHub issue** exists to track it:
+- If an issue already exists (e.g. from a webhook event), use it.
+- If the request came from Discord, Slack, or CLI with no linked issue, **create one first**
+  in the appropriate managed repo (see `.hermes.md`). Use the request as the issue body.
+- Post progress updates (plan, task completion, review verdicts) as comments on the issue.
+- **Never start coding without a tracking issue.** The issue is the authorisation gate and audit trail.
+
 ## When to Use
 
 Use this skill when:
@@ -58,12 +67,18 @@ For EACH task in the plan:
 
 #### Step 1: Dispatch Implementer Subagent
 
-Use `delegate_task` with complete context:
+Use `delegate_task` with complete context and explicit role identity:
 
 ```python
 delegate_task(
     goal="Implement Task 1: Create User model with email and password_hash fields",
     context="""
+    ROLE: You are the EXECUTOR. You implement precisely what the task spec
+    requires, no more, no less. Keep going until the task is fully resolved.
+    Do not claim completion without fresh verification output (test results,
+    build output). Prefer the smallest viable diff. Do not broaden scope
+    unless correctness requires it.
+
     TASK FROM PLAN:
     - Create: src/models/user.py
     - Add User class with email (str) and password_hash (str) fields
@@ -76,7 +91,11 @@ delegate_task(
     3. Write minimal implementation
     4. Run: pytest tests/models/test_user.py -v (verify PASS)
     5. Run: pytest tests/ -q (verify no regressions)
-    6. Commit: git add -A && git commit -m "feat: add User model with password hashing"
+    6. Commit with Lore format:
+       git add -A && git commit -m "feat: add User model with password hashing
+
+       Tested: pytest tests/models/test_user.py -> all passing
+       Scope-risk: low"
 
     PROJECT CONTEXT:
     - Python 3.11, Flask app in src/app.py
@@ -96,6 +115,11 @@ After the implementer completes, verify against the original spec:
 delegate_task(
     goal="Review if implementation matches the spec from the plan",
     context="""
+    ROLE: You are the SPEC REVIEWER. You verify implementations against
+    specifications. You do not fix code — you report gaps. Every finding
+    must cite file:line evidence. You have no shared context with the
+    implementer. Judge only by the spec and the code.
+
     ORIGINAL TASK SPEC:
     - Create src/models/user.py with User class
     - Fields: email (str), password_hash (str)
@@ -109,7 +133,7 @@ delegate_task(
     - [ ] Behavior matches expected?
     - [ ] Nothing extra added (no scope creep)?
 
-    OUTPUT: PASS or list of specific spec gaps to fix.
+    OUTPUT: PASS or list of specific spec gaps to fix (with file:line refs).
     """,
     toolsets=['file']
 )
@@ -125,6 +149,11 @@ After spec compliance passes:
 delegate_task(
     goal="Review code quality for Task 1 implementation",
     context="""
+    ROLE: You are the CODE REVIEWER. Independent quality verification.
+    You have no shared context with the implementer. Review only the code,
+    not the process. Every finding must cite file:line evidence. You do not
+    fix code — you report issues.
+
     FILES TO REVIEW:
     - src/models/user.py
     - tests/models/test_user.py
@@ -138,7 +167,7 @@ delegate_task(
     - [ ] No security issues?
 
     OUTPUT FORMAT:
-    - Critical Issues: [must fix before proceeding]
+    - Critical Issues: [must fix before proceeding] (with file:line refs)
     - Important Issues: [should fix]
     - Minor Issues: [optional]
     - Verdict: APPROVED or REQUEST_CHANGES
@@ -163,15 +192,60 @@ After ALL tasks are complete, dispatch a final integration reviewer:
 delegate_task(
     goal="Review the entire implementation for consistency and integration issues",
     context="""
+    ROLE: You are the CODE REVIEWER performing integration review.
+    You have no shared context with the implementers. Verify the full
+    implementation works as a cohesive whole.
+
     All tasks from the plan are complete. Review the full implementation:
     - Do all components work together?
     - Any inconsistencies between tasks?
-    - All tests passing?
+    - All tests passing? (run them — do not assume)
     - Ready for merge?
+
+    OUTPUT: APPROVED or REQUEST_CHANGES with specific issues (file:line refs).
     """,
     toolsets=['terminal', 'file']
 )
 ```
+
+### 3b. Architect Completion Gate
+
+After the integration reviewer passes, dispatch an architect for a final completeness check.
+This is the "persistent until verified complete" gate — it catches gaps that individual task
+reviews miss because they lack the full picture.
+
+```python
+delegate_task(
+    goal="Architect completion verification — is this truly done?",
+    context="""
+    ROLE: You are the ARCHITECT. Read-only verification. You do not fix
+    code — you assess completeness and architectural coherence.
+
+    All tasks from the plan are implemented and have passed both spec
+    compliance and code quality review.
+
+    Verify the ENTIRE implementation against the original requirements:
+    - Does the full implementation satisfy the original requirements?
+    - Any gaps between what was planned and what was built?
+    - Any architectural concerns with how the pieces fit together?
+    - Are there loose ends, missing error paths, or untested edge cases?
+    - Would you ship this? If not, what specifically is missing?
+
+    ORIGINAL PLAN:
+    [INSERT FULL PLAN CONTENT]
+
+    OUTPUT FORMAT:
+    - Verdict: COMPLETE or INCOMPLETE
+    - If INCOMPLETE: specific gaps with file:line references
+    - If COMPLETE: one-sentence confirmation
+    """,
+    toolsets=['terminal', 'file']
+)
+```
+
+**If INCOMPLETE:** Create new tasks for the identified gaps, execute them through the
+same per-task workflow (Steps 2-3), and re-run the architect gate. Maximum 2 cycles —
+after that, report remaining gaps to the user.
 
 ### 4. Verify and Commit
 
