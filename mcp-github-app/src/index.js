@@ -65,8 +65,8 @@ server.tool(
       return jsonResult({
         expires_at: auth.expiresAt?.toISOString(),
         token_file: tokenPath,
-        configure_git: `git config --global include.path /root/.hermes/.gitconfig-bot`,
-        configure_gh: `export GITHUB_TOKEN="$(cat /root/.hermes/.gh-token)"`,
+        configure_git: `git config --global include.path ${hermesHome}/.gitconfig-bot`,
+        configure_gh: `export GITHUB_TOKEN="$(cat ${hermesHome}/.gh-token)"`,
         install_gh: "(command -v gh >/dev/null 2>&1) || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt-get update -qq && apt-get install gh -y -qq)",
         clone_with: `git clone https://github.com/${owner}/${repo}.git`,
         instructions: "1. Run configure_git (one-time per session — sets up credential helper + bot identity via .gitconfig-bot include). 2. git clone/push/pull just work — credential helper reads the auto-synced token file. 3. For gh CLI: run configure_gh or install_gh if needed.",

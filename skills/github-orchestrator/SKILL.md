@@ -71,18 +71,53 @@ All phases below post brief progress updates to this tracking issue.
    mcp_github_setup_git_auth
    cd /root && rm -rf /tmp/{repo} && git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
    ```
-4. **Check for existing branch and plan (resume detection):**
+4. **Check for existing branch and resume state:**
    ```
    cd /tmp/{repo}
    git branch -a --list '*lastlight/{issue-number}*'
    ```
    - If a branch `lastlight/{issue-number}-*` exists:
      - `git checkout {branch}`
-     - Check if `.lastlight/issue-{issue-number}/architect-plan.md` exists on that branch
-     - **If plan exists** → skip Guardrails and Phase 1, go directly to Phase 2
-       Post to the issue: `"Found existing architect plan on branch \`{branch}\`. Resuming from implementation phase."`
-     - **If branch exists but no plan** → continue to Phase 1 (architect will use this branch)
+     - Read `.lastlight/issue-{issue-number}/status.md` if it exists — this is the orchestrator's state file
+     - Resume from the phase indicated by the `current_phase` field in the status file
+     - If no status file, infer state from which files exist (architect-plan.md, executor-summary.md, reviewer-verdict.md)
+     - Post a comment indicating where you're resuming from
+     - To check for an open PR: use `mcp_github_list_pull_requests` with `head={branch}` and `state=open`
    - If no branch exists → continue normally from step 5
+
+#### Orchestrator State File: `.lastlight/issue-{issue-number}/status.md`
+
+The orchestrator maintains this file to track progress. Read it on resume, update it after each phase transition, commit and push with each update.
+
+```markdown
+# Orchestrator Status: #{issue-number}
+
+| Field | Value |
+|-------|-------|
+| issue | {owner}/{repo}#{issue-number} |
+| branch | lastlight/{issue-number}-{slug} |
+| current_phase | {phase_0 / architect / executor / reviewer / fix_loop_N / pr_created / complete} |
+| last_updated | {ISO timestamp} |
+| fix_cycles | {0, 1, 2} |
+| pr_number | {number or empty} |
+
+## Phase Log
+| Phase | Status | Timestamp | Notes |
+|-------|--------|-----------|-------|
+| phase_0 | complete | {timestamp} | Context assembled |
+| architect | complete | {timestamp} | Plan written to architect-plan.md |
+| executor | complete | {timestamp} | Implementation done, 5 files changed |
+| reviewer | request_changes | {timestamp} | 2 issues found |
+| fix_loop_1 | complete | {timestamp} | Fixed 2 issues |
+| reviewer_2 | approved | {timestamp} | All clear |
+| pr | created | {timestamp} | PR #123 |
+```
+
+**Update rules:**
+- Create the file in Phase 0 with `current_phase: phase_0`
+- After each phase completes, update `current_phase` and append to the Phase Log
+- Always commit + push the status update alongside phase artifacts
+- On resume, read `current_phase` to determine where to continue
 5. Read repo docs from the clone: `cat /tmp/{repo}/CLAUDE.md`, `AGENTS.md`,
    `README.md`, `package.json` via `terminal` or `read_file`. Do NOT use
    `mcp_github_get_file_contents` for files you can read from the clone.
@@ -335,8 +370,15 @@ mcp_github_add_issue_comment: "🔄 **Review: REQUEST_CHANGES** — fixing issue
 #### Phase 4: Fix Loop (if REQUEST_CHANGES, max 2 cycles)
 
 If the reviewer returns REQUEST_CHANGES:
-1. Dispatch a new executor to fix ONLY the reported issues (not the original executor — fresh context)
-2. Re-run the reviewer
+1. Dispatch a new executor to fix ONLY the reported issues (not the original executor — fresh context).
+   The fix executor must:
+   - Read `.lastlight/issue-{issue-number}/reviewer-verdict.md` for the issues to fix
+   - Read `.lastlight/issue-{issue-number}/executor-summary.md` for context on what was already done
+   - **APPEND** a new section to `executor-summary.md` — do NOT overwrite the existing content.
+     Use a heading like `## Fix Cycle {n}: {date}` followed by the same structure (what was done, files changed, test results, deviations, known issues)
+   - Commit and push
+2. Re-run the reviewer. The reviewer must **APPEND** a new section to `reviewer-verdict.md` — do NOT overwrite.
+   Use a heading like `## Re-review Cycle {n}: {date}` followed by the same structure (verdict, issues, test results, suggestions).
 3. After 2 failed cycles: push what we have, note remaining issues in the PR description
 
 #### Phase 5: Create PR
