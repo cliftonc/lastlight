@@ -20,10 +20,11 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@hono/node-server": "^1.0.0",
+    "@slack/bolt": "^4.6.0",
     "better-sqlite3": "^11.0.0",
     "croner": "^9.0.0",
-    "hono": "^4.0.0",
-    "@hono/node-server": "^1.0.0"
+    "hono": "^4.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

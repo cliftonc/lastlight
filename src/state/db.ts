@@ -5,7 +5,7 @@ const DEFAULT_DB_PATH = "lastlight.db";
 
 export interface ExecutionRecord {
   id: string;
-  triggerType: "webhook" | "cron";
+  triggerType: "webhook" | "cron" | "chat" | "api";
   triggerId: string;
   skill: string;
   repo?: string;
@@ -192,6 +192,11 @@ export class StateDb {
     }
 
     return { total_executions: total, today_count: todayCount, by_skill, by_trigger, running };
+  }
+
+  /** Expose the underlying Database instance (for SessionManager, etc.) */
+  get database(): Database.Database {
+    return this.db;
   }
 
   close(): void {

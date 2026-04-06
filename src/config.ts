@@ -21,6 +21,17 @@ function loadDotEnv(path: string): void {
   }
 }
 
+export interface SlackConfig {
+  /** Bot User OAuth Token (xoxb-...) */
+  botToken: string;
+  /** App-Level Token for Socket Mode (xapp-...) */
+  appToken: string;
+  /** Comma-separated Slack user IDs allowed to interact */
+  allowedUsers: string[];
+  /** Channel ID for cron report delivery */
+  deliveryChannel?: string;
+}
+
 export interface LastLightConfig {
   /** Webhook listener port */
   port: number;
@@ -40,12 +51,14 @@ export interface LastLightConfig {
   model: string;
   /** Max agent turns */
   maxTurns: number;
-  /** GitHub App config */
-  githubApp: {
+  /** GitHub App config (optional — not needed for messaging-only mode) */
+  githubApp?: {
     appId: string;
     privateKeyPath: string;
     installationId: string;
   };
+  /** Slack connector config (present when SLACK_BOT_TOKEN is set) */
+  slack?: SlackConfig;
 }
 
 /**
@@ -58,9 +71,28 @@ export function loadConfig(): LastLightConfig {
 
   const stateDir = resolve(process.env.STATE_DIR || "./data");
 
+  // GitHub App config is optional — allows messaging-only mode
+  const githubApp = process.env.GITHUB_APP_ID
+    ? {
+        appId: process.env.GITHUB_APP_ID,
+        privateKeyPath: requireEnv("GITHUB_APP_PRIVATE_KEY_PATH"),
+        installationId: requireEnv("GITHUB_APP_INSTALLATION_ID"),
+      }
+    : undefined;
+
+  // Slack config is optional — only if SLACK_BOT_TOKEN is set
+  const slack = process.env.SLACK_BOT_TOKEN
+    ? {
+        botToken: process.env.SLACK_BOT_TOKEN,
+        appToken: requireEnv("SLACK_APP_TOKEN"),
+        allowedUsers: (process.env.SLACK_ALLOWED_USERS || "").split(",").filter(Boolean),
+        deliveryChannel: process.env.SLACK_DELIVERY_CHANNEL || undefined,
+      }
+    : undefined;
+
   return {
     port: parseInt(process.env.WEBHOOK_PORT || process.env.PORT || "8644", 10),
-    webhookSecret: requireEnv("WEBHOOK_SECRET"),
+    webhookSecret: process.env.WEBHOOK_SECRET || "",
     botLogin: process.env.BOT_LOGIN || "last-light[bot]",
     mcpConfigPath: process.env.MCP_CONFIG_PATH || resolve("mcp-config.json"),
     stateDir,
@@ -68,11 +100,8 @@ export function loadConfig(): LastLightConfig {
     dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db"),
     model: process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
-    githubApp: {
-      appId: requireEnv("GITHUB_APP_ID"),
-      privateKeyPath: requireEnv("GITHUB_APP_PRIVATE_KEY_PATH"),
-      installationId: requireEnv("GITHUB_APP_INSTALLATION_ID"),
-    },
+    githubApp,
+    slack,
   };
 }
 
@@ -88,17 +117,19 @@ function requireEnv(name: string): string {
  * Generate MCP config file for the Agent SDK from the GitHub App config.
  */
 export function generateMcpConfig(config: LastLightConfig): object {
-  return {
-    mcpServers: {
-      github: {
-        command: "node",
-        args: [resolve("mcp-github-app/src/index.js")],
-        env: {
-          GITHUB_APP_ID: config.githubApp.appId,
-          GITHUB_APP_PRIVATE_KEY_PATH: resolve(config.githubApp.privateKeyPath),
-          GITHUB_APP_INSTALLATION_ID: config.githubApp.installationId,
-        },
+  const mcpServers: Record<string, unknown> = {};
+
+  if (config.githubApp) {
+    mcpServers.github = {
+      command: "node",
+      args: [resolve("mcp-github-app/src/index.js")],
+      env: {
+        GITHUB_APP_ID: config.githubApp.appId,
+        GITHUB_APP_PRIVATE_KEY_PATH: resolve(config.githubApp.privateKeyPath),
+        GITHUB_APP_INSTALLATION_ID: config.githubApp.installationId,
       },
-    },
-  };
+    };
+  }
+
+  return { mcpServers };
 }

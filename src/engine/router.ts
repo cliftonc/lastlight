@@ -97,9 +97,93 @@ export function routeEvent(envelope: EventEnvelope): RoutingResult {
     case "pr_review_comment.created":
       return { action: "ignore", reason: "PR review events not yet handled" };
 
-    case "message":
-      // Future: Slack/Discord messages → create GitHub issue → orchestrate
-      return { action: "ignore", reason: "chat messages not yet handled" };
+    case "message": {
+      const text = envelope.body.trim();
+      const raw = envelope.raw as Record<string, unknown> | undefined;
+
+      // Command: /new or /reset — session reset (handled by connector)
+      if (text === "/new" || text === "/reset") {
+        return {
+          action: "skill",
+          skill: "chat-reset",
+          context: {
+            sessionId: raw?.sessionId,
+            sender: envelope.sender,
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Command: /build owner/repo#N — trigger build cycle
+      const buildMatch = text.match(/^\/build\s+(.+?)(?:#(\d+))?$/i);
+      if (buildMatch) {
+        const repo = buildMatch[1];
+        const issueNumber = buildMatch[2] ? parseInt(buildMatch[2], 10) : undefined;
+        return {
+          action: "skill",
+          skill: "github-orchestrator",
+          context: {
+            repo,
+            issueNumber,
+            sender: envelope.sender,
+            commentBody: text,
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Command: /triage owner/repo — trigger triage
+      const triageMatch = text.match(/^\/triage\s+(.+)$/i);
+      if (triageMatch) {
+        return {
+          action: "skill",
+          skill: "issue-triage",
+          context: {
+            repo: triageMatch[1],
+            sender: envelope.sender,
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Command: /review owner/repo — trigger PR review
+      const reviewMatch = text.match(/^\/review\s+(.+)$/i);
+      if (reviewMatch) {
+        return {
+          action: "skill",
+          skill: "pr-review",
+          context: {
+            repo: reviewMatch[1],
+            sender: envelope.sender,
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Command: /status — report on running tasks
+      if (text === "/status") {
+        return {
+          action: "skill",
+          skill: "status-report",
+          context: {
+            sender: envelope.sender,
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Default: conversational chat
+      return {
+        action: "skill",
+        skill: "chat",
+        context: {
+          sessionId: raw?.sessionId,
+          message: text,
+          sender: envelope.sender,
+          source: envelope.source,
+        },
+      };
+    }
 
     default:
       return { action: "ignore", reason: `unhandled event type: ${envelope.type}` };

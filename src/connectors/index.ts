@@ -47,3 +47,5 @@ export class ConnectorRegistry {
 
 export { type Connector, type EventEnvelope, type EventType } from "./types.js";
 export { GitHubWebhookConnector, type GitHubWebhookConfig } from "./github-webhook.js";
+export { MessagingConnector, SessionManager, MessageDeliveryService } from "./messaging/index.js";
+export { SlackConnector, type SlackConnectorConfig } from "./slack/index.js";
