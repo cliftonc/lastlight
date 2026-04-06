@@ -23,7 +23,10 @@
 model:
   default: anthropic/claude-sonnet-4    # change to your preferred model
   provider: openrouter                  # change to your preferred provider
-# base_url: https://chatgpt.com/backend-api/codex  # only needed for openai-codex
+  # For Codex OAuth (free with ChatGPT Plus):
+  # default: gpt-5.3-codex
+  # provider: openai-codex
+  # base_url: https://chatgpt.com/backend-api/codex
 
 # ── Agent ────────────────────────────────────────────────────────
 agent:
@@ -96,8 +99,9 @@ memory:
 # model so they share credentials. gpt-4o-mini works well for all of these.
 compression:
   enabled: true
-  summary_provider: openrouter
-  summary_model: gpt-4o-mini
+  threshold: 0.25                       # compress at 25% of context window
+  summary_provider: openrouter          # or openai-codex for Codex OAuth
+  summary_model: gpt-4o-mini            # or gpt-5.4-mini for Codex
 
 auxiliary:
   session_search:
@@ -119,6 +123,9 @@ auxiliary:
     provider: openrouter
     model: gpt-4o-mini
   flush_memories:
+    provider: openrouter
+    model: gpt-4o-mini
+  approval:
     provider: openrouter
     model: gpt-4o-mini
 
