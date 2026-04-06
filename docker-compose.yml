@@ -4,6 +4,9 @@ services:
     restart: unless-stopped
     ports:
       - "8644:8644"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./secrets:/app/secrets:ro
       - agent-data:/app/data
