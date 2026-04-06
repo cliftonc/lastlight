@@ -308,9 +308,9 @@ Use the right tool for the job:
 
 ## Always Ignore
 
+- **Actions other than the ones explicitly listed above** — especially `deleted`, `edited`, `labeled`, `unlabeled`, `assigned`, `closed`, `synchronize`. If the action is not `created`, `opened`, `reopened`, or `submitted`, respond with "No action needed." and STOP. Do NOT start any work.
 - Events where `sender.type` is `Bot`, or sender login ends in `[bot]`
 - Events where the sender matches the bot mention name
-- Any action not explicitly listed above
 - If in doubt, do nothing — silence is better than noise
 
 ## Response Format
