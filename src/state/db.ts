@@ -136,6 +136,64 @@ export class StateDb {
     `).run(resource, remaining, resetAt, new Date().toISOString(), remaining, resetAt, new Date().toISOString());
   }
 
+  /** Get all executions with pagination */
+  allExecutions(limit = 100, offset = 0): ExecutionRecord[] {
+    return this.db.prepare(`
+      SELECT * FROM executions
+      ORDER BY started_at DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset) as ExecutionRecord[];
+  }
+
+  /** Get currently running executions (no finished_at) */
+  runningExecutions(): ExecutionRecord[] {
+    return this.db.prepare(`
+      SELECT * FROM executions
+      WHERE finished_at IS NULL
+      ORDER BY started_at DESC
+    `).all() as ExecutionRecord[];
+  }
+
+  /** Aggregate execution stats */
+  executionStats(): {
+    total_executions: number;
+    today_count: number;
+    by_skill: Record<string, { count: number; success: number; fail: number }>;
+    by_trigger: Record<string, number>;
+    running: number;
+  } {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayIso = today.toISOString();
+
+    const total = (this.db.prepare(`SELECT COUNT(*) as c FROM executions`).get() as { c: number }).c;
+    const todayCount = (this.db.prepare(`SELECT COUNT(*) as c FROM executions WHERE started_at >= ?`).get(todayIso) as { c: number }).c;
+    const running = (this.db.prepare(`SELECT COUNT(*) as c FROM executions WHERE finished_at IS NULL`).get() as { c: number }).c;
+
+    const skillRows = this.db.prepare(`
+      SELECT skill, COUNT(*) as count,
+        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success,
+        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as fail
+      FROM executions GROUP BY skill
+    `).all() as { skill: string; count: number; success: number; fail: number }[];
+
+    const by_skill: Record<string, { count: number; success: number; fail: number }> = {};
+    for (const r of skillRows) {
+      by_skill[r.skill] = { count: r.count, success: r.success, fail: r.fail };
+    }
+
+    const triggerRows = this.db.prepare(`
+      SELECT trigger_type, COUNT(*) as count FROM executions GROUP BY trigger_type
+    `).all() as { trigger_type: string; count: number }[];
+
+    const by_trigger: Record<string, number> = {};
+    for (const r of triggerRows) {
+      by_trigger[r.trigger_type] = r.count;
+    }
+
+    return { total_executions: total, today_count: todayCount, by_skill, by_trigger, running };
+  }
+
   close(): void {
     this.db.close();
   }

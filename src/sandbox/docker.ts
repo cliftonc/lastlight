@@ -1,7 +1,10 @@
-import { execFileSync } from "child_process";
+import { execFileSync, execFile as execFileCb } from "child_process";
+import { promisify } from "util";
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { randomUUID } from "crypto";
+
+const execFileAsync = promisify(execFileCb);
 
 /**
  * Docker sandbox manager — runs agent tasks in isolated sibling containers.
@@ -92,8 +95,9 @@ export class DockerSandbox {
 
   /**
    * Run the Claude CLI inside the sandbox with a prompt.
+   * Runs asynchronously — does not block the event loop.
    */
-  runAgent(taskId: string, prompt: string, opts?: { model?: string }): string {
+  async runAgent(taskId: string, prompt: string, opts?: { model?: string }): Promise<string> {
     const info = this.activeContainers.get(taskId);
     if (!info) throw new Error(`No sandbox for task ${taskId}`);
 
@@ -114,7 +118,12 @@ export class DockerSandbox {
     const args = ["exec", "--user", "agent", "-w", WORKSPACE_DIR, info.containerName, "sh", "-c", cmd];
 
     try {
-      return execCmd("docker", args, { timeout: timeout * 1000 });
+      const { stdout } = await execFileAsync("docker", args, {
+        encoding: "utf-8",
+        timeout: timeout * 1000,
+        maxBuffer: 50 * 1024 * 1024, // 50MB — agent output can be large
+      });
+      return stdout;
     } catch (err: any) {
       const stderr = err.stderr?.toString() || "";
       const stdout = err.stdout?.toString() || "";

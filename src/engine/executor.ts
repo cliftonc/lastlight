@@ -160,7 +160,7 @@ async function executeSandboxed(
   console.log(`  [executor] Running in sandbox (task: ${taskId})`);
 
   try {
-    const output = sandbox.runAgent(taskId, prompt, { model: config.model });
+    const output = await sandbox.runAgent(taskId, prompt, { model: config.model });
 
     // Parse stream-json for final result
     const lines = output.split("\n").filter(l => l.startsWith("{"));

@@ -10,6 +10,7 @@ import { configureGitAuth } from "./engine/git-auth.js";
 import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
+import { mountAdmin } from "./admin/index.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 async function main() {
@@ -89,6 +90,15 @@ async function main() {
     botLogin: config.botLogin,
   });
   registry.register(githubConnector);
+
+  // Mount admin dashboard
+  mountAdmin(githubConnector.honoApp, db, {
+    stateDir: config.stateDir,
+    sessionsDir: resolve(process.env.CLAUDE_HOME_DIR || "./data/claude-home"),
+    adminPassword: process.env.ADMIN_PASSWORD ?? "",
+    adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
+  });
+  console.log(`[admin] Dashboard mounted at /admin`);
 
   // API endpoint for CLI triggers
   githubConnector.honoApp.post("/api/run", async (c) => {

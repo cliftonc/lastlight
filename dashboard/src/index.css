@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  @apply font-sans text-sm text-base-content bg-base-100;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: theme("colors.base-300");
+  border-radius: 5px;
+  border: 2px solid theme("colors.base-100");
+}
+::-webkit-scrollbar-thumb:hover {
+  background: theme("colors.neutral");
+}
+
+/* Flash animation for new streamed messages */
+@keyframes message-flash {
+  0% {
+    background-color: theme("colors.primary / 10%");
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.message-new {
+  animation: message-flash 1.5s ease-out;
+}
+
+/* Search highlight */
+.search-hit {
+  @apply bg-accent/30 text-accent-content rounded px-0.5;
+}
+
+/* Prose tuning for markdown inside message bubbles */
+.ll-prose {
+  @apply text-sm leading-relaxed text-base-content;
+}
+.ll-prose p {
+  @apply my-2;
+}
+.ll-prose p:first-child {
+  @apply mt-0;
+}
+.ll-prose p:last-child {
+  @apply mb-0;
+}
+.ll-prose code {
+  @apply font-mono text-xs bg-base-300 text-accent px-1 py-0.5 rounded;
+}
+.ll-prose pre {
+  @apply font-mono text-xs bg-base-300 text-base-content p-3 rounded my-2 overflow-x-auto;
+}
+.ll-prose pre code {
+  @apply bg-transparent text-inherit p-0;
+}
+.ll-prose a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+.ll-prose ul,
+.ll-prose ol {
+  @apply my-2 pl-5;
+}
+.ll-prose ul {
+  @apply list-disc;
+}
+.ll-prose ol {
+  @apply list-decimal;
+}
+.ll-prose li {
+  @apply my-1;
+}
+.ll-prose strong {
+  @apply font-semibold text-base-content;
+}
+.ll-prose em {
+  @apply italic text-base-content/90;
+}
+.ll-prose blockquote {
+  @apply border-l-2 border-base-300 pl-3 my-2 text-base-content/80;
+}
+.ll-prose h1,
+.ll-prose h2,
+.ll-prose h3,
+.ll-prose h4 {
+  @apply font-semibold text-base-content mt-3 mb-1;
+}
+.ll-prose h1 {
+  @apply text-base;
+}
+.ll-prose h2 {
+  @apply text-sm;
+}
+.ll-prose h3,
+.ll-prose h4 {
+  @apply text-sm;
+}
+.ll-prose table {
+  @apply my-2 text-xs border-collapse;
+}
+.ll-prose th,
+.ll-prose td {
+  @apply border border-base-300 px-2 py-1 text-left;
+}
+.ll-prose th {
+  @apply bg-base-300 font-semibold;
+}
+.ll-prose hr {
+  @apply border-base-300 my-3;
+}

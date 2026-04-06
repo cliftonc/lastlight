@@ -26,6 +26,7 @@ COPY mcp-github-app/ mcp-github-app/
 
 # Harness deps — change when package.json changes
 COPY package.json package-lock.json* ./
+COPY dashboard/package.json dashboard/package.json
 RUN npm install --prefer-offline --no-audit \
     && npm cache clean --force
 
@@ -35,8 +36,11 @@ COPY tsconfig.json ./
 # Harness source — changes often
 COPY src/ src/
 
-# Build TypeScript
-RUN npm run build
+# Dashboard source
+COPY dashboard/ dashboard/
+
+# Build TypeScript harness + dashboard
+RUN npm run build && npm run build:dashboard
 
 # Skills — changes often
 COPY skills/ skills/
@@ -59,6 +63,7 @@ VOLUME ["/app/data", "/app/secrets"]
 RUN chown -R lastlight:lastlight /app /app/data
 
 ENV STATE_DIR=/app/data
+ENV CLAUDE_HOME_DIR=/app/data/claude-home
 ENV HOME=/home/lastlight
 ENV NODE_ENV=production
 EXPOSE 8644
