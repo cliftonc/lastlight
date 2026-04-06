@@ -35,12 +35,18 @@ async function main() {
   console.log(`[config] MCP config written to: ${mcpConfigPath}`);
 
   // Configure git with GitHub App credentials — agents can git clone/push natively
+  // Non-fatal: if this fails (e.g., DNS not ready yet), the app still starts.
+  // Git auth is refreshed before each agent execution anyway.
   if (config.githubApp) {
-    await configureGitAuth({
-      appId: config.githubApp.appId,
-      privateKeyPath: config.githubApp.privateKeyPath,
-      installationId: config.githubApp.installationId,
-    });
+    try {
+      await configureGitAuth({
+        appId: config.githubApp.appId,
+        privateKeyPath: config.githubApp.privateKeyPath,
+        installationId: config.githubApp.installationId,
+      });
+    } catch (err: any) {
+      console.warn(`[git-auth] Initial git auth failed (will retry per-execution): ${err.message}`);
+    }
   }
 
   // Initialize state database
