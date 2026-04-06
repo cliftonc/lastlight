@@ -228,7 +228,10 @@ delegate_task(
     3. git clone --quiet -b {branch} https://github.com/{owner}/{repo}.git /tmp/{repo}
     4. cd /tmp/{repo}
     5. Read the architect plan: cat .lastlight/issue-{issue-number}/architect-plan.md
-    6. Follow that plan precisely.
+    6. Update .lastlight/issue-{issue-number}/status.md: set current_phase to "executor",
+       append a Phase Log row: "| executor | in_progress | {timestamp} | Starting implementation |"
+    7. git add .lastlight/ && git commit -m "status: executor starting #{issue-number}" && git push --quiet origin HEAD 2>&1 | cat
+    8. Follow the architect plan precisely.
 
     EXECUTION:
     - Follow TDD: write failing test first, then implement, then verify
@@ -254,7 +257,10 @@ delegate_task(
     ## Known issues or concerns
     (Anything the reviewer should pay extra attention to.)
 
-    COMMIT (include both implementation and summary):
+    ALSO UPDATE STATUS: In .lastlight/issue-{issue-number}/status.md, set current_phase
+    to "executor_complete" and update the executor Phase Log row status to "complete".
+
+    COMMIT (include implementation, summary, AND status update):
     git add -A && git commit -m "feat: {intent-first description} (#{issue})
 
     Tested: {test command} -> {result summary}
@@ -301,8 +307,12 @@ delegate_task(
 
     SETUP (run first — each delegated task gets its own sandbox):
     1. mcp_github_setup_git_auth
-    2. rm -rf /tmp/{repo} && git clone --quiet -b {branch} https://github.com/{owner}/{repo}.git /tmp/{repo}
-    3. cd /tmp/{repo}
+    2. Run the configure_git command returned by setup_git_auth
+    3. rm -rf /tmp/{repo} && git clone --quiet -b {branch} https://github.com/{owner}/{repo}.git /tmp/{repo}
+    4. cd /tmp/{repo}
+    5. Update .lastlight/issue-{issue-number}/status.md: set current_phase to "reviewer",
+       append a Phase Log row: "| reviewer | in_progress | {timestamp} | Starting review |"
+    6. git add .lastlight/ && git commit -m "status: reviewer starting #{issue-number}" && git push --quiet origin HEAD 2>&1 | cat
 
     SCOPE — CRITICAL:
     Review ONLY the files changed in this commit. Do NOT review the rest
@@ -348,8 +358,11 @@ delegate_task(
     ## Suggestions
     (Non-blocking improvements to the changes.)
 
+    ALSO UPDATE STATUS: In .lastlight/issue-{issue-number}/status.md, set current_phase
+    to "reviewer_approved" or "reviewer_request_changes" and update the reviewer Phase Log row.
+
     THEN:
-    1. git add .lastlight/issue-{issue-number}/reviewer-verdict.md
+    1. git add .lastlight/issue-{issue-number}/
     2. git commit -m "review: verdict for #{issue-number}"
     3. git push --quiet origin HEAD 2>&1 | cat
 
