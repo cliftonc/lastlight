@@ -2,13 +2,25 @@ services:
   agent:
     build: .
     restart: unless-stopped
+    ports:
+      - "8644:8644"
     volumes:
-      - ./secrets:/root/secrets:ro
-      - agent-state:/root/sessions
-      - agent-logs:/root/logs
-      - agent-db:/root/db
+      - ./secrets:/app/secrets:ro
+      - agent-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock   # spawn sandbox containers
+    env_file:
+      - .env
     networks:
       - internal
+
+  # Build the sandbox image (used by the harness to spawn per-task containers)
+  sandbox:
+    build:
+      context: .
+      dockerfile: sandbox.Dockerfile
+    image: lastlight-sandbox:latest
+    profiles:
+      - build-only     # never started as a service, just built
 
   caddy:
     image: caddy:2-alpine
@@ -26,9 +38,7 @@ services:
       - internal
 
 volumes:
-  agent-state:
-  agent-logs:
-  agent-db:
+  agent-data:       # contains: lastlight.db, claude-home/, sandboxes/, logs/
   caddy-data:
   caddy-config:
 

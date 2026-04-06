@@ -1,50 +1,67 @@
-FROM debian:13.4
+FROM node:20-slim
 
-# System dependencies: Python 3, Node.js, git, build tools
+# System deps: git, ripgrep, docker CLI (for spawning sandbox containers), gosu (drop privileges)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-dev python3-venv \
-    build-essential gcc libffi-dev \
-    nodejs npm \
-    git ripgrep curl jq openssh-client ca-certificates \
+    git ripgrep curl jq ca-certificates gosu \
+    && curl -fsSL https://get.docker.com | sh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Hermes Agent from source (not published on PyPI)
-# Expensive — keep cached across rebuilds unless Hermes itself updates.
-RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /opt/hermes && \
-    pip install --no-cache-dir --break-system-packages -e "/opt/hermes[all]"
+# Create non-root user — Claude Code blocks bypassPermissions as root
+# Add to docker group so they can spawn sandbox containers via socket
+RUN useradd -m -s /bin/bash lastlight && usermod -aG docker lastlight
 
-WORKDIR /root
+# Install Claude Code CLI for the lastlight user
+USER lastlight
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/lastlight/.local/bin:${PATH}"
+USER root
 
-# Layers ordered from least-frequently-changed to most-frequently-changed
-# so small edits (e.g. SOUL.md tweaks) don't bust expensive layers.
+WORKDIR /app
 
 # MCP server deps — rarely change
-COPY mcp-github-app/ mcp-github-app/
+COPY mcp-github-app/package.json mcp-github-app/package.json
 RUN cd mcp-github-app && npm install --prefer-offline --no-audit \
     && npm cache clean --force
+COPY mcp-github-app/ mcp-github-app/
 
-# Deploy scripts, helper scripts — rarely change
-COPY scripts/ scripts/
-COPY deploy/ deploy/
+# Harness deps — change when package.json changes
+COPY package.json package-lock.json* ./
+RUN npm install --prefer-offline --no-audit \
+    && npm cache clean --force
 
-# Runtime dirs, mount points, env, port
-RUN mkdir -p sessions logs memories
-VOLUME ["/root/secrets"]
-ENV HERMES_HOME=/root
-EXPOSE 8644
+# TypeScript config
+COPY tsconfig.json ./
 
-# Launcher + config templates — occasional changes
-COPY lastlight config.yaml.example .env.example ./
-RUN chmod +x /root/deploy/entrypoint.sh /root/lastlight
+# Harness source — changes often
+COPY src/ src/
 
-# Scheduled jobs — occasional changes
-COPY cron/ cron/
+# Build TypeScript
+RUN npm run build
 
 # Skills — changes often
 COPY skills/ skills/
 
-# Project context & personality — most frequently changed
-COPY .hermes.md SOUL.md ./
+# Agent context (soul, rules) — changes often
+COPY agent-context/ agent-context/
 
-ENTRYPOINT ["/root/deploy/entrypoint.sh"]
-CMD ["gateway"]
+# Project context for devs
+COPY CLAUDE.md ./
+
+# Deploy scripts
+COPY deploy/ deploy/
+RUN chmod +x /app/deploy/entrypoint.sh
+
+# State directory — mount as Docker volume
+RUN mkdir -p /app/data/sessions /app/data/logs
+VOLUME ["/app/data", "/app/secrets"]
+
+# Own app dirs for lastlight user
+RUN chown -R lastlight:lastlight /app /app/data
+
+ENV STATE_DIR=/app/data
+ENV HOME=/home/lastlight
+ENV NODE_ENV=production
+EXPOSE 8644
+
+ENTRYPOINT ["/app/deploy/entrypoint.sh"]
+CMD ["node", "dist/index.js"]

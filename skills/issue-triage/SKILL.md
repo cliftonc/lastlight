@@ -1,12 +1,8 @@
 ---
 name: issue-triage
 description: Triage GitHub issues — label, deduplicate, request info, and manage stale issues
-version: 1.0.0
-metadata:
-  hermes:
-    tags: [github, issues, triage]
-    category: maintenance
-    requires_toolsets: [terminal]
+version: 2.0.0
+tags: [github, issues, triage]
 ---
 
 # Issue Triage Skill
@@ -39,8 +35,10 @@ When asked to triage issues, or on a scheduled basis to process new/stale issues
 ### For stale issues:
 
 1. **Find issues** labeled `needs-info` with no activity for 14+ days
-2. **Post a gentle reminder** asking if they still need help
-3. **After 30 days** of no response: close with a kind message explaining why, and note they can reopen
+2. **Check existing comments** before acting — use `list_issue_comments` to see if the bot has already posted a stale reminder. Look for comments from `last-light[bot]` that contain words like "reminder", "still need", or "closing". **Do NOT post a duplicate reminder.**
+3. **If no bot reminder exists yet**: post a gentle reminder asking if they still need help
+4. **If a bot reminder already exists** and 30+ days have passed with no response since: close with a kind message explaining why, and note they can reopen
+5. **If a bot reminder already exists** and it's been less than 30 days: skip — do nothing
 
 ## Tool Usage
 

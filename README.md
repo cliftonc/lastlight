@@ -9,322 +9,350 @@
   <a href="https://lastlight.dev">lastlight.dev</a> · <a href="https://github.com/users/cliftonc/projects/4">Roadmap</a>
 </p>
 
-A [Hermes Agent](https://hermes-agent.nousresearch.com/) bot that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features.
+An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features through an Architect → Executor → Reviewer development cycle.
 
-## Setup
+Built on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management.
 
-### 1. Install Hermes Agent
+## Quick Start (Local Dev)
+
+### Prerequisites
+
+- Node.js 20+
+- [Claude Code CLI](https://claude.ai/install.sh) installed and logged in (`claude login`)
+- A GitHub App (see [Create a GitHub App](#1-create-a-github-app) below)
+
+### Setup
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
-source ~/.zshrc
+git clone https://github.com/cliftonc/lastlight.git
+cd lastlight
+npm install
 ```
 
-### 2. Create a GitHub App
-
-The bot posts as its own identity (custom name, avatar, `[bot]` badge) via a GitHub App.
-
-1. Go to **https://github.com/settings/apps/new**
-2. Fill in:
-   - **Name**: "Last Light Bot" (or whatever you want the bot to appear as)
-   - **Homepage URL**: your repo URL
-   - **Webhook**: leave unchecked for now
-3. Set **permissions**:
-   - Issues: **Read & Write**
-   - Pull Requests: **Read & Write**
-   - Contents: **Read & Write** (needed to create branches/PRs)
-   - Metadata: **Read**
-4. Click **Create GitHub App**
-5. On the app page, click **Generate a private key** — save the `.pem` file into this directory
-6. Note the **App ID** from the app settings page
-7. Click **Install App** → install on your repos (or all repos)
-8. Note the **Installation ID** from the URL: `github.com/settings/installations/{THIS_NUMBER}`
-
-### 3. Configure Secrets
+Copy and edit the environment file:
 
 ```bash
 cp .env.example .env
-cp config.yaml.example config.yaml
 ```
 
-Edit `.env` and fill in:
+Fill in the required values in `.env`:
 
 ```bash
+# GitHub App (required)
 GITHUB_APP_ID=123456
-GITHUB_APP_PRIVATE_KEY_PATH=./your-app-name.private-key.pem
+GITHUB_APP_PRIVATE_KEY_PATH=./your-app.private-key.pem
 GITHUB_APP_INSTALLATION_ID=789012
+
+# Webhook secret (required for webhook mode)
+WEBHOOK_SECRET=your-secret-here
 ```
 
-The bot auto-generates and caches short-lived tokens from these credentials. Tokens refresh automatically when they near expiry.
+### Run
 
-You also need an LLM provider key. The default config uses OpenAI Codex (`gpt-5.4`). The `.env` copied from `~/.hermes/.env` should already have your credentials — check that `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` are set if you want Modal terminal backend.
+```bash
+# Start the server (with hot reload)
+npm run dev
 
-### 4. Configure Modal (optional — for sandboxed code execution)
+# In another terminal — trigger work via the CLI
+npx tsx src/cli.ts https://github.com/owner/repo/issues/42   # build cycle
+npx tsx src/cli.ts owner/repo#42                               # shorthand
+npx tsx src/cli.ts triage owner/repo                           # triage scan
+npx tsx src/cli.ts review owner/repo                           # PR review scan
+npx tsx src/cli.ts health owner/repo                           # health report
+```
 
-If you want the bot to write and test code in an isolated environment:
+The CLI talks to the running server — it does not execute agents directly. Start the server first.
 
-1. Sign up at https://modal.com and get your token
-2. In `.env`, set:
-   ```bash
-   MODAL_TOKEN_ID=ak-...
-   MODAL_TOKEN_SECRET=as-...
-   ```
-3. In `config.yaml`, change terminal backend:
-   ```yaml
-   terminal:
-     backend: modal
-   ```
+### Authentication
 
-Without Modal, the bot runs commands locally (`backend: local` — the current default).
+Locally, the Agent SDK uses your Claude Code login (subscription). No API key needed — just make sure `claude login` works.
 
-### 5. Add Your Repositories
+To use an API key instead, set `ANTHROPIC_API_KEY` in `.env`.
 
-Edit `.hermes.md` and list your repos under `## Managed Repositories`:
+---
+
+## Docker Deployment
+
+### Build and Run
+
+```bash
+docker-compose build agent
+docker-compose up -d agent
+```
+
+### First-Time Auth
+
+The container needs Claude Code credentials. Log in interactively once:
+
+```bash
+docker exec -it lastlight-agent-1 claude login
+```
+
+Follow the URL in your browser to authenticate. The auth token persists in the Docker volume — it survives container restarts and rebuilds.
+
+### Secrets
+
+Create a `secrets/` directory with your GitHub App credentials:
+
+```bash
+mkdir -p secrets
+cp .env secrets/
+cp your-app.private-key.pem secrets/
+```
+
+The entrypoint symlinks these into the container at startup.
+
+### Expose Webhooks
+
+To receive GitHub webhooks, the server needs to be publicly reachable. The included Caddy config handles HTTPS:
+
+```bash
+# Set your domain
+echo "DOMAIN=lastlight.example.com" >> .env
+
+# Start both agent and caddy
+docker-compose up -d
+```
+
+Or use [ngrok](https://ngrok.com) / [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for testing.
+
+### State & Monitoring
+
+All persistent state lives in a single Docker volume (`agent-data`), mounted at `/app/data`:
+
+```
+data/
+  lastlight.db              # SQLite: execution log, rate limits
+  claude-home/              # Claude auth + session JSONL logs
+    projects/-app/*.jsonl   # Full audit trail per agent session
+  sandboxes/                # Cloned repos per task
+  logs/                     # Structured logs
+  sessions/                 # (reserved)
+```
+
+Mount this volume or bind-mount the directory for monitoring tools to access session logs and the execution database.
+
+### Trigger Work via CLI
+
+With the container running:
+
+```bash
+# Health check
+curl http://localhost:8644/health
+
+# Trigger a build cycle
+npx tsx src/cli.ts https://github.com/owner/repo/issues/42
+
+# Trigger triage
+npx tsx src/cli.ts triage owner/repo
+```
+
+---
+
+## Setup Details
+
+### 1. Create a GitHub App
+
+1. Go to **https://github.com/settings/apps/new**
+2. Fill in:
+   - **Name**: your bot name (appears on comments/PRs with a `[bot]` badge)
+   - **Homepage URL**: your repo URL
+   - **Webhook URL**: `https://your-domain:8644/webhooks/github` (or leave blank for now)
+   - **Webhook Secret**: a random string (same as `WEBHOOK_SECRET` in `.env`)
+3. Set **permissions**:
+   - **Issues**: Read & Write
+   - **Pull Requests**: Read & Write
+   - **Contents**: Read & Write
+   - **Metadata**: Read
+4. Subscribe to **events**: `Issues`, `Pull request`, `Issue comment`
+5. Click **Create GitHub App**
+6. Click **Generate a private key** — save the `.pem` file into the project directory
+7. Note the **App ID** from the app settings page
+8. Click **Install App** → install on your repos
+9. Note the **Installation ID** from the URL: `github.com/settings/installations/{ID}`
+
+### 2. Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_APP_ID` | Yes | GitHub App ID |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Yes | Path to `.pem` file |
+| `GITHUB_APP_INSTALLATION_ID` | Yes | Installation ID |
+| `WEBHOOK_SECRET` | Yes | GitHub webhook signature secret |
+| `ANTHROPIC_API_KEY` | No | Anthropic API key (uses Claude login if not set) |
+| `CLAUDE_MODEL` | No | Model to use (default: `claude-sonnet-4-6`) |
+| `PORT` / `WEBHOOK_PORT` | No | Webhook listener port (default: `8644`) |
+| `STATE_DIR` | No | Persistent state directory (default: `./data`) |
+| `MAX_TURNS` | No | Max agent turns per invocation (default: `200`) |
+| `BOT_LOGIN` | No | Bot login name for self-event filtering (default: `last-light[bot]`) |
+
+### 3. Managed Repositories
+
+Edit `agent-context/rules.md` to list repositories the bot manages:
 
 ```markdown
 ## Managed Repositories
-- cliftonc/drizzle-cube
-- cliftonc/drizby
+- your-org/repo-one
+- your-org/repo-two
 ```
 
-### 6. Run It
+### 4. Customize Behaviour
 
-```bash
-./lastlight
-```
+| What | Where |
+|------|-------|
+| Bot personality & communication style | `agent-context/soul.md` |
+| Operational rules, review guidelines, triage rules | `agent-context/rules.md` |
+| Skill definitions | `skills/*/SKILL.md` |
+| Orchestrator phases (Architect/Executor/Reviewer) | `src/engine/orchestrator.ts` |
+| Event routing rules | `src/engine/router.ts` |
+| Cron job schedules | `src/cron/jobs.ts` |
 
-## Usage
+---
 
-### Interactive
-
-```bash
-./lastlight                    # chat with the bot
-./lastlight -c                 # resume last session
-```
-
-Then ask it things:
-```
-> Review PR #42 on cliftonc/drizzle-cube
-> Triage open issues on cliftonc/drizby
-> Build a feature to add pagination to the /api/users endpoint on cliftonc/drizzle-cube
-> What's the health of my repos?
-```
-
-### Single Command
-
-```bash
-./lastlight chat -q "Review the latest PR on cliftonc/drizzle-cube"
-./lastlight chat -s pr-review -q "Review PR #15 on cliftonc/drizby"
-```
-
-### Slash Commands (inside a session)
+## Architecture
 
 ```
-/pr-review Review PR #15 on cliftonc/drizby
-/issue-triage Process new issues on cliftonc/drizzle-cube
-/repo-health Weekly report for all repos
+┌─────────────────────────────────────────┐
+│            Connector Layer              │
+│  GitHub Webhook │ (future: Slack, etc.) │
+│        ↓        │         ↓             │
+│     Event Normalizer (EventEnvelope)    │
+└────────────────┬────────────────────────┘
+                 ↓
+┌─────────────────────────────────────────┐
+│             Core Engine                 │
+│  Event Router (deterministic)           │
+│        ↓                                │
+│  Agent Executor (Claude Agent SDK)      │
+│  - System prompt from agent-context/    │
+│  - MCP tools (GitHub App)               │
+│  - Skills (SKILL.md)                    │
+│        ↓                                │
+│  Sandboxes (git clone per task)         │
+│  Cron Scheduler (health reports)        │
+│  State DB (SQLite execution log)        │
+└─────────────────────────────────────────┘
 ```
 
-### Gateway (Discord/Telegram/Slack)
+### How Events Flow
 
-Run the bot as a persistent service connected to a messaging platform:
+1. **GitHub webhook** → connector verifies signature, filters noise (bot events, edits, labels), normalizes to `EventEnvelope`
+2. **Router** maps event type to skill deterministically (no LLM in the routing loop):
+   - `issue.opened` → `issue-triage`
+   - `pr.opened` → `pr-review`
+   - `comment.created` with `@last-light` from maintainer → `github-orchestrator`
+3. **Executor** spawns a Claude Agent SDK session with the skill prompt, MCP tools, and agent context
+4. **Orchestrator** (for build requests) runs a multi-phase cycle:
+   - Phase 1: **Architect** — read-only analysis, writes plan to `.lastlight/issue-N/architect-plan.md`
+   - Phase 2: **Executor** — TDD implementation following the plan
+   - Phase 3: **Reviewer** — independent verification (no shared context with executor)
+   - Phase 4: **Fix loop** (up to 2 cycles if reviewer requests changes)
+   - Phase 5: **Create PR**
 
-```bash
-./lastlight gateway setup      # interactive wizard
-./lastlight gateway            # run in foreground
-./lastlight gateway install    # install as a system service (launchd on macOS)
-```
+### Cron
 
-### GitHub Webhooks
+When webhooks are enabled, only the weekly health report runs on cron (issue/PR events arrive in real-time via webhooks). Without webhooks, triage and PR review also run on cron.
 
-React to repo events (new issues, PRs, comments) in real time. This uses a single webhook endpoint — your GitHub App sends all events to it, and the agent decides what to act on based on the prompt.
+| Job | Schedule | Condition |
+|-----|----------|-----------|
+| Triage new issues | Every 15 min | Only without webhooks |
+| Check PRs for review | Every 30 min | Only without webhooks |
+| Weekly health report | Mondays 9am | Always |
 
-Add to `config.yaml`:
-
-```yaml
-platforms:
-  webhook:
-    enabled: true
-    extra:
-      host: "0.0.0.0"
-      port: 8644
-      routes:
-        github:
-          secret: "your-webhook-secret"
-          events: ["issues", "pull_request", "issue_comment"]
-          skills: ["github-orchestrator"]
-          prompt: |
-            GitHub event: {_event_type}, action: {action}
-            Repository: {repository.full_name}
-            Issue/PR: #{issue.number} {issue.title}
-            Author: {issue.user.login}
-            Body: {issue.body}
-          deliver: log
-```
-
-The `prompt` passes event data to the agent. The logic for what to act on lives in `skills/github-orchestrator/SKILL.md` — edit that file to customise the behaviour.
-
-Then configure your GitHub App's webhook:
-- **URL**: `http://your-host:8644/webhooks/github`
-- **Secret**: same as in `config.yaml`
-
-The endpoint must be publicly reachable — use [ngrok](https://ngrok.com) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) if running locally.
-
-**Delivery options:**
-
-| Option | What it does |
-|--------|-------------|
-| `log` | Log to gateway output (good for testing) |
-| `github_comment` | Post back on the issue/PR that triggered it |
-| `discord` / `slack` / `telegram` | Forward to your messaging channel |
-
-Filter by event type with `events` — only listed types trigger the agent. Finer-grained filtering (ignore edits, bot authors, etc.) is handled by the agent via the prompt.
-
-## Scheduled Jobs (Cron)
-
-Four cron jobs are pre-configured in `cron/jobs.json`:
-
-| Job | Schedule | What it does |
-|-----|----------|--------------|
-| Refresh GitHub Token | Every 50 min | Restarts MCP server with a fresh token |
-| Triage New Issues | Every 15 min | Labels and triages unlabeled issues |
-| Check PRs Awaiting Review | Every 30 min | Reviews unreviewed PRs |
-| Weekly Health Report | Mondays 9am | Summary of open issues, PR backlog, stale items |
-
-These run when the agent is active. Manage them inside a session with `/cron`, or edit `cron/jobs.json` directly.
+---
 
 ## Project Structure
 
 ```
 lastlight/
-├── lastlight                      # Launcher (sets HERMES_HOME, generates GitHub token)
-├── config.yaml                  # Your local config (not committed — copy from config.yaml.example)
-├── config.yaml.example          # Template config with all options documented
-├── .env                         # Secrets: GitHub App credentials, LLM keys, Modal tokens
-├── .env.example                 # Template for .env
-├── SOUL.md                      # Agent personality — who the bot is, how it behaves
-├── .hermes.md                   # Project context — repos, review guidelines, triage rules
-│
-├── scripts/
-│   └── github-app-token.sh      # Generates/caches GitHub App installation tokens
-│
-├── mcp-github-app/              # Custom MCP server with native GitHub App auth
-│   └── src/
-│       ├── index.js             # MCP server entry point (28 tools)
-│       ├── auth.js              # GitHub App JWT + installation token with auto-refresh
-│       └── github.js            # Octokit wrapper with token rotation
-│
-├── skills/                      # Agent skills (slash commands)
-│   ├── github/                  # GitHub workflows (auth, PRs, issues, code review)
-│   ├── software-development/    # Dev workflows (TDD, debugging, code review, planning)
-│   ├── devops/                  # Webhooks, deployment
-│   ├── mcp/                     # MCP server management
-│   ├── pr-review/               # Custom: structured PR review
-│   ├── issue-triage/            # Custom: issue labeling and triage
-│   └── repo-health/             # Custom: repository health reports
-│
-├── cron/jobs.json               # Scheduled jobs
-├── memories/                    # Agent's persistent memory
-├── sessions/                    # Conversation history
-└── logs/                        # Runtime logs
+  src/
+    index.ts                # Server entry point
+    cli.ts                  # CLI client (talks to server)
+    config.ts               # Config loader (.env)
+    connectors/
+      types.ts              # Connector + EventEnvelope interfaces
+      github-webhook.ts     # GitHub webhook connector (Hono)
+      index.ts              # Connector registry
+    engine/
+      router.ts             # Deterministic event → skill routing
+      executor.ts           # Agent SDK query() wrapper
+      orchestrator.ts       # Architect → Executor → Reviewer cycle
+      agents.ts             # Subagent role definitions
+      git-auth.ts           # GitHub App git credential setup
+    worktree/
+      manager.ts            # Git worktree per-task isolation
+    cron/
+      scheduler.ts          # Cron with overlap protection
+      jobs.ts               # Job definitions
+    state/
+      db.ts                 # SQLite execution tracking
+
+  agent-context/
+    soul.md                 # Bot personality, principles, communication style
+    rules.md                # Operational rules, managed repos, review guidelines
+
+  skills/
+    github-orchestrator/    # Central build cycle coordinator
+    issue-triage/           # Issue labeling and triage
+    pr-review/              # Structured PR review
+    repo-health/            # Health reports
+    github/                 # GitHub API workflow skills
+    software-development/   # Dev skills (architect, TDD, debugging)
+
+  mcp-github-app/           # MCP server: 28+ GitHub tools via Octokit
+    src/
+      index.js              # MCP server entry (clone_repo, refresh_git_auth, etc.)
+      auth.js               # GitHub App JWT + installation token
+      github.js             # Octokit wrapper with retry/backoff
+
+  deploy/
+    entrypoint.sh           # Docker entrypoint
+  Dockerfile
+  docker-compose.yml
+  Caddyfile                 # Reverse proxy for HTTPS
 ```
-
-## Customization
-
-### Editing Review Guidelines
-
-Edit `.hermes.md` → `## Review Guidelines`. The four-tier system (Critical > Important > Suggestions > Nits) is used by the PR review skill. Add or remove rules as needed.
-
-### Editing Issue Triage Rules
-
-Edit `.hermes.md` → `## Issue Triage Rules`. Adjust stale thresholds, label names, and priority definitions.
-
-### Editing the Agent Personality
-
-Edit `SOUL.md` to change tone, communication style, and behavioral principles. Changes take effect on the next message — no restart needed.
-
-### Editing Skills
-
-Skills live in `skills/` as directories containing a `SKILL.md` file. The format:
-
-```markdown
----
-name: my-skill
-description: One-line description shown in /skills list
-version: 1.0.0
-metadata:
-  hermes:
-    tags: [github, code]
-    category: maintenance
----
-
-# Skill Name
-
-## When to Use
-Trigger conditions.
-
-## Procedure
-Step-by-step instructions the agent follows.
-
-## Pitfalls
-Known failure modes.
-
-## Verification
-How to confirm it worked.
-```
-
-Custom skills (`pr-review`, `issue-triage`, `repo-health`) are in the top level of `skills/`. The bundled ones (`github/`, `software-development/`, etc.) contain sub-skills in subdirectories.
-
-### Creating a New Skill
-
-```bash
-mkdir skills/my-new-skill
-# Create skills/my-new-skill/SKILL.md following the format above
-```
-
-Or let the agent create one for you — it can write skills via the `skill_manage` tool during a session.
-
-### Changing the LLM Model
-
-Edit `config.yaml`:
-```yaml
-model:
-  default: gpt-5.4              # current default
-  provider: openai-codex
-```
-
-Or switch at runtime: `./lastlight chat --model "anthropic/claude-sonnet-4"`
-
-### Architectural Guardrails for Repos
-
-Put a `CLAUDE.md` in each managed repo with coding conventions, boundaries, and testing requirements. Hermes automatically reads it when working in that repo. See `templates/AGENTS.md.template` for a starting point.
-
-## How It Works
-
-The `./lastlight` script sets `HERMES_HOME` to this directory, so all config, skills, memory, and state are local — your global `~/.hermes/` config is untouched. You can run both side by side:
-
-```bash
-hermes        # your personal agent (uses ~/.hermes/)
-./lastlight     # the maintenance bot (uses this directory)
-```
-
-A custom MCP server (`mcp-github-app/`) provides GitHub API access with native GitHub App authentication. Tokens refresh automatically inside the running process — no restarts needed. The `setup_git_auth` tool writes a credential file that Hermes syncs into sandboxed environments (Modal, Docker) so git push/pull works transparently.
 
 ## Troubleshooting
 
+### Server won't start
+
 ```bash
-# Test GitHub App token generation
-bash scripts/github-app-token.sh
-
-# Check config
-./lastlight config
-
-# List available tools (should show mcp_github_* tools)
-./lastlight chat -q "/tools"
-
-# Debug mode
-./lastlight chat --verbose
-
-# Diagnostics
-./lastlight doctor
+# Check .env is loaded
+npm run dev
+# Look for "Required environment variable not set" errors
 ```
+
+### Agent exits with code 1
+
+```bash
+# Check if Claude is logged in
+claude --version && claude -p "hello"
+
+# In Docker: check auth persisted
+docker exec lastlight-agent-1 claude -p "hello"
+# If it fails, re-login:
+docker exec -it lastlight-agent-1 claude login
+```
+
+### Webhooks not arriving
+
+```bash
+# Check health endpoint
+curl http://localhost:8644/health
+
+# Test with a fake POST (should return 401 — invalid signature)
+curl -X POST http://localhost:8644/webhooks/github -d '{}'
+
+# Check Docker port mapping
+docker-compose ps
+```
+
+### Credit balance / rate limit errors
+
+If you see "Credit balance is too low", either:
+- Top up at https://console.anthropic.com (API key mode)
+- Remove `ANTHROPIC_API_KEY` from `.env` to use your Claude subscription instead
+
+### Permission denied on MCP tools
+
+The executor runs with `bypassPermissions` mode. In Docker, this requires running as a non-root user (the Dockerfile handles this automatically).

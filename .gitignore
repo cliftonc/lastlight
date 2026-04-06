@@ -19,6 +19,10 @@ memories/
 *.lock
 *.pem
 
+# State directory (mounted as Docker volume)
+data/
+mcp-config.json
+
 # Caches
 cache/
 audio_cache/
@@ -28,6 +32,9 @@ sandboxes/
 
 # Debug
 interrupt_debug.log
+
+# Build output
+dist/
 
 # Dependencies
 node_modules/

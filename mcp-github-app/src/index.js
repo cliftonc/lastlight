@@ -3,6 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { execSync } from "child_process";
 import { GitHubAppAuth } from "./auth.js";
 import { GitHubClient } from "./github.js";
 
@@ -39,37 +40,111 @@ async function run(fn) {
     const result = await fn();
     return jsonResult(result);
   } catch (e) {
-    return jsonResult({ error: e.message });
+    const status = e.status || e.response?.status;
+    const isTransient = [408, 429, 500, 502, 503, 504].includes(status);
+    return jsonResult({
+      error: e.message,
+      status: status || null,
+      transient: isTransient,
+      hint: isTransient
+        ? "This is a transient error. The request was retried automatically but still failed. Wait and try again."
+        : status === 401
+          ? "Authentication failed. Call refresh_git_auth to get a fresh token."
+          : null,
+    });
   }
 }
 
-// ── Git Auth Tool ───────────────────────────────────────────────────
+// ── Git Auth Tools ──────────────────────────────────────────────────
 
 server.tool(
+  "clone_repo",
+  "Clone a repository with GitHub App authentication. Sets up credential helper and bot identity automatically. git push/pull/fetch will just work after cloning.",
+  {
+    owner: z.string().describe("Repository owner"),
+    repo: z.string().describe("Repository name"),
+    branch: z.string().optional().describe("Branch to checkout (default: repo default branch)"),
+    path: z.string().optional().describe("Local path to clone into (default: repo name)"),
+  },
+  async ({ owner, repo, branch, path: clonePath }) => {
+    try {
+      const token = await auth.getToken();
+      const dest = clonePath || repo;
+      const url = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+
+      const branchArgs = branch ? ["--branch", branch] : [];
+      execSync(["git", "clone", ...branchArgs, url, dest].join(" "), {
+        stdio: "pipe",
+        timeout: 120_000,
+      });
+
+      // Configure credential helper so push/pull get fresh tokens
+      const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token}"; }; f`;
+      execSync(`git -C ${dest} config credential.helper '${credHelper}'`, { stdio: "pipe" });
+
+      // Set bot identity for commits
+      execSync(`git -C ${dest} config user.name "last-light[bot]"`, { stdio: "pipe" });
+      execSync(
+        `git -C ${dest} config user.email "last-light[bot]@users.noreply.github.com"`,
+        { stdio: "pipe" }
+      );
+
+      return jsonResult({
+        cloned: `${owner}/${repo}`,
+        path: dest,
+        branch: branch || "(default)",
+        expires_at: auth.expiresAt?.toISOString(),
+      });
+    } catch (e) {
+      return jsonResult({ error: e.message, stderr: e.stderr?.toString() });
+    }
+  }
+);
+
+server.tool(
+  "refresh_git_auth",
+  "Refresh the GitHub App token for an existing git clone. Call this if git push/pull fails with auth errors. Updates the credential helper with a fresh token.",
+  {
+    path: z.string().describe("Path to the git repository"),
+  },
+  async ({ path: repoPath }) => {
+    try {
+      const token = await auth.getToken();
+      const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token}"; }; f`;
+      execSync(`git -C ${repoPath} config credential.helper '${credHelper}'`, { stdio: "pipe" });
+      return jsonResult({
+        refreshed: true,
+        path: repoPath,
+        expires_at: auth.expiresAt?.toISOString(),
+      });
+    } catch (e) {
+      return jsonResult({ error: e.message });
+    }
+  }
+);
+
+// DEPRECATED: Use clone_repo + refresh_git_auth instead.
+// Kept for backward compatibility with Hermes-based workflows.
+server.tool(
   "setup_git_auth",
-  "Refresh the GitHub App token and write it to the credential file. The token file and .gitconfig-bot are automatically synced into the terminal sandbox by Hermes before each command (via terminal.credential_files). Call this ONCE at the start of a task, and again if git auth fails (token expired). After calling, run the single configure_git command in the terminal.",
+  "[DEPRECATED — use clone_repo instead] Refresh the GitHub App token and write it to the credential file for Hermes sandbox sync.",
   { owner: z.string().describe("Repository owner"), repo: z.string().describe("Repository name") },
   async ({ owner, repo }) => {
     try {
       const token = await auth.getToken();
       const fs = await import("fs");
-      const path = await import("path");
+      const nodePath = await import("path");
 
-      // Write token to HERMES_HOME/.gh-token — Hermes syncs credential_files
-      // from HERMES_HOME into the sandbox before each command execution
-      // (Modal, Docker, SSH, Daytona all support this).
       const hermesHome = process.env.HERMES_HOME || (process.env.HOME + "/.hermes");
-      const tokenPath = path.join(hermesHome, ".gh-token");
+      const tokenPath = nodePath.join(hermesHome, ".gh-token");
       fs.writeFileSync(tokenPath, token, { mode: 0o600 });
 
       return jsonResult({
+        deprecated: "Use clone_repo instead — it handles auth, clone, and identity in one step.",
         expires_at: auth.expiresAt?.toISOString(),
         token_file: tokenPath,
         configure_git: `git config --global include.path ${hermesHome}/.gitconfig-bot`,
-        configure_gh: `export GITHUB_TOKEN="$(cat ${hermesHome}/.gh-token)"`,
-        install_gh: "(command -v gh >/dev/null 2>&1) || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt-get update -qq && apt-get install gh -y -qq)",
         clone_with: `git clone https://github.com/${owner}/${repo}.git`,
-        instructions: "1. Run configure_git (one-time per session — sets up credential helper + bot identity via .gitconfig-bot include). 2. git clone/push/pull just work — credential helper reads the auto-synced token file. 3. For gh CLI: run configure_gh or install_gh if needed.",
       });
     } catch (e) {
       return jsonResult({ error: e.message });

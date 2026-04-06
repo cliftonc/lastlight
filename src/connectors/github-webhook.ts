@@ -1,0 +1,230 @@
+import { EventEmitter } from "events";
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { createHmac, timingSafeEqual } from "crypto";
+import type { Connector, EventEnvelope, EventType } from "./types.js";
+
+export interface GitHubWebhookConfig {
+  port: number;
+  webhookSecret: string;
+  /** Bot login name to ignore self-events */
+  botLogin: string;
+  /** GitHub App MCP client for posting replies */
+  replyFn?: (owner: string, repo: string, issueNumber: number, body: string) => Promise<void>;
+}
+
+/** GitHub webhook actions we skip — these are noisy and never need agent work */
+const IGNORED_ACTIONS = new Set([
+  "deleted",
+  "edited",
+  "labeled",
+  "unlabeled",
+  "assigned",
+  "unassigned",
+  "closed",
+  "synchronize",
+  "milestoned",
+  "demilestoned",
+  "locked",
+  "unlocked",
+  "transferred",
+  "pinned",
+  "unpinned",
+]);
+
+export class GitHubWebhookConnector extends EventEmitter implements Connector {
+  readonly name = "github";
+  private app: Hono;
+  private server: ReturnType<typeof serve> | null = null;
+  private config: GitHubWebhookConfig;
+
+  constructor(config: GitHubWebhookConfig) {
+    super();
+    this.config = config;
+    this.app = new Hono();
+    this.setupRoutes();
+  }
+
+  /**
+   * Expose the Hono app so the main server can mount additional routes
+   * (e.g., /api/run for the CLI trigger).
+   */
+  get honoApp() {
+    return this.app;
+  }
+
+  private setupRoutes() {
+    // Health check
+    this.app.get("/health", (c) => c.json({ status: "ok", connector: "github" }));
+
+    // GitHub webhook endpoint
+    this.app.post("/webhooks/github", async (c) => {
+      const body = await c.req.text();
+
+      // Verify webhook signature
+      const signature = c.req.header("x-hub-signature-256");
+      if (!signature || !this.verifySignature(body, signature)) {
+        return c.json({ error: "Invalid signature" }, 401);
+      }
+
+      const eventType = c.req.header("x-github-event");
+      const deliveryId = c.req.header("x-github-delivery") || crypto.randomUUID();
+
+      let payload: any;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const action = payload.action;
+
+      // Filter out ignored actions
+      if (action && IGNORED_ACTIONS.has(action)) {
+        return c.json({ filtered: true, reason: `action=${action}` }, 200);
+      }
+
+      // Filter out bot events (self-loop prevention)
+      const senderLogin = payload.sender?.login || "";
+      const senderType = payload.sender?.type || "";
+      if (
+        senderType === "Bot" ||
+        senderLogin === this.config.botLogin ||
+        senderLogin.endsWith("[bot]")
+      ) {
+        return c.json({ filtered: true, reason: "bot sender" }, 200);
+      }
+
+      // Normalize to EventEnvelope
+      const envelope = this.normalize(eventType!, action, payload, deliveryId);
+      if (!envelope) {
+        return c.json({ filtered: true, reason: "unmapped event" }, 200);
+      }
+
+      // Emit asynchronously — don't block the webhook response
+      setImmediate(() => this.emit("event", envelope));
+
+      return c.json({ accepted: true, id: deliveryId }, 202);
+    });
+  }
+
+  private verifySignature(body: string, signature: string): boolean {
+    const expected = "sha256=" + createHmac("sha256", this.config.webhookSecret)
+      .update(body)
+      .digest("hex");
+    try {
+      return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+    } catch {
+      return false;
+    }
+  }
+
+  private normalize(
+    githubEvent: string,
+    action: string | undefined,
+    payload: any,
+    deliveryId: string
+  ): EventEnvelope | null {
+    const repoFullName = payload.repository?.full_name;
+    const sender = payload.sender?.login || "unknown";
+
+    // Map GitHub event + action → our EventType
+    let type: EventType | null = null;
+    let issueNumber: number | undefined;
+    let prNumber: number | undefined;
+    let body = "";
+    let title = "";
+    let labels: string[] = [];
+
+    switch (githubEvent) {
+      case "issues":
+        issueNumber = payload.issue?.number;
+        body = payload.issue?.body || "";
+        title = payload.issue?.title || "";
+        labels = (payload.issue?.labels || []).map((l: any) => l.name);
+        if (action === "opened") type = "issue.opened";
+        else if (action === "reopened") type = "issue.reopened";
+        break;
+
+      case "pull_request":
+        prNumber = payload.pull_request?.number;
+        issueNumber = prNumber; // PRs are issues too
+        body = payload.pull_request?.body || "";
+        title = payload.pull_request?.title || "";
+        labels = (payload.pull_request?.labels || []).map((l: any) => l.name);
+        if (action === "opened") type = "pr.opened";
+        break;
+
+      case "issue_comment":
+        issueNumber = payload.issue?.number;
+        body = payload.comment?.body || "";
+        title = payload.issue?.title || "";
+        if (action === "created") type = "comment.created";
+        // Detect if this is on a PR
+        if (payload.issue?.pull_request) {
+          prNumber = issueNumber;
+        }
+        break;
+
+      case "pull_request_review":
+        prNumber = payload.pull_request?.number;
+        issueNumber = prNumber;
+        body = payload.review?.body || "";
+        title = payload.pull_request?.title || "";
+        if (action === "submitted") type = "pr_review.submitted";
+        break;
+
+      case "pull_request_review_comment":
+        prNumber = payload.pull_request?.number;
+        issueNumber = prNumber;
+        body = payload.comment?.body || "";
+        title = payload.pull_request?.title || "";
+        if (action === "created") type = "pr_review_comment.created";
+        break;
+    }
+
+    if (!type) return null;
+
+    const [owner, repo] = (repoFullName || "/").split("/");
+
+    const reply = async (msg: string) => {
+      if (this.config.replyFn && repoFullName && issueNumber) {
+        await this.config.replyFn(owner, repo, issueNumber, msg);
+      }
+    };
+
+    return {
+      id: deliveryId,
+      source: "github",
+      type,
+      repo: repoFullName,
+      issueNumber,
+      prNumber,
+      sender,
+      senderIsBot: false, // already filtered bots above
+      body,
+      title,
+      labels,
+      raw: payload,
+      reply,
+      timestamp: new Date(),
+    };
+  }
+
+  async start(): Promise<void> {
+    this.server = serve({
+      fetch: this.app.fetch,
+      port: this.config.port,
+      hostname: "0.0.0.0",
+    });
+    console.log(`[github] Webhook listener started on port ${this.config.port}`);
+  }
+
+  async stop(): Promise<void> {
+    if (this.server) {
+      this.server.close();
+      this.server = null;
+      console.log("[github] Webhook listener stopped");
+    }
+  }
+}

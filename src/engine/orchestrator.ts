@@ -1,0 +1,319 @@
+import type { ExecutorConfig, ExecutionResult } from "./executor.js";
+import { executeAgent } from "./executor.js";
+
+/**
+ * Build request context.
+ */
+export interface BuildRequest {
+  owner: string;
+  repo: string;
+  issueNumber: number;
+  issueTitle: string;
+  issueBody: string;
+  commentBody?: string;
+  sender: string;
+}
+
+interface PhaseResult {
+  phase: string;
+  success: boolean;
+  output: string;
+  error?: string;
+}
+
+/**
+ * Orchestrates the Architect → Executor → Reviewer cycle.
+ *
+ * Each phase runs via executeAgent which automatically uses Docker sandboxes
+ * when available, falling back to direct Agent SDK execution.
+ */
+export async function runBuildCycle(
+  request: BuildRequest,
+  config: ExecutorConfig,
+  callbacks?: {
+    onPhaseStart?: (phase: string) => Promise<void>;
+    onPhaseEnd?: (phase: string, result: PhaseResult) => Promise<void>;
+    postComment?: (body: string) => Promise<void>;
+  }
+): Promise<{ success: boolean; phases: PhaseResult[]; prNumber?: number }> {
+  const { owner, repo, issueNumber } = request;
+  const phases: PhaseResult[] = [];
+  const branch = `lastlight/${issueNumber}-${slugify(request.issueTitle)}`;
+  const taskId = `${repo}-${issueNumber}`;
+
+  const notify = callbacks?.postComment || (async () => {});
+  const onStart = callbacks?.onPhaseStart || (async () => {});
+  const onEnd = callbacks?.onPhaseEnd || (async () => {});
+
+  console.log(`[orchestrator] Build cycle for ${owner}/${repo}#${issueNumber}`);
+    // ── Phase 0: Acknowledge + Context Assembly ────────────────────
+
+    await onStart("phase_0");
+    await notify(`Acknowledged — starting analysis for #${issueNumber}. I'll post updates here as I work.`);
+
+    const contextSnapshot = `
+Task: ${request.commentBody || request.issueBody}
+Issue: ${owner}/${repo}#${issueNumber} — ${request.issueTitle}
+Issue body: ${request.issueBody}
+Requested by: ${request.sender}
+Branch: ${branch}
+`.trim();
+
+    phases.push({ phase: "phase_0", success: true, output: "Context assembled" });
+    await onEnd("phase_0", phases[phases.length - 1]);
+
+    // ── Phase 1: Architect ─────────────────────────────────────────
+
+    await onStart("architect");
+    console.log(`[orchestrator] Phase 1: Architect analysis`);
+
+    const architectResult = await executeAgent(
+      buildArchitectPrompt(request, branch, contextSnapshot),
+      config, { taskId: `${taskId}-architect` }
+    );
+
+    phases.push({ phase: "architect", ...pick(architectResult) });
+    await onEnd("architect", phases[phases.length - 1]);
+
+    if (!architectResult.success) {
+      await notify(`Architect analysis failed: ${architectResult.error}`);
+      return { success: false, phases };
+    }
+
+    await notify(
+      `**Architect analysis complete.**\n` +
+      `- Branch: \`${branch}\`\n` +
+      `- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\`\n\n` +
+      `Starting implementation...`
+    );
+
+    // ── Phase 2: Executor ──────────────────────────────────────────
+
+    await onStart("executor");
+    console.log(`[orchestrator] Phase 2: Executor implementation`);
+
+    const executorResult = await executeAgent(
+      buildExecutorPrompt(request, branch),
+      config, { taskId: `${taskId}-executor` }
+    );
+
+    phases.push({ phase: "executor", ...pick(executorResult) });
+    await onEnd("executor", phases[phases.length - 1]);
+
+    if (!executorResult.success) {
+      await notify(`Executor implementation failed: ${executorResult.error}`);
+      return { success: false, phases };
+    }
+
+    await notify(
+      `**Implementation complete.** Running independent review...\n` +
+      `- Branch: \`${branch}\`\n` +
+      `- Summary: \`.lastlight/issue-${issueNumber}/executor-summary.md\``
+    );
+
+    // ── Phase 3: Reviewer + Fix Loop ───────────────────────────────
+
+    let approved = false;
+    let fixCycles = 0;
+    const MAX_FIX_CYCLES = 2;
+
+    while (!approved && fixCycles <= MAX_FIX_CYCLES) {
+      const reviewLabel = fixCycles === 0 ? "reviewer" : `reviewer_${fixCycles + 1}`;
+      await onStart(reviewLabel);
+      console.log(`[orchestrator] Phase 3: Reviewer (cycle ${fixCycles + 1})`);
+
+      const reviewerResult = await executeAgent(
+        buildReviewerPrompt(request, branch),
+        config, { taskId: `${taskId}-${reviewLabel}` }
+      );
+
+      phases.push({ phase: reviewLabel, ...pick(reviewerResult) });
+      await onEnd(reviewLabel, phases[phases.length - 1]);
+
+      const verdict = reviewerResult.output?.toUpperCase() || "";
+      if (verdict.includes("APPROVED")) {
+        approved = true;
+        await notify(`**Review: APPROVED** — proceeding to PR.`);
+      } else if (fixCycles < MAX_FIX_CYCLES) {
+        fixCycles++;
+        await notify(`**Review: REQUEST_CHANGES** — fixing issues (cycle ${fixCycles}/${MAX_FIX_CYCLES})...`);
+
+        await onStart(`fix_loop_${fixCycles}`);
+        console.log(`[orchestrator] Phase 4: Fix loop (cycle ${fixCycles})`);
+
+        const fixResult = await executeAgent(
+          buildFixPrompt(request, branch, fixCycles),
+          config, { taskId: `${taskId}-fix${fixCycles}` }
+        );
+
+        phases.push({ phase: `fix_loop_${fixCycles}`, ...pick(fixResult) });
+        await onEnd(`fix_loop_${fixCycles}`, phases[phases.length - 1]);
+
+        if (!fixResult.success) {
+          await notify(`Fix cycle ${fixCycles} failed. Proceeding to PR with known issues.`);
+          break;
+        }
+      } else {
+        await notify(`**Review: REQUEST_CHANGES** after ${MAX_FIX_CYCLES} fix cycles. Proceeding with remaining issues noted.`);
+        break;
+      }
+    }
+
+    // ── Phase 5: Create PR ─────────────────────────────────────────
+
+    await onStart("pr");
+    console.log(`[orchestrator] Phase 5: Create PR`);
+
+    const prResult = await executeAgent(
+      buildPrPrompt(request, branch, approved, fixCycles),
+      config, { taskId: `${taskId}-pr` }
+    );
+
+    phases.push({ phase: "pr", ...pick(prResult) });
+    await onEnd("pr", phases[phases.length - 1]);
+
+    const prMatch = prResult.output?.match(/#(\d+)/);
+    const prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
+
+    if (prNumber) {
+      await notify(`**PR created:** #${prNumber}\n\nBuild cycle complete.`);
+    }
+
+    return { success: prResult.success, phases, prNumber };
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function pick(r: ExecutionResult) {
+  return { success: r.success, output: r.output, error: r.error };
+}
+
+function slugify(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+}
+
+// ── Prompt Builders ─────────────────────────────────────────────────
+
+function buildArchitectPrompt(req: BuildRequest, branch: string, context: string): string {
+  return `You are the ARCHITECT. Analyze the codebase and produce an implementation plan.
+
+SETUP (git is pre-configured, you are in a sandbox workspace):
+1. git clone https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+2. git checkout -b ${branch}
+3. Read CLAUDE.md and AGENTS.md if they exist
+
+CONTEXT:
+${context}
+
+OUTPUT — write the plan to .lastlight/issue-${req.issueNumber}/architect-plan.md:
+- Problem Statement (2-5 sentences with file:line references)
+- Summary of what needs to change
+- Files to modify (with line numbers and what to change)
+- Implementation approach (step-by-step)
+- Risks and edge cases
+- Test strategy
+- Estimated complexity: simple / medium / complex
+
+AFTER WRITING:
+1. mkdir -p .lastlight/issue-${req.issueNumber}
+2. Write architect-plan.md
+3. Write status.md with current_phase: architect
+4. git add .lastlight/ && git commit -m "docs: architect plan for #${req.issueNumber}"
+5. git push -u origin HEAD
+
+OUTPUT: The branch name and a brief summary (3-5 lines).`;
+}
+
+function buildExecutorPrompt(req: BuildRequest, branch: string): string {
+  return `You are the EXECUTOR. Implement precisely what the architect's plan requires.
+
+SETUP (git is pre-configured, you are in a sandbox workspace):
+1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+2. Read .lastlight/issue-${req.issueNumber}/architect-plan.md
+
+EXECUTION:
+- Follow TDD: write failing test first, then implement, then verify
+- Run tests and verify they pass
+
+AFTER IMPLEMENTATION:
+1. Write .lastlight/issue-${req.issueNumber}/executor-summary.md (what was done, files changed, test results, deviations, known issues)
+2. Update .lastlight/issue-${req.issueNumber}/status.md: current_phase = executor
+3. git add -A && git commit -m "feat: implement #${req.issueNumber}
+
+Tested: {test command} -> {result}
+Scope-risk: {low|medium|high}"
+4. git push origin HEAD
+
+OUTPUT: List of files changed, test results, commit hash.`;
+}
+
+function buildReviewerPrompt(req: BuildRequest, branch: string): string {
+  return `You are the CODE REVIEWER. Independent verification — you have NO shared context with the executor.
+
+SETUP (git is pre-configured, you are in a sandbox workspace):
+1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+
+SCOPE — review ONLY changed files:
+  git log --oneline main..HEAD
+  git diff main...HEAD --name-only
+  git diff main...HEAD
+
+Read .lastlight/issue-${req.issueNumber}/architect-plan.md and executor-summary.md for context.
+
+CHECK:
+1. Does implementation match the plan?
+2. Do tests pass?
+3. Security concerns?
+4. Logic errors or missed edge cases?
+
+DO NOT review unchanged files or flag pre-existing issues.
+
+AFTER REVIEW:
+1. Write .lastlight/issue-${req.issueNumber}/reviewer-verdict.md (verdict, issues with file:line, test results, suggestions)
+2. Update status.md
+3. git add .lastlight/ && git commit -m "review: verdict for #${req.issueNumber}" && git push origin HEAD
+
+OUTPUT: Exactly one of APPROVED or REQUEST_CHANGES, followed by a brief summary.`;
+}
+
+function buildFixPrompt(req: BuildRequest, branch: string, cycle: number): string {
+  return `You are the EXECUTOR (fix cycle ${cycle}). Fix ONLY the issues reported by the reviewer.
+
+SETUP (git is pre-configured, you are in a sandbox workspace):
+1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+2. Read .lastlight/issue-${req.issueNumber}/reviewer-verdict.md — fix ONLY these issues
+
+AFTER FIXING:
+1. APPEND to .lastlight/issue-${req.issueNumber}/executor-summary.md under heading "## Fix Cycle ${cycle}"
+2. Update status.md: current_phase = fix_loop_${cycle}
+3. git add -A && git commit -m "fix: address review feedback for #${req.issueNumber} (cycle ${cycle})" && git push origin HEAD
+
+OUTPUT: What was fixed, test results.`;
+}
+
+function buildPrPrompt(req: BuildRequest, branch: string, approved: boolean, fixCycles: number): string {
+  const note = approved
+    ? ""
+    : `\n\nNote: There are unresolved reviewer issues after ${fixCycles} fix cycles. See reviewer-verdict.md on the branch.`;
+
+  return `Create a pull request for the work on branch ${branch}.
+
+Use the MCP tool create_pull_request:
+- owner: ${req.owner}
+- repo: ${req.repo}
+- head: ${branch}
+- base: main
+- title: A concise title describing the change (reference #${req.issueNumber})
+- body: Include:
+  - Closes #${req.issueNumber}
+  - Summary of changes
+  - Link to architect-plan.md and executor-summary.md on the branch
+  - Test results${note}
+
+Then use add_issue_comment on issue #${req.issueNumber} to post the PR link.
+
+Update status.md: current_phase = complete, add pr_number.
+git add .lastlight/ && git commit -m "status: PR created for #${req.issueNumber}" && git push origin HEAD
+
+OUTPUT: The PR number and URL.`;
+}
