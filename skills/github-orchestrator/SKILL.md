@@ -59,7 +59,7 @@ Before any work begins, ensure there is a GitHub issue to coordinate on:
 
 All phases below post brief progress updates to this tracking issue.
 
-#### Phase 0: Pre-Context Intake (you do this directly, not delegated)
+#### Phase 0: Pre-Context Intake + Resume Check (you do this directly, not delegated)
 
 1. Use `mcp_github_add_issue_comment` to acknowledge the request:
    `"Acknowledged — starting analysis. I'll post updates here as I work."`
@@ -71,10 +71,22 @@ All phases below post brief progress updates to this tracking issue.
    mcp_github_setup_git_auth
    cd /root && rm -rf /tmp/{repo} && git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
    ```
-4. Read repo docs from the clone: `cat /tmp/{repo}/CLAUDE.md`, `AGENTS.md`,
+4. **Check for existing branch and plan (resume detection):**
+   ```
+   cd /tmp/{repo}
+   git branch -a --list '*lastlight/{issue-number}*'
+   ```
+   - If a branch `lastlight/{issue-number}-*` exists:
+     - `git checkout {branch}`
+     - Check if `.lastlight/issue-{issue-number}/architect-plan.md` exists on that branch
+     - **If plan exists** → skip Guardrails and Phase 1, go directly to Phase 2
+       Post to the issue: `"Found existing architect plan on branch \`{branch}\`. Resuming from implementation phase."`
+     - **If branch exists but no plan** → continue to Phase 1 (architect will use this branch)
+   - If no branch exists → continue normally from step 5
+5. Read repo docs from the clone: `cat /tmp/{repo}/CLAUDE.md`, `AGENTS.md`,
    `README.md`, `package.json` via `terminal` or `read_file`. Do NOT use
    `mcp_github_get_file_contents` for files you can read from the clone.
-5. Assemble a context snapshot:
+6. Assemble a context snapshot:
    ```
    Task: {what the maintainer asked for}
    Desired outcome: {what success looks like}
@@ -93,41 +105,66 @@ cloned repo. This verifies that test framework, linting, and type checking are p
 - **BLOCKED** → create a guardrails issue, link it to the original task, fix foundations
   first via a separate build cycle, then resume the original task
 
-#### Phase 1: Architect Analysis (delegate_task — read-only)
+#### Phase 1: Architect Analysis (delegate_task — creates branch + plan file)
+
+The architect creates the working branch, writes the full plan to a file, and pushes it.
+This makes the plan durable (survives crashes), visible on GitHub, and avoids passing
+the full plan through the orchestrator's context window.
 
 ```python
 delegate_task(
     goal="Architect analysis for build request",
     context="""
-    ROLE: You are the ARCHITECT. Read-only analysis only. You MUST NOT edit
-    files, create files, or run mutating commands. You may only read files,
-    search code, and run read-only terminal commands.
+    ROLE: You are the ARCHITECT. Analyze the codebase and produce an implementation plan.
 
     SETUP (run first — each delegated task gets its own sandbox):
     1. mcp_github_setup_git_auth
-    2. rm -rf /tmp/{repo} && git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
-    3. Read /tmp/{repo}/CLAUDE.md and AGENTS.md first to understand repo conventions
+    2. Run the configure_git command returned by setup_git_auth
+    3. rm -rf /tmp/{repo} && git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
+    4. cd /tmp/{repo}
+    5. git checkout -b lastlight/{issue-number}-{short-description}
+    6. Read CLAUDE.md and AGENTS.md first to understand repo conventions
 
     TASK: Analyze this build request and produce an implementation plan.
 
     CONTEXT SNAPSHOT:
     [INSERT CONTEXT FROM PHASE 0]
 
-    OUTPUT FORMAT:
-    1. Summary of what needs to change
-    2. Files to modify (with line numbers and what to change)
-    3. Implementation approach (step-by-step)
-    4. Risks and edge cases to watch for
-    5. Test strategy (what tests to write/run)
-    6. Estimated complexity: simple / medium / complex
+    OUTPUT — write the plan to .lastlight/issue-{issue-number}/architect-plan.md in the repo:
+    # Architect Plan: {issue title}
+
+    ## Problem Statement
+    (Clear, succinct restatement of the issue — what is broken or missing, and
+    what the user expects to happen instead. Include specific references: file
+    paths, function names, related issues/PRs, error messages, or screenshots
+    mentioned in the issue. 2-5 sentences.)
+
+    ## Summary of what needs to change
+    ## Files to modify (with line numbers and what to change)
+    ## Implementation approach (step-by-step)
+    ## Risks and edge cases to watch for
+    ## Test strategy (what tests to write/run)
+    ## Estimated complexity: simple / medium / complex
+
+    AFTER WRITING THE PLAN:
+    1. mkdir -p .lastlight/issue-{issue-number}
+    2. Write the full plan to .lastlight/issue-{issue-number}/architect-plan.md
+    3. git add .lastlight/issue-{issue-number}/architect-plan.md
+    4. git commit -m "docs: architect plan for #{issue-number}"
+    5. git push --quiet -u origin HEAD 2>&1 | cat
+    6. If push fails, report the error — do not retry
+
+    OUTPUT TO ORCHESTRATOR: The branch name and a brief summary (3-5 lines).
     """,
     toolsets=['terminal', 'file']
 )
 ```
 
-After the architect completes, post a summary to the issue:
+After the architect completes, post a summary to the issue with clickable links:
 ```
 mcp_github_add_issue_comment: "📋 **Architect analysis complete.**
+- Branch: [`lastlight/{issue-number}-{slug}`](https://github.com/{owner}/{repo}/tree/lastlight/{issue-number}-{slug})
+- Plan: [`architect-plan.md`](https://github.com/{owner}/{repo}/blob/lastlight/{issue-number}-{slug}/.lastlight/issue-{issue-number}/architect-plan.md)
 - Complexity: {simple/medium/complex}
 - Files to change: {list}
 - Approach: {1-2 sentence summary}
@@ -140,7 +177,7 @@ Starting implementation..."
 
 1. Use `mcp_github_setup_git_auth` to refresh the token and get the configure command
 2. Run the `configure_git` command returned by `setup_git_auth` (one-time per session)
-3. Dispatch the executor with the architect's plan:
+3. Dispatch the executor — it reads the plan from the branch file, not from the orchestrator's context:
 
 ```python
 delegate_task(
@@ -150,13 +187,13 @@ delegate_task(
     requires. Keep going until the task is fully resolved. Do not claim
     completion without fresh verification output (test results, build output).
 
-    ARCHITECT'S PLAN:
-    [INSERT ARCHITECT OUTPUT FROM PHASE 1]
-
     SETUP (do these first):
-    - git clone --quiet https://github.com/{owner}/{repo}.git /tmp/{repo}
-    - cd /tmp/{repo}
-    - git checkout -b lastlight/{issue-number}-{short-description}
+    1. mcp_github_setup_git_auth
+    2. Run the configure_git command returned by setup_git_auth
+    3. git clone --quiet -b {branch} https://github.com/{owner}/{repo}.git /tmp/{repo}
+    4. cd /tmp/{repo}
+    5. Read the architect plan: cat .lastlight/issue-{issue-number}/architect-plan.md
+    6. Follow that plan precisely.
 
     EXECUTION:
     - Follow TDD: write failing test first, then implement, then verify
@@ -164,8 +201,26 @@ delegate_task(
     - Install deps with `CI=true` flag
     - Suppress spinners with `--quiet` flags
 
-    COMMIT FORMAT (Lore-style):
-    git add . && git commit -m "feat: {intent-first description} (#{issue})
+    AFTER IMPLEMENTATION — write a summary to .lastlight/issue-{issue-number}/executor-summary.md:
+    # Executor Summary
+
+    ## What was done
+    (List each change made and why, referencing the architect plan steps.)
+
+    ## Files changed
+    (List of files with a one-line description of what changed in each.)
+
+    ## Test results
+    (Commands run and their output — pass/fail.)
+
+    ## Deviations from plan
+    (Any places where you diverged from the architect plan, and why.)
+
+    ## Known issues or concerns
+    (Anything the reviewer should pay extra attention to.)
+
+    COMMIT (include both implementation and summary):
+    git add -A && git commit -m "feat: {intent-first description} (#{issue})
 
     Tested: {test command} -> {result summary}
     Scope-risk: {low|medium|high}"
@@ -187,12 +242,15 @@ delegate_task(
 - Note: `mcp_github_push_files` cannot delete/rename files — prefer `git push` when possible
 - Use `git diff HEAD~1 --name-only` to get the list of changed files, then read and push them
 
-After the executor completes, post progress to the issue:
+After the executor completes, post progress to the issue with clickable links:
 ```
 mcp_github_add_issue_comment: "🔨 **Implementation complete.** Running independent review...
+- Branch: [`lastlight/{issue-number}-{slug}`](https://github.com/{owner}/{repo}/tree/lastlight/{issue-number}-{slug})
+- Executor summary: [`executor-summary.md`](https://github.com/{owner}/{repo}/blob/lastlight/{issue-number}-{slug}/.lastlight/issue-{issue-number}/executor-summary.md)
 - Files changed: {list}
 - Tests: {pass/fail summary}
-- Branch: `lastlight/{issue-number}-{slug}`"
+
+Starting reviewer..."
 ```
 
 #### Phase 3: Reviewer Verification (delegate_task — independent)
@@ -223,8 +281,9 @@ delegate_task(
     pre-existing issues in untouched files, do not suggest improvements
     to code that wasn't modified.
 
-    ARCHITECT'S PLAN:
-    [INSERT ARCHITECT OUTPUT FROM PHASE 1]
+    CONTEXT FILES (read these first):
+    - .lastlight/issue-{issue-number}/architect-plan.md — the original plan
+    - .lastlight/issue-{issue-number}/executor-summary.md — what the executor actually did
 
     CHECK (on changed files only):
     1. Does the implementation match the architect's plan?
@@ -238,11 +297,28 @@ delegate_task(
     - Flag pre-existing issues that weren't introduced by this commit
     - Suggest refactors to code outside the diff
     - Run linters or tests on files not in the diff
+    - Diff or review generated files: package-lock.json, yarn.lock, pnpm-lock.yaml, *.min.js, dist/, build/
 
-    OUTPUT FORMAT:
-    - Verdict: APPROVED or REQUEST_CHANGES
-    - Issues: [list with file:line references — all from changed files]
-    - Suggestions: [non-blocking improvements to the changes]
+    AFTER REVIEW — write your verdict to .lastlight/issue-{issue-number}/reviewer-verdict.md:
+    # Reviewer Verdict
+
+    ## Verdict: APPROVED or REQUEST_CHANGES
+
+    ## Issues found
+    (List with file:line references — all from changed files only.)
+
+    ## Test results
+    (Commands run and their output — pass/fail.)
+
+    ## Suggestions
+    (Non-blocking improvements to the changes.)
+
+    THEN:
+    1. git add .lastlight/issue-{issue-number}/reviewer-verdict.md
+    2. git commit -m "review: verdict for #{issue-number}"
+    3. git push --quiet origin HEAD 2>&1 | cat
+
+    OUTPUT TO ORCHESTRATOR: The verdict (APPROVED or REQUEST_CHANGES) and a brief summary.
     """,
     toolsets=['terminal', 'file']
 )
