@@ -86,7 +86,7 @@ export function loadConfig(): LastLightConfig {
         botToken: process.env.SLACK_BOT_TOKEN,
         appToken: requireEnv("SLACK_APP_TOKEN"),
         allowedUsers: (process.env.SLACK_ALLOWED_USERS || "").split(",").filter(Boolean),
-        deliveryChannel: process.env.SLACK_DELIVERY_CHANNEL || undefined,
+        deliveryChannel: process.env.SLACK_DELIVERY_CHANNEL || process.env.SLACK_HOME_CHANNEL || undefined,
       }
     : undefined;
 
