@@ -31,6 +31,11 @@ if [ -d /data/claude-home ]; then
     [ "$base" = "skills" ] && continue  # don't override our skills
     ln -sfn "$item" "$AGENT_HOME/.claude/$base"
   done
+
+  # Ensure session logs are written to the shared volume so the dashboard can read them
+  mkdir -p /data/claude-home/projects
+  chown agent:agent /data/claude-home/projects
+  ln -sfn /data/claude-home/projects "$AGENT_HOME/.claude/projects"
 fi
 
 # ── Agent context (CLAUDE.md) into workspace root ──

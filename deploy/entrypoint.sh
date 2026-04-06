@@ -23,8 +23,9 @@ for pem in "$SECRETS"/*.pem; do
   fi
 done
 
-# Ensure state directory structure exists
-mkdir -p "$STATE_DIR"/{sessions,logs,sandboxes,secrets}
+# Ensure state directory structure exists and is owned by lastlight
+mkdir -p "$STATE_DIR"/{sessions,logs,sandboxes,secrets,claude-home}
+chown -R lastlight:lastlight "$STATE_DIR"
 
 # Copy PEM to the data volume so sandbox containers can access it via shared volume
 for pem in "$SECRETS"/*.pem; do
