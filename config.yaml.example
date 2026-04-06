@@ -192,6 +192,10 @@ skills:
 #           events: ["issues", "pull_request", "issue_comment", "pull_request_review_comment", "pull_request_review"]
 #           skills: ["github-orchestrator"]
 #           prompt: |
+#             CRITICAL: If action is "deleted", "edited", "labeled", "unlabeled",
+#             "assigned", "closed", or "synchronize", respond ONLY with "No action needed."
+#             and STOP immediately. Do NOT begin any work.
+#
 #             GitHub event: {_event_type}, action: {action}
 #             Repository: {repository.full_name}
 #             Issue/PR: #{issue.number} {issue.title}
