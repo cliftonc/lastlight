@@ -12,7 +12,9 @@ RUN useradd -m -s /bin/bash lastlight && usermod -aG docker lastlight
 
 # Install Claude Code CLI for the lastlight user
 USER lastlight
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && test -f /home/lastlight/.local/bin/claude \
+    || (echo "Claude CLI install failed" && exit 1)
 ENV PATH="/home/lastlight/.local/bin:${PATH}"
 USER root
 
