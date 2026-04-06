@@ -7,7 +7,7 @@ SECRETS="/root/secrets"
 HOME_DIR="/root"
 
 # Symlink config files from secrets volume (if mounted)
-for f in .env config.yaml; do
+for f in .env config.yaml auth.json; do
   if [ -f "$SECRETS/$f" ]; then
     ln -sf "$SECRETS/$f" "$HOME_DIR/$f"
     echo "Linked $f from secrets volume"
