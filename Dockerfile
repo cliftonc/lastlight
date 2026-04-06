@@ -1,8 +1,9 @@
-FROM node:20-slim
+FROM node:22-slim
 
-# System deps: git, ripgrep, docker CLI (for spawning sandbox containers), gosu (drop privileges)
+# System deps: git, ripgrep, docker CLI, gosu, python3/make/g++ (for native modules like better-sqlite3)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ripgrep curl jq ca-certificates gosu \
+    python3 make g++ \
     && curl -fsSL https://get.docker.com | sh \
     && rm -rf /var/lib/apt/lists/*
 
