@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
+import AnsiToHtml from "ansi-to-html";
 import type { ToolPair as ToolPairType } from "../../timeline/types";
 import { MessageCard, RowIcon } from "./MessageCard";
 import { CodeBlock } from "./CodeBlock";
@@ -17,6 +18,9 @@ interface Props {
 }
 
 const RESULT_TRUNCATE_CHARS = 8000;
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[\d;]*m/;
+const ansiConverter = new AnsiToHtml({ fg: "#c9d1d9", bg: "transparent", escapeXML: true });
 
 function stringifyResultContent(content: unknown): { text: string; isJson: boolean } {
   if (content == null) return { text: "", isJson: false };
@@ -114,21 +118,29 @@ export function ToolPair({ pair, isNew }: Props) {
             ) : (
               <>
                 <span className="text-base-content/25 shrink-0">-</span>
-                {!resultExpanded && (
-                  <span
-                    className={clsx(
-                      "text-xs font-mono truncate flex-1",
-                      summary.kind === "json"
-                        ? "text-base-content/60"
-                        : "text-base-content/75",
-                    )}
-                  >
-                    {summary.kind === "text" && summary.preview}
-                    {summary.kind === "json" && summary.preview}
-                    {summary.kind === "array" &&
-                      `[${summary.length}] ${summary.preview ? "- " + summary.preview : ""}`}
-                  </span>
-                )}
+                {!resultExpanded && (() => {
+                  const preview =
+                    summary.kind === "text" ? summary.preview :
+                    summary.kind === "json" ? summary.preview :
+                    summary.kind === "array" ? `[${summary.length}] ${summary.preview ? "- " + summary.preview : ""}` :
+                    "";
+                  const hasAnsi = typeof preview === "string" && ANSI_RE.test(preview);
+                  return hasAnsi ? (
+                    <span
+                      className="text-xs font-mono truncate flex-1"
+                      dangerouslySetInnerHTML={{ __html: ansiConverter.toHtml(preview) }}
+                    />
+                  ) : (
+                    <span
+                      className={clsx(
+                        "text-xs font-mono truncate flex-1",
+                        summary.kind === "json" ? "text-base-content/60" : "text-base-content/75",
+                      )}
+                    >
+                      {preview}
+                    </span>
+                  );
+                })()}
                 <span className="ml-auto text-2xs text-base-content/40 font-mono shrink-0 flex items-center gap-2">
                   {summary.kind === "text" && summary.lines && summary.lines > 1 && (
                     <span>{summary.lines.toLocaleString()} lines</span>
