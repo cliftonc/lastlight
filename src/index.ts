@@ -12,6 +12,8 @@ import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { mountAdmin } from "./admin/index.js";
+import { GitHubClient } from "./engine/github.js";
+import { runBuildCycle } from "./engine/orchestrator.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 async function main() {
@@ -52,6 +54,9 @@ async function main() {
   // Initialize state database
   const db = new StateDb(config.dbPath);
   console.log(`[state] Database: ${config.dbPath}`);
+
+  // GitHub API client for harness-level operations (posting comments, fetching issues)
+  const github = config.githubApp ? new GitHubClient(config.githubApp) : null;
 
   // Skill runner — used by both webhook events and cron jobs
   const runSkill = async (skill: string, context: Record<string, unknown>) => {
@@ -177,9 +182,8 @@ async function main() {
 
     console.log(`[api] CLI build triggered: ${owner}/${repo}#${issueNumber}`);
 
-    // Import and run build cycle asynchronously
-    import("./engine/orchestrator.js").then(({ runBuildCycle }) => {
-      runBuildCycle(
+    // Run build cycle asynchronously
+    runBuildCycle(
         {
           owner,
           repo,
@@ -196,14 +200,19 @@ async function main() {
           sandboxDir: config.sandboxDir,
         },
         {
-          postComment: async (msg) => console.log(`[build] ${msg}`),
+          postComment: async (msg) => {
+            console.log(`[build] ${msg}`);
+            if (github && owner && repo && issueNumber) {
+              try { await github.postComment(owner, repo, issueNumber, msg); }
+              catch (err: any) { console.error(`[build] Failed to post comment: ${err.message}`); }
+            }
+          },
           onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
           onPhaseEnd: async (phase, result) =>
             console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
         }
-      ).catch((err) => {
-        console.error(`[api] Build failed:`, err);
-      });
+    ).catch((err) => {
+      console.error(`[api] Build failed:`, err);
     });
 
     return c.json({ accepted: true, owner, repo, issueNumber }, 202);
@@ -274,6 +283,100 @@ async function main() {
       if (envelope.type === "message") {
         await envelope.reply(`That task is already running. Use /status to check progress.`);
       }
+      return;
+    }
+
+    // Build requests: route to the programmatic orchestrator instead of the SKILL.md
+    if (skill === "github-orchestrator" && context.issueNumber && context.repo) {
+      const repoStr = context.repo as string;
+      const [owner, repo] = repoStr.includes("/") ? repoStr.split("/") : ["", repoStr];
+      const issueNumber = context.issueNumber as number;
+
+      if (!owner || !repo) {
+        console.error(`[event] Invalid repo format: ${repoStr}`);
+        return;
+      }
+
+      // Fetch full issue details if we don't have them
+      let issueTitle = (context.title as string) || "";
+      let issueBody = (context.body as string) || "";
+      if (github && (!issueTitle || !issueBody)) {
+        try {
+          const issue = await github.getIssue(owner, repo, issueNumber);
+          issueTitle = issueTitle || issue.title;
+          issueBody = issueBody || issue.body || "";
+        } catch (err: any) {
+          console.warn(`[event] Could not fetch issue: ${err.message}`);
+        }
+      }
+
+      const executionId = randomUUID();
+      db.recordStart({
+        id: executionId,
+        triggerType: envelope.type === "message" ? "chat" : "webhook",
+        triggerId: String(issueNumber),
+        skill: "build-cycle",
+        repo: repoStr,
+        issueNumber,
+        startedAt: new Date().toISOString(),
+      });
+
+      if (envelope.type === "message") {
+        await envelope.reply(`Starting build cycle for ${repoStr}#${issueNumber}...`);
+      }
+
+      runBuildCycle(
+        {
+          owner,
+          repo,
+          issueNumber,
+          issueTitle: issueTitle || `Issue #${issueNumber}`,
+          issueBody,
+          commentBody: context.commentBody as string,
+          sender: (context.sender as string) || "unknown",
+        },
+        {
+          mcpConfigPath,
+          model: config.model,
+          maxTurns: config.maxTurns,
+          stateDir: config.stateDir,
+          sandboxDir: config.sandboxDir,
+        },
+        {
+          postComment: async (msg) => {
+            console.log(`[build] ${msg}`);
+            if (github) {
+              try {
+                await github.postComment(owner, repo, issueNumber, msg);
+              } catch (err: any) {
+                console.error(`[build] Failed to post comment: ${err.message}`);
+              }
+            }
+          },
+          onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
+          onPhaseEnd: async (phase, result) =>
+            console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
+        }
+      ).then((result) => {
+        db.recordFinish(executionId, {
+          success: result.success,
+          error: result.success ? undefined : "Build cycle failed",
+          durationMs: 0,
+        });
+        if (envelope.type === "message") {
+          const msg = result.prNumber
+            ? `Build cycle complete — PR #${result.prNumber} created.`
+            : `Build cycle ${result.success ? "complete" : "failed"}.`;
+          envelope.reply(msg);
+        }
+      }).catch((err) => {
+        console.error(`[event] Build cycle failed:`, err);
+        db.recordFinish(executionId, { success: false, error: err.message, durationMs: 0 });
+        if (envelope.type === "message") {
+          envelope.reply(`Build cycle failed: ${err.message}`);
+        }
+      });
+
       return;
     }
 

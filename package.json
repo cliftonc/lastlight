@@ -24,7 +24,8 @@
     "@slack/bolt": "^4.6.0",
     "better-sqlite3": "^11.0.0",
     "croner": "^9.0.0",
-    "hono": "^4.0.0"
+    "hono": "^4.0.0",
+    "octokit": "^5.0.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

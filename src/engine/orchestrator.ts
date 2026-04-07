@@ -27,6 +27,21 @@ interface PhaseResult {
  * Each phase runs via executeAgent which automatically uses Docker sandboxes
  * when available, falling back to direct Agent SDK execution.
  */
+/**
+ * Phase ordering for resume logic.
+ * Each phase in the build cycle, in order. If status.md reports a completed phase,
+ * the orchestrator skips to the next one.
+ */
+const PHASE_ORDER = ["phase_0", "guardrails", "architect", "executor", "reviewer", "complete"] as const;
+type Phase = (typeof PHASE_ORDER)[number];
+
+function phaseIndex(phase: string): number {
+  // Normalize: fix_loop_N → executor (we re-run from reviewer)
+  if (phase.startsWith("fix_loop")) return PHASE_ORDER.indexOf("executor");
+  const idx = PHASE_ORDER.indexOf(phase as Phase);
+  return idx === -1 ? -1 : idx;
+}
+
 export async function runBuildCycle(
   request: BuildRequest,
   config: ExecutorConfig,
@@ -46,12 +61,46 @@ export async function runBuildCycle(
   const onEnd = callbacks?.onPhaseEnd || (async () => {});
 
   console.log(`[orchestrator] Build cycle for ${owner}/${repo}#${issueNumber}`);
-    // ── Phase 0: Acknowledge + Context Assembly ────────────────────
+  await notify(`Acknowledged — starting build cycle for #${issueNumber}. Checking for prior progress...`);
 
-    await onStart("phase_0");
-    await notify(`Acknowledged — starting analysis for #${issueNumber}. I'll post updates here as I work.`);
+  // ── Resume check ────────────────────────────────────────────────
+  // Check if a branch already exists with status.md to resume from.
+  let resumeFrom: Phase = "phase_0";
 
-    const contextSnapshot = `
+  const resumeResult = await executeAgent(
+    buildResumeCheckPrompt(request, branch),
+    config, { taskId: `${taskId}-resume-check` }
+  );
+
+  if (resumeResult.success && resumeResult.output) {
+    const output = resumeResult.output;
+    // Parse current_phase from output
+    const phaseMatch = output.match(/current_phase:\s*(\S+)/);
+    if (phaseMatch) {
+      const completedPhase = phaseMatch[1];
+      const completedIdx = phaseIndex(completedPhase);
+      if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
+        resumeFrom = PHASE_ORDER[completedIdx + 1];
+        console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase})`);
+        await notify(
+          `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
+          `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
+        );
+      }
+    }
+
+    // Check if already complete
+    if (output.includes("current_phase: complete")) {
+      await notify(`Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`);
+      return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
+    }
+  }
+
+  const shouldRun = (phase: Phase) => phaseIndex(phase) >= phaseIndex(resumeFrom);
+
+  // ── Phase 0: Acknowledge + Context Assembly ────────────────────
+
+  const contextSnapshot = `
 Task: ${request.commentBody || request.issueBody}
 Issue: ${owner}/${repo}#${issueNumber} — ${request.issueTitle}
 Issue body: ${request.issueBody}
@@ -59,13 +108,15 @@ Requested by: ${request.sender}
 Branch: ${branch}
 `.trim();
 
+  if (shouldRun("phase_0")) {
+    await onStart("phase_0");
     phases.push({ phase: "phase_0", success: true, output: "Context assembled" });
     await onEnd("phase_0", phases[phases.length - 1]);
+  }
 
-    // ── Guardrails Check ──────────────────────────────────────────
-    // Runs once per build — the result is persisted in status.md on the branch.
-    // If the branch already exists with guardrails_status: READY, skip.
+  // ── Guardrails Check ──────────────────────────────────────────
 
+  if (shouldRun("guardrails")) {
     await onStart("guardrails");
     console.log(`[orchestrator] Guardrails check for ${owner}/${repo}`);
 
@@ -91,12 +142,13 @@ Branch: ${branch}
     if (guardrailsResult.success) {
       await notify(`**Guardrails check: READY** — test framework, linting, and type checking verified. Starting architect analysis...`);
     } else {
-      // Non-blocking failure — proceed with a warning
       await notify(`**Guardrails check completed with warnings.** Proceeding to architect analysis...`);
     }
+  }
 
-    // ── Phase 1: Architect ─────────────────────────────────────────
+  // ── Phase 1: Architect ─────────────────────────────────────────
 
+  if (shouldRun("architect")) {
     await onStart("architect");
     console.log(`[orchestrator] Phase 1: Architect analysis`);
 
@@ -119,9 +171,11 @@ Branch: ${branch}
       `- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\`\n\n` +
       `Starting implementation...`
     );
+  }
 
-    // ── Phase 2: Executor ──────────────────────────────────────────
+  // ── Phase 2: Executor ──────────────────────────────────────────
 
+  if (shouldRun("executor")) {
     await onStart("executor");
     console.log(`[orchestrator] Phase 2: Executor implementation`);
 
@@ -143,12 +197,13 @@ Branch: ${branch}
       `- Branch: \`${branch}\`\n` +
       `- Summary: \`.lastlight/issue-${issueNumber}/executor-summary.md\``
     );
+  }
 
-    // ── Phase 3: Reviewer + Fix Loop ───────────────────────────────
+  // ── Phase 3: Reviewer + Fix Loop ───────────────────────────────
 
-    let approved = false;
-    let fixCycles = 0;
-    const MAX_FIX_CYCLES = 2;
+  let approved = false;
+  let fixCycles = 0;
+  const MAX_FIX_CYCLES = 2;
 
     while (!approved && fixCycles <= MAX_FIX_CYCLES) {
       const reviewLabel = fixCycles === 0 ? "reviewer" : `reviewer_${fixCycles + 1}`;
@@ -226,6 +281,21 @@ function slugify(text: string): string {
 }
 
 // ── Prompt Builders ─────────────────────────────────────────────────
+
+function buildResumeCheckPrompt(req: BuildRequest, branch: string): string {
+  return `Check if a build cycle already exists for this issue.
+
+SETUP (git is pre-configured, you are in a sandbox workspace):
+1. Try: git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+   If the branch doesn't exist, output "current_phase: none" and stop.
+
+2. If the branch exists, check for .lastlight/issue-${req.issueNumber}/status.md
+   If it exists, read it and output its contents.
+   If it doesn't exist, output "current_phase: none"
+
+OUTPUT: The contents of status.md, or "current_phase: none" if no prior work exists.
+Do NOT modify any files. This is a read-only check.`;
+}
 
 function buildGuardrailsPrompt(req: BuildRequest, branch: string): string {
   return `You are running a PRE-FLIGHT GUARDRAILS CHECK before implementation work begins.
