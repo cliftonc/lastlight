@@ -1,13 +1,44 @@
 import clsx from "clsx";
+import {
+  Shield,
+  Compass,
+  Zap,
+  Search,
+  Wrench,
+  GitPullRequest,
+  FastForward,
+  Tag,
+  FileText,
+  Activity,
+  MessageSquare,
+  Bot,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { Session } from "../api";
 
-const SOURCE_COLOR: Record<string, string> = {
-  webhook: "text-warning",
-  cron: "text-success",
-  cli: "text-base-content/60",
-  api: "text-info",
-  unknown: "text-base-content/60",
+const SESSION_TYPE_CONFIG: Record<string, { label: string; Icon: LucideIcon; color: string }> = {
+  // Build cycle phases
+  guardrails:  { label: "Guardrails",  Icon: Shield,         color: "text-warning" },
+  architect:   { label: "Architect",   Icon: Compass,        color: "text-info" },
+  executor:    { label: "Executor",    Icon: Zap,            color: "text-success" },
+  reviewer:    { label: "Reviewer",    Icon: Search,         color: "text-secondary" },
+  fix:         { label: "Fix",         Icon: Wrench,         color: "text-warning" },
+  pr:          { label: "PR",          Icon: GitPullRequest,  color: "text-accent" },
+  resume:      { label: "Resume",      Icon: FastForward,    color: "text-base-content/50" },
+  // Skills
+  triage:      { label: "Triage",      Icon: Tag,            color: "text-warning" },
+  review:      { label: "Review",      Icon: FileText,       color: "text-info" },
+  health:      { label: "Health",      Icon: Activity,       color: "text-success" },
+  // Chat
+  chat:        { label: "Chat",        Icon: MessageSquare,  color: "text-primary" },
+  // Default
+  agent:       { label: "Agent",       Icon: Bot,            color: "text-base-content/60" },
 };
+
+function getTypeConfig(session: Session) {
+  const t = session.sessionType || "agent";
+  return SESSION_TYPE_CONFIG[t] || SESSION_TYPE_CONFIG.agent;
+}
 
 function timeAgo(unix: number | null): string {
   if (unix == null) return "";
@@ -100,14 +131,15 @@ export function SessionList({
                 )}
               >
                 <div className="flex items-center gap-2 w-full text-2xs">
-                  <span
-                    className={clsx(
-                      "font-semibold uppercase tracking-wider",
-                      SOURCE_COLOR[s.source] ?? "text-base-content/60",
-                    )}
-                  >
-                    {s.source}
-                  </span>
+                  {(() => {
+                    const { Icon, label, color } = getTypeConfig(s);
+                    return (
+                      <span className={clsx("flex items-center gap-1 font-semibold uppercase tracking-wider", color)}>
+                        <Icon size={12} />
+                        {label}
+                      </span>
+                    );
+                  })()}
                   <span className="text-base-content/50">
                     {timeAgo(s.last_message_at ?? s.started_at)} ago
                   </span>

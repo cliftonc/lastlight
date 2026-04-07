@@ -21,6 +21,8 @@ export interface JsonlMessage {
 export interface SessionMeta {
   id: string;
   source: string;
+  /** Session type derived from the prompt content */
+  sessionType: string;
   model: string | null;
   started_at: number;
   last_message_at: number | null;
@@ -30,6 +32,30 @@ export interface SessionMeta {
   last_assistant_content: string | null;
   /** Agent sub-session IDs that belong to this session */
   agentIds: string[];
+}
+
+/**
+ * Detect session type from the first user message (prompt).
+ * Matches against known orchestrator prompt patterns.
+ */
+function detectSessionType(firstUserMessage: string): string {
+  if (!firstUserMessage) return "agent";
+  const msg = firstUserMessage.slice(0, 500); // Only need the start
+  // Build cycle phases
+  if (msg.includes("PRE-FLIGHT GUARDRAILS CHECK")) return "guardrails";
+  if (msg.includes("You are the ARCHITECT")) return "architect";
+  if (msg.includes("You are the EXECUTOR (fix cycle")) return "fix";
+  if (msg.includes("You are the EXECUTOR")) return "executor";
+  if (msg.includes("You are the CODE REVIEWER")) return "reviewer";
+  if (msg.includes("Create a pull request for the work on branch")) return "pr";
+  if (msg.includes("Check if a build cycle already exists")) return "resume";
+  // Skills
+  if (msg.includes("issue-triage")) return "triage";
+  if (msg.includes("pr-review")) return "review";
+  if (msg.includes("repo-health")) return "health";
+  // Chat (handled by chat.ts, not executor)
+  if (msg.includes("You are Last Light") && msg.includes("chat")) return "chat";
+  return "agent";
 }
 
 /**
@@ -271,6 +297,7 @@ export class SessionReader {
     let toolCallCount = 0;
     let conversationMessageCount = 0;
     let lastAssistantContent: string | null = null;
+    let firstUserMessage: string | null = null;
     const agentIds: string[] = [];
 
     for (const scanFile of filesToScan) {
@@ -326,6 +353,17 @@ export class SessionReader {
             messageCount++;
             conversationMessageCount++;
           }
+          // Capture first user message for type detection
+          if (msg.role === "user" && firstUserMessage === null && msg.content) {
+            firstUserMessage = typeof msg.content === "string"
+              ? msg.content
+              : Array.isArray(msg.content)
+                ? (msg.content as Array<Record<string, unknown>>)
+                    .filter((b) => b.type === "text")
+                    .map((b) => b.text as string)
+                    .join(" ")
+                : JSON.stringify(msg.content);
+          }
           if (msg.role === "assistant") {
             if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
               toolCallCount += msg.tool_calls.length;
@@ -342,9 +380,12 @@ export class SessionReader {
       startedAt = Date.now() / 1000;
     }
 
+    const sessionType = detectSessionType(firstUserMessage ?? "");
+
     return {
       id: sessionId,
       source,
+      sessionType,
       model,
       started_at: startedAt,
       last_message_at: lastMessageAt,

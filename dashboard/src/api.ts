@@ -4,6 +4,7 @@ const BASE = "/admin/api";
 export interface Session {
   id: string;
   source: string;
+  sessionType?: string;
   model: string | null;
   started_at: number;
   last_message_at: number | null;
