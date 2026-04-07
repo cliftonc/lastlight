@@ -45,25 +45,19 @@ COPY dashboard/ dashboard/
 # Build TypeScript harness + dashboard
 RUN npm run build && npm run build:dashboard
 
-# Skills — changes often
-COPY skills/ skills/
-
-# Agent context (soul, rules) — changes often
-COPY agent-context/ agent-context/
-
-# Project context for devs
-COPY CLAUDE.md ./
-
-# Deploy scripts
+# Deploy scripts — rarely change
 COPY deploy/ deploy/
 RUN chmod +x /app/deploy/entrypoint.sh
 
+# Frequently changing content — copied last for best cache hits, owned by lastlight
+COPY --chown=lastlight:lastlight skills/ skills/
+COPY --chown=lastlight:lastlight agent-context/ agent-context/
+COPY --chown=lastlight:lastlight CLAUDE.md ./
+
 # State directory — mount as Docker volume
+# Entrypoint handles chown on /app/data at runtime
 RUN mkdir -p /app/data/sessions /app/data/logs
 VOLUME ["/app/data", "/app/secrets"]
-
-# Own app dirs for lastlight user
-RUN chown -R lastlight:lastlight /app /app/data
 
 ENV STATE_DIR=/app/data
 ENV CLAUDE_HOME_DIR=/app/data/claude-home
