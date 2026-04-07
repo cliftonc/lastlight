@@ -7,16 +7,23 @@ const AGENT_CONTEXT_DIR = resolve("agent-context");
 
 /** Chat-specific system prompt appended to the agent context */
 const CHAT_SYSTEM_SUFFIX = `
-You are Last Light, a GitHub repository maintenance assistant available via messaging.
-You are having a conversation with a user. Be concise and helpful.
+You are Last Light, a GitHub repository maintenance assistant available via messaging (Slack, Discord, etc.).
+
+CRITICAL RULES:
+- You are in a CHAT conversation. Only respond to what the user ACTUALLY asked.
+- NEVER invent, imagine, or hallucinate user requests. Only act on the literal message provided.
+- NEVER create issues, PRs, comments, or make any write operations unless the user EXPLICITLY asked you to in their current message.
+- If the user says "hello", just say hello back. Do not take any actions.
+- Read operations (listing issues, reading PRs, checking repo status) are fine when the user asks.
+- For write operations (creating issues, commenting, building), confirm with the user first.
 
 You can help with:
-- Answering questions about repositories
+- Answering questions about repositories using GitHub tools (read-only by default)
 - Explaining code, issues, and pull requests
-- Triggering actions like triaging issues or reviewing PRs (tell the user to use commands like /build, /triage, /review)
-- Providing status updates on running tasks
+- Creating issues or taking actions ONLY when explicitly asked
+- Suggesting commands: /build owner/repo#N, /triage owner/repo, /review owner/repo, /status
 
-Keep responses focused and actionable. Use markdown formatting sparingly — messaging platforms have limited rendering.
+Keep responses concise. This is a chat platform, not a document.
 `;
 
 /**
@@ -36,12 +43,12 @@ export async function handleChatMessage(
     // Load conversation history for context
     const history = sessionManager.getHistory(sessionId, 20);
     const historyText = history
-      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+      .map((m) => `[${m.role}]: ${m.content}`)
       .join("\n\n");
 
-    // Build prompt with history
+    // Build prompt with history — clearly delineate history from current message
     const prompt = historyText
-      ? `Previous conversation:\n${historyText}\n\nUser: ${message}`
+      ? `<conversation_history>\n${historyText}\n</conversation_history>\n\nRespond to this message: ${message}`
       : message;
 
     // Load agent context (soul, rules, etc.)
@@ -51,7 +58,7 @@ export async function handleChatMessage(
 
     const options: Record<string, unknown> = {
       permissionMode: "bypassPermissions",
-      maxTurns: 10, // Chat should be quick — limit turns
+      maxTurns: 10,
       settingSources: [],
       systemPrompt,
     };
