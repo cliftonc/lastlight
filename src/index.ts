@@ -16,6 +16,7 @@ import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { runBuildCycle, runPrFix } from "./engine/orchestrator.js";
+import { resolveModel } from "./config.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 async function main() {
@@ -25,6 +26,10 @@ async function main() {
   // Load config
   const config = loadConfig();
   console.log(`[config] Port: ${config.port}, Model: ${config.model}`);
+  const modelOverrides = Object.entries(config.models).filter(([k]) => k !== "default");
+  if (modelOverrides.length > 0) {
+    console.log(`[config] Model overrides: ${modelOverrides.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+  }
 
   // Clean up any sandbox containers left over from a previous run
   cleanupOrphanedSandboxes();
@@ -63,6 +68,13 @@ async function main() {
   // GitHub API client for harness-level operations (posting comments, fetching issues)
   const github = config.githubApp ? new GitHubClient(config.githubApp) : null;
 
+  // Map skill names to session types for model resolution
+  const skillToSessionType: Record<string, string> = {
+    "issue-triage": "triage",
+    "pr-review": "review",
+    "repo-health": "health",
+  };
+
   // Skill runner — used by both webhook events and cron jobs
   const runSkill = async (skill: string, context: Record<string, unknown>) => {
     const executionId = randomUUID();
@@ -78,9 +90,10 @@ async function main() {
       startedAt: new Date().toISOString(),
     });
 
+    const sessionType = skillToSessionType[skill] || skill;
     const result = await executeSkill(skill, context, {
       mcpConfigPath,
-      model: config.model,
+      model: resolveModel(config.models, sessionType),
       maxTurns: config.maxTurns,
       stateDir: config.stateDir,
     }, agents);
@@ -225,6 +238,7 @@ async function main() {
             console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
         },
         db,
+        config.models,
     ).catch((err) => {
       console.error(`[api] Build failed:`, err);
     });
@@ -254,7 +268,7 @@ async function main() {
       try {
         const response = await handleChatMessage(message, sessionId, sender, sessionManager, {
           mcpConfigPath,
-          model: config.model,
+          model: resolveModel(config.models, "chat"),
           maxTurns: 10,
         });
         await envelope.reply(response);
@@ -363,7 +377,8 @@ async function main() {
               catch (err: any) { console.error(`[pr-fix] Failed to post comment: ${err.message}`); }
             }
           },
-        }
+        },
+        config.models,
       ).catch((err) => {
         console.error(`[event] PR fix failed:`, err);
       });
@@ -443,6 +458,7 @@ async function main() {
             console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
         },
         db,
+        config.models,
       ).then((result) => {
         db.recordFinish(executionId, {
           success: result.success,

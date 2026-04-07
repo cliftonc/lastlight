@@ -1,6 +1,8 @@
 import type { ExecutorConfig, ExecutionResult } from "./executor.js";
 import { executeAgent } from "./executor.js";
 import type { StateDb } from "../state/db.js";
+import type { ModelConfig } from "../config.js";
+import { resolveModel } from "../config.js";
 import { listRunningContainers } from "../admin/docker.js";
 import { randomUUID } from "crypto";
 
@@ -81,6 +83,7 @@ async function runPhase(
   prompt: string,
   config: ExecutorConfig,
   db?: StateDb,
+  modelOverride?: string,
 ): Promise<{ result: ExecutionResult; skipped: false } | { skipped: true; reason: "running" | "done" }> {
   if (db) {
     const status = db.shouldRunPhase(`build:${phaseName}`, triggerId);
@@ -112,7 +115,8 @@ async function runPhase(
       startedAt: new Date().toISOString(),
     });
 
-    const result = await executeAgent(prompt, config, { taskId });
+    const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
+    const result = await executeAgent(prompt, phaseConfig, { taskId });
 
     db.recordFinish(executionId, {
       success: result.success,
@@ -125,7 +129,8 @@ async function runPhase(
   }
 
   // No DB — just run
-  const result = await executeAgent(prompt, config, { taskId });
+  const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
+  const result = await executeAgent(prompt, phaseConfig, { taskId });
   return { result, skipped: false };
 }
 
@@ -138,6 +143,7 @@ export async function runBuildCycle(
     postComment?: (body: string) => Promise<void>;
   },
   db?: StateDb,
+  models?: ModelConfig,
 ): Promise<{ success: boolean; phases: PhaseResult[]; prNumber?: number }> {
   const { owner, repo, issueNumber } = request;
   const phases: PhaseResult[] = [];
@@ -203,13 +209,14 @@ Branch: ${branch}
   }
 
   const triggerId = `${owner}/${repo}#${issueNumber}`;
+  const modelFor = (taskType: string) => models ? resolveModel(models, taskType) : undefined;
 
   // ── Guardrails Check ──────────────────────────────────────────
 
   if (shouldRun("guardrails")) {
     await onStart("guardrails");
     const gr = await runPhase("guardrails", `${taskId}-guardrails`, triggerId,
-      buildGuardrailsPrompt(request, branch), config, db);
+      buildGuardrailsPrompt(request, branch), config, db, modelFor("guardrails"));
 
     if (gr.skipped) {
       if (gr.reason === "running") {
@@ -243,7 +250,7 @@ Branch: ${branch}
   if (shouldRun("architect")) {
     await onStart("architect");
     const ar = await runPhase("architect", `${taskId}-architect`, triggerId,
-      buildArchitectPrompt(request, branch, contextSnapshot), config, db);
+      buildArchitectPrompt(request, branch, contextSnapshot), config, db, modelFor("architect"));
 
     if (ar.skipped) {
       if (ar.reason === "running") {
@@ -277,7 +284,7 @@ Branch: ${branch}
     await onStart("executor");
     await notify(`**Starting executor** — implementing the architect's plan...`);
     const er = await runPhase("executor", `${taskId}-executor`, triggerId,
-      buildExecutorPrompt(request, branch), config, db);
+      buildExecutorPrompt(request, branch), config, db, modelFor("executor"));
 
     if (er.skipped) {
       if (er.reason === "running") {
@@ -320,7 +327,7 @@ Branch: ${branch}
       ? buildReviewerPrompt(request, branch)
       : buildReReviewPrompt(request, branch, fixCycles);
     const rr = await runPhase(reviewLabel, `${taskId}-${reviewLabel}`, triggerId,
-      reviewPrompt, config, db);
+      reviewPrompt, config, db, modelFor("reviewer"));
 
     if (rr.skipped) {
       if (rr.reason === "running") {
@@ -347,7 +354,7 @@ Branch: ${branch}
       await onStart(`fix_loop_${fixCycles}`);
       await notify(`**Starting fix loop** (cycle ${fixCycles}/${MAX_FIX_CYCLES}) — addressing reviewer feedback...`);
       const fr = await runPhase(`fix_loop_${fixCycles}`, `${taskId}-fix${fixCycles}`, triggerId,
-        buildFixPrompt(request, branch, fixCycles), config, db);
+        buildFixPrompt(request, branch, fixCycles), config, db, modelFor("fix"));
 
       if (fr.skipped) {
         if (fr.reason === "running") {
@@ -377,7 +384,7 @@ Branch: ${branch}
   await onStart("pr");
   await notify(`**Creating PR** — packaging changes for review...`);
   const prPhase = await runPhase("pr", `${taskId}-pr`, triggerId,
-    buildPrPrompt(request, branch, approved, fixCycles), config, db);
+    buildPrPrompt(request, branch, approved, fixCycles), config, db, modelFor("pr"));
 
   if (prPhase.skipped) {
     if (prPhase.reason === "running") {
@@ -668,16 +675,19 @@ export async function runPrFix(
   callbacks?: {
     postComment?: (body: string) => Promise<void>;
   },
+  models?: ModelConfig,
 ): Promise<{ success: boolean; output: string }> {
   const notify = callbacks?.postComment || (async () => {});
   const { owner, repo, prNumber, branch } = request;
   const taskId = `${repo}-pr${prNumber}-fix`;
 
+  const prFixConfig = models ? { ...config, model: resolveModel(models, "pr-fix") } : config;
+
   await notify(`On it — fixing PR #${prNumber}...`);
 
   const result = await executeAgent(
     buildPrFixPrompt(request),
-    config, { taskId }
+    prFixConfig, { taskId }
   );
 
   if (result.success) {

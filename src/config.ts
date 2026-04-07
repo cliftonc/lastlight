@@ -32,6 +32,18 @@ export interface SlackConfig {
   deliveryChannel?: string;
 }
 
+/**
+ * Per-task-type model configuration.
+ * Keys are session types (matching admin dashboard labels).
+ * Values are Claude model IDs.
+ */
+export interface ModelConfig {
+  /** Default model for all tasks */
+  default: string;
+  /** Per-type overrides */
+  [taskType: string]: string;
+}
+
 export interface LastLightConfig {
   /** Webhook listener port */
   port: number;
@@ -47,8 +59,10 @@ export interface LastLightConfig {
   stateDir: string;
   /** Directory for agent sandboxes (cloned repos per task) */
   sandboxDir: string;
-  /** Claude model to use */
+  /** Default Claude model (used when no per-type override exists) */
   model: string;
+  /** Per-task-type model overrides */
+  models: ModelConfig;
   /** Max agent turns */
   maxTurns: number;
   /** GitHub App config (optional — not needed for messaging-only mode) */
@@ -99,10 +113,43 @@ export function loadConfig(): LastLightConfig {
     sandboxDir: join(stateDir, "sandboxes"),
     dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db"),
     model: process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
+    models: parseModelConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
     githubApp,
     slack,
   };
+}
+
+/**
+ * Parse per-task-type model config from CLAUDE_MODELS env var.
+ *
+ * Format: JSON object mapping session types to model IDs.
+ * Example: {"architect":"claude-opus-4-6","chat":"claude-haiku-4-5-20251001"}
+ *
+ * Session types: guardrails, architect, executor, reviewer, fix, pr, pr-fix,
+ *                resume, triage, review, health, chat
+ */
+function parseModelConfig(): ModelConfig {
+  const defaultModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
+  const config: ModelConfig = { default: defaultModel };
+
+  const modelsEnv = process.env.CLAUDE_MODELS;
+  if (modelsEnv) {
+    try {
+      const parsed = JSON.parse(modelsEnv);
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof value === "string") {
+            config[key] = value;
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[config] Invalid CLAUDE_MODELS JSON: ${err.message}`);
+    }
+  }
+
+  return config;
 }
 
 function requireEnv(name: string): string {
@@ -111,6 +158,14 @@ function requireEnv(name: string): string {
     throw new Error(`Required environment variable not set: ${name}`);
   }
   return value;
+}
+
+/**
+ * Resolve the model to use for a given task type.
+ * Checks per-type overrides first, then falls back to default.
+ */
+export function resolveModel(models: ModelConfig, taskType: string): string {
+  return models[taskType] || models.default;
 }
 
 /**

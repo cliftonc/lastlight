@@ -87,11 +87,17 @@ function Dashboard() {
   }, [sessions, sourceFilter, hideNoOp, debouncedQuery, timeRange]);
 
   useEffect(() => {
-    if (userSelected || selectedId) return;
-    if (filteredSessions.length > 0) {
+    // If current selection is not in filtered list, clear it
+    if (selectedId && !filteredSessions.some((s) => s.id === selectedId)) {
+      setSelectedId(filteredSessions.length > 0 ? filteredSessions[0]!.id : null);
+      setUserSelected(false);
+      return;
+    }
+    // Auto-select first session if nothing selected
+    if (!selectedId && filteredSessions.length > 0) {
       setSelectedId(filteredSessions[0]!.id);
     }
-  }, [filteredSessions, selectedId, userSelected]);
+  }, [filteredSessions, selectedId]);
 
   const handleSelect = (id: string) => {
     setUserSelected(true);
