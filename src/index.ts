@@ -307,16 +307,19 @@ async function main() {
         return;
       }
 
-      // Fetch PR details to get the branch name
+      // Fetch PR details and CI failures
       let prTitle = (context.title as string) || "";
       let prBody = (context.body as string) || "";
       let branch = "";
+      let failedChecks = "";
       if (github) {
         try {
           const pr = await github.getPullRequest(owner, repo, prNumber);
           prTitle = prTitle || pr.title;
           prBody = prBody || pr.body || "";
           branch = pr.head.ref;
+          // Fetch CI failures for the PR's head commit
+          failedChecks = await github.getFailedChecks(owner, repo, pr.head.sha);
         } catch (err: any) {
           console.warn(`[event] Could not fetch PR: ${err.message}`);
         }
@@ -339,6 +342,7 @@ async function main() {
           commentBody: (context.commentBody as string) || "",
           sender: (context.sender as string) || "unknown",
           branch,
+          failedChecks,
         },
         {
           mcpConfigPath,

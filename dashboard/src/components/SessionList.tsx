@@ -1,46 +1,6 @@
 import clsx from "clsx";
-import {
-  Shield,
-  Compass,
-  Zap,
-  Search,
-  Wrench,
-  GitPullRequest,
-  FastForward,
-  Tag,
-  FileText,
-  Activity,
-  MessageSquare,
-  Bot,
-  Radio,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import type { Session } from "../api";
-
-const SESSION_TYPE_CONFIG: Record<string, { label: string; Icon: LucideIcon; color: string }> = {
-  // Build cycle phases
-  guardrails:  { label: "Guardrails",  Icon: Shield,         color: "text-warning" },
-  architect:   { label: "Architect",   Icon: Compass,        color: "text-info" },
-  executor:    { label: "Executor",    Icon: Zap,            color: "text-success" },
-  reviewer:    { label: "Reviewer",    Icon: Search,         color: "text-secondary" },
-  fix:         { label: "Fix",         Icon: Wrench,         color: "text-warning" },
-  pr:          { label: "PR",          Icon: GitPullRequest,  color: "text-accent" },
-  "pr-fix":    { label: "PR Fix",     Icon: Wrench,         color: "text-accent" },
-  resume:      { label: "Resume",      Icon: FastForward,    color: "text-base-content/50" },
-  // Skills
-  triage:      { label: "Triage",      Icon: Tag,            color: "text-warning" },
-  review:      { label: "Review",      Icon: FileText,       color: "text-info" },
-  health:      { label: "Health",      Icon: Activity,       color: "text-success" },
-  // Chat
-  chat:        { label: "Chat",        Icon: MessageSquare,  color: "text-primary" },
-  // Default
-  agent:       { label: "Agent",       Icon: Bot,            color: "text-base-content/60" },
-};
-
-function getTypeConfig(session: Session) {
-  const t = session.sessionType || "agent";
-  return SESSION_TYPE_CONFIG[t] || SESSION_TYPE_CONFIG.agent;
-}
+import { getSessionType } from "../sessionTypes";
 
 function timeAgo(unix: number | null): string {
   if (unix == null) return "";
@@ -102,7 +62,6 @@ interface Props {
   onLoadMore: () => void;
   totalAvailable: number;
   showLiveOnly: boolean;
-  onToggleLiveOnly: () => void;
 }
 
 export function SessionList({
@@ -114,28 +73,11 @@ export function SessionList({
   onLoadMore,
   totalAvailable,
   showLiveOnly,
-  onToggleLiveOnly,
 }: Props) {
-  const liveCount = sessions.filter((s) => s.live).length;
   const displayed = showLiveOnly ? sessions.filter((s) => s.live) : sessions;
 
   return (
     <aside className="w-80 shrink-0 border-r border-base-300 bg-base-200/40 overflow-y-auto flex flex-col">
-      {liveCount > 0 && (
-        <button
-          onClick={onToggleLiveOnly}
-          className={clsx(
-            "flex items-center gap-1.5 px-3 py-1.5 text-2xs font-semibold border-b border-base-300 transition-colors",
-            showLiveOnly
-              ? "bg-success/15 text-success"
-              : "bg-base-200 text-base-content/50 hover:text-success",
-          )}
-        >
-          <Radio size={12} className={showLiveOnly ? "animate-pulse" : ""} />
-          {liveCount} live {liveCount === 1 ? "session" : "sessions"}
-          {showLiveOnly && <span className="ml-auto text-base-content/40">show all</span>}
-        </button>
-      )}
       {error && (
         <div className="px-3 py-2 text-2xs text-error border-b border-base-300">{error}</div>
       )}
@@ -156,7 +98,7 @@ export function SessionList({
               >
                 <div className="flex items-center gap-2 w-full text-2xs">
                   {(() => {
-                    const { Icon, label, color } = getTypeConfig(s);
+                    const { Icon, label, color } = getSessionType(s.sessionType);
                     return (
                       <span className={clsx("flex items-center gap-1 font-semibold uppercase tracking-wider", color)}>
                         <Icon size={12} />

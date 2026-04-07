@@ -22,10 +22,11 @@ function Dashboard() {
   const [userSelected, setUserSelected] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [hideNoOp, setHideNoOp] = useState(true);
+  const [timeRange, setTimeRange] = useState<string>("day");
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [showLiveOnly, setShowLiveOnly] = useState(false);
+  const showLiveOnly = timeRange === "live";
   const [order, setOrder] = useState<MessageOrder>(
     () => (localStorage.getItem("ll-order") as MessageOrder) ?? "newest",
   );
@@ -42,18 +43,32 @@ function Dashboard() {
   const { sessions, status, error } = useSessionStream(limit);
 
   const availableSources = useMemo(
-    () => Array.from(new Set(sessions.map((s) => s.source))).sort(),
+    () => Array.from(new Set(sessions.map((s) => s.sessionType || "agent"))).sort(),
     [sessions],
   );
   const sourceCounts = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const s of sessions) out[s.source] = (out[s.source] ?? 0) + 1;
+    for (const s of sessions) {
+      const t = s.sessionType || "agent";
+      out[t] = (out[t] ?? 0) + 1;
+    }
     return out;
   }, [sessions]);
 
   const filteredSessions = useMemo(() => {
     let out = sessions;
-    if (sourceFilter) out = out.filter((s) => s.source === sourceFilter);
+
+    // Time range filter
+    if (timeRange === "live") {
+      out = out.filter((s) => s.live);
+    } else if (timeRange !== "all") {
+      const now = Date.now() / 1000;
+      const cutoffs: Record<string, number> = { hour: 3600, day: 86400, week: 604800 };
+      const cutoff = now - (cutoffs[timeRange] ?? 86400);
+      out = out.filter((s) => s.started_at >= cutoff);
+    }
+
+    if (sourceFilter) out = out.filter((s) => (s.sessionType || "agent") === sourceFilter);
     if (hideNoOp) out = out.filter((s) => !isNoOpSession(s));
     if (debouncedQuery) {
       const q = debouncedQuery.toLowerCase();
@@ -69,7 +84,7 @@ function Dashboard() {
       });
     }
     return out;
-  }, [sessions, sourceFilter, hideNoOp, debouncedQuery]);
+  }, [sessions, sourceFilter, hideNoOp, debouncedQuery, timeRange]);
 
   useEffect(() => {
     if (userSelected || selectedId) return;
@@ -127,6 +142,9 @@ function Dashboard() {
         onFilterChange={setSourceFilter}
         hideNoOp={hideNoOp}
         onHideNoOpChange={setHideNoOp}
+        timeRange={timeRange}
+        onTimeRangeChange={setTimeRange}
+        liveCount={sessions.filter((s) => s.live).length}
         query={query}
         onQueryChange={setQuery}
         streamStatus={status}
@@ -141,7 +159,6 @@ function Dashboard() {
           onLoadMore={() => setLimit((l) => l + PAGE_SIZE)}
           totalAvailable={sessions.length}
           showLiveOnly={showLiveOnly}
-          onToggleLiveOnly={() => setShowLiveOnly((v) => !v)}
         />
         <MessageFeed
           sessionId={selectedId}

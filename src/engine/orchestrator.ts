@@ -636,6 +636,8 @@ export interface PrFixRequest {
   commentBody: string;
   sender: string;
   branch: string;
+  /** CI check failures from GitHub Actions, pre-fetched by the harness */
+  failedChecks?: string;
 }
 
 /**
@@ -670,6 +672,10 @@ export async function runPrFix(
 }
 
 function buildPrFixPrompt(req: PrFixRequest): string {
+  const ciSection = req.failedChecks && !req.failedChecks.includes("No failed checks")
+    ? `\nCI FAILURES (from GitHub Actions — fix these first):\n${req.failedChecks}\n`
+    : "";
+
   return `You are fixing a PR based on a maintainer's request.
 
 SETUP (git is pre-configured, you are in a sandbox workspace):
@@ -679,13 +685,13 @@ SETUP (git is pre-configured, you are in a sandbox workspace):
 CONTEXT:
 - PR #${req.prNumber}: ${req.prTitle}
 - Maintainer request: ${req.commentBody}
-
+${ciSection}
 INSTRUCTIONS:
-1. Understand what the maintainer is asking for
-2. Read the relevant code and any CI failure logs if applicable
-3. Make the fix — keep changes minimal and focused
-4. Run tests, lint, and typecheck to verify nothing is broken
-5. DO NOT commit until all checks pass
+1. Understand what the maintainer is asking for${ciSection ? "\n2. The CI failures above are the primary issue — focus on fixing those" : ""}
+${ciSection ? "3" : "2"}. Read the relevant code and understand the failure
+${ciSection ? "4" : "3"}. Make the fix — keep changes minimal and focused
+${ciSection ? "5" : "4"}. Run tests, lint, and typecheck to verify everything passes
+${ciSection ? "6" : "5"}. DO NOT commit until all checks pass
 
 AFTER FIXING:
 1. git add -A && git commit -m "fix: address feedback on PR #${req.prNumber}
