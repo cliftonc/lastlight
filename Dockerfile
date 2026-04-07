@@ -54,6 +54,10 @@ COPY --chown=lastlight:lastlight skills/ skills/
 COPY --chown=lastlight:lastlight agent-context/ agent-context/
 COPY --chown=lastlight:lastlight CLAUDE.md ./
 
+# Let lastlight user write to /app (for mcp-config.json at startup)
+# Only chown /app itself, not recursively — node_modules etc. are read-only and fine as root
+RUN chown lastlight:lastlight /app
+
 # State directory — mount as Docker volume
 # Entrypoint handles chown on /app/data at runtime
 RUN mkdir -p /app/data/sessions /app/data/logs
