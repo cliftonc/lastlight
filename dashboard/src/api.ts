@@ -96,6 +96,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface RateLimit {
+  resource: string;
+  remaining: number;
+  reset_at: string;
+  updated_at: string;
+}
+
 export const api = {
   authRequired: () => req<{ required: boolean }>("/auth-required"),
   login: (password: string) =>
@@ -127,4 +134,5 @@ export const api = {
   containers: () => req<{ containers: ContainerInfo[] }>("/containers"),
   killContainer: (name: string) =>
     req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  rateLimits: () => req<{ limits: RateLimit[] }>("/rate-limits"),
 };

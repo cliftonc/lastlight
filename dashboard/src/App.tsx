@@ -5,6 +5,7 @@ import { SessionList } from "./components/SessionList";
 import { MessageFeed, type MessageOrder } from "./components/MessageFeed";
 import { Login } from "./components/Login";
 import { useSessionStream } from "./hooks/useSessionStream";
+import { UsageFooter } from "./components/UsageFooter";
 
 type AuthState = "checking" | "required" | "ok";
 
@@ -175,6 +176,7 @@ function Dashboard() {
           onTerminate={handleTerminate}
         />
       </div>
+      <UsageFooter />
     </div>
   );
 }

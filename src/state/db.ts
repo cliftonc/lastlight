@@ -176,6 +176,14 @@ export class StateDb {
     `).run(resource, remaining, resetAt, new Date().toISOString(), remaining, resetAt, new Date().toISOString());
   }
 
+  /** Get all rate limit records */
+  getRateLimits(): Array<{ resource: string; remaining: number; reset_at: string; updated_at: string }> {
+    return this.db.prepare(`
+      SELECT resource, remaining, reset_at, updated_at FROM rate_limits
+      ORDER BY resource
+    `).all() as Array<{ resource: string; remaining: number; reset_at: string; updated_at: string }>;
+  }
+
   /** Get all executions with pagination */
   allExecutions(limit = 100, offset = 0): ExecutionRecord[] {
     return this.db.prepare(`

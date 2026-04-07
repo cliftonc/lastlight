@@ -219,6 +219,11 @@ export function createAdminRoutes(
     return c.json(stats);
   });
 
+  // API rate limits
+  app.get("/rate-limits", (c) => {
+    return c.json({ limits: db.getRateLimits() });
+  });
+
   // Running Docker containers
   app.get("/containers", async (c) => {
     const containers = await listRunningContainers();

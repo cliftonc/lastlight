@@ -10,6 +10,13 @@ export interface CronJob {
   maxFailures?: number;
 }
 
+/** A lightweight direct job — runs a function, not a skill */
+export interface DirectCronJob {
+  name: string;
+  schedule: string;
+  handler: () => Promise<void>;
+}
+
 export type SkillRunner = (skill: string, context: Record<string, unknown>) => Promise<void>;
 
 /**
@@ -54,6 +61,31 @@ export class CronScheduler {
           console.error(`[cron] ALERT: ${job.name} has failed ${failures} times consecutively`);
           // TODO: send alert (Slack webhook, email, etc.)
         }
+      } finally {
+        this.running.delete(job.name);
+      }
+    });
+
+    this.jobs.set(job.name, cronJob);
+    console.log(`[cron] Registered: ${job.name} (${job.schedule})`);
+  }
+
+  /** Register a lightweight direct handler (no skill/sandbox overhead) */
+  registerDirect(job: DirectCronJob): void {
+    if (this.jobs.has(job.name)) {
+      throw new Error(`Cron job "${job.name}" already registered`);
+    }
+
+    const cronJob = new Cron(job.schedule, async () => {
+      if (this.running.has(job.name)) {
+        return;
+      }
+
+      this.running.add(job.name);
+      try {
+        await job.handler();
+      } catch (err: any) {
+        console.error(`[cron] ${job.name} failed:`, err.message);
       } finally {
         this.running.delete(job.name);
       }

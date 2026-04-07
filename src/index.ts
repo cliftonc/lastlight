@@ -513,6 +513,14 @@ async function main() {
     console.log("[cron] Webhooks enabled — skipping issue/PR polling crons");
   }
 
+  // API usage/capacity checker — runs every 5 minutes, no sandbox needed
+  const { checkApiUsage } = await import("./cron/rate-limits.js");
+  cron.registerDirect({
+    name: "check-api-usage",
+    schedule: "*/5 * * * *",
+    handler: () => checkApiUsage(db),
+  });
+
   // Start everything
   await registry.startAll();
   console.log("[main] All connectors started");
