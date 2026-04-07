@@ -33,6 +33,8 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
   abstract addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
   /** Show a typing/processing indicator */
   abstract showTyping(channelId: string, messageId: string): Promise<void>;
+  /** Clear the typing/processing indicator (optional — not all platforms need this) */
+  async clearTyping(_channelId: string, _threadId: string): Promise<void> {}
 
   /**
    * Process an incoming message from any platform.
@@ -74,6 +76,8 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
     // Build the reply callback — sends to same channel/thread
     const replyThreadId = threadId || messageId;
     const reply = async (msg: string) => {
+      // Clear thinking indicator before sending response
+      this.clearTyping(channelId, replyThreadId).catch(() => {});
       // Chunk long messages
       const chunks = this.chunkMessage(msg);
       for (const chunk of chunks) {

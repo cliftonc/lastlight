@@ -3,6 +3,20 @@ import { MessagingConnector } from "../messaging/base.js";
 import type { SessionManager } from "../messaging/session-manager.js";
 import type { MessagingConfig } from "../messaging/types.js";
 
+/** Rotating status messages shown while the agent is thinking */
+const THINKING_MESSAGES = [
+  "Thinking...",
+  "Pondering the cosmos...",
+  "Consulting the codebase...",
+  "Rummaging through repos...",
+  "Brewing a response...",
+  "Crunching context...",
+  "Reading between the lines...",
+  "Warming up the neurons...",
+  "Assembling thoughts...",
+  "Almost there...",
+];
+
 export interface SlackConnectorConfig extends MessagingConfig {
   /** Bot User OAuth Token (xoxb-...) */
   botToken: string;
@@ -71,9 +85,31 @@ export class SlackConnector extends MessagingConnector {
   }
 
   async showTyping(channelId: string, messageId: string): Promise<void> {
-    // Slack doesn't have a bot typing indicator API.
-    // Use 👀 emoji as acknowledgment (same as old Hermes behavior).
-    await this.addReaction(channelId, messageId, "eyes");
+    // Use Slack's assistant.threads.setStatus with rotating fun messages
+    try {
+      await this.app.client.assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: messageId,
+        status: "Thinking...",
+        loading_messages: THINKING_MESSAGES,
+      });
+    } catch {
+      // Assistant API not available — fall back to emoji reaction
+      await this.addReaction(channelId, messageId, "eyes");
+    }
+  }
+
+  /** Clear the thinking status after processing completes */
+  async clearTyping(channelId: string, threadId: string): Promise<void> {
+    try {
+      await this.app.client.assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: threadId,
+        status: "",
+      });
+    } catch {
+      // Non-critical — status will clear on its own
+    }
   }
 
   /** Send a message to the configured delivery channel (for cron reports) */
