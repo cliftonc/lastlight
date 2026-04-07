@@ -87,10 +87,41 @@ export class DockerSandbox {
       const info: SandboxInfo = { containerId, containerName, worktreePath };
       this.activeContainers.set(opts.taskId, info);
       console.log(`[sandbox] Created: ${containerName}`);
+
+      // Wait for entrypoint to finish setting up auth, skills, MCP config.
+      // The entrypoint drops to `gosu agent sleep infinity` when done —
+      // we detect readiness by checking for the .credentials.json symlink.
+      await this.waitForReady(containerName);
+
       return info;
     } catch (err: any) {
       throw new Error(`Failed to create sandbox: ${err.message}`);
     }
+  }
+
+  /**
+   * Wait for the sandbox entrypoint to finish setup.
+   * Polls for the credentials symlink in the agent's home directory.
+   */
+  private async waitForReady(containerName: string, timeoutMs = 15000): Promise<void> {
+    const start = Date.now();
+    const interval = 500;
+
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const { stdout } = await execFileAsync("docker", [
+          "exec", "--user", "agent", containerName,
+          "test", "-f", "/home/agent/.claude/.credentials.json",
+        ], { timeout: 5000 });
+        // File exists — entrypoint is done
+        return;
+      } catch {
+        // Not ready yet — wait and retry
+        await new Promise((r) => setTimeout(r, interval));
+      }
+    }
+
+    console.warn(`[sandbox] Timed out waiting for ${containerName} to be ready — proceeding anyway`);
   }
 
   /**
