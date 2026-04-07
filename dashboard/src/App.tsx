@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, auth, UnauthorizedError } from "./api";
 import { StatsHeader } from "./components/StatsHeader";
 import { SessionList } from "./components/SessionList";
@@ -83,6 +83,40 @@ function Dashboard() {
     setSelectedId(id);
   };
 
+  const selectedSession = useMemo(
+    () => filteredSessions.find((s) => s.id === selectedId),
+    [filteredSessions, selectedId],
+  );
+
+  const [containers, setContainers] = useState<Array<{ name: string }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { containers: c } = await api.containers();
+        if (!cancelled) setContainers(c);
+      } catch { /* ignore */ }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  const handleTerminate = useCallback(async () => {
+    // Find a sandbox container to kill — match by recent activity
+    if (containers.length === 0) return;
+    // Kill the first matching sandbox (usually only one is live for a session)
+    const target = containers[0];
+    if (target) {
+      await api.killContainer(target.name);
+      // Refresh containers
+      try {
+        const { containers: c } = await api.containers();
+        setContainers(c);
+      } catch { /* ignore */ }
+    }
+  }, [containers]);
+
   return (
     <div className="flex flex-col h-full">
       <StatsHeader
@@ -114,6 +148,8 @@ function Dashboard() {
           order={order}
           onOrderChange={setOrder}
           searchQuery={debouncedQuery}
+          isLive={selectedSession?.live}
+          onTerminate={handleTerminate}
         />
       </div>
     </div>

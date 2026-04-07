@@ -125,4 +125,6 @@ export const api = {
     return req<{ executions: Execution[] }>(`/executions${qss ? `?${qss}` : ""}`);
   },
   containers: () => req<{ containers: ContainerInfo[] }>("/containers"),
+  killContainer: (name: string) =>
+    req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
 };

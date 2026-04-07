@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
 import type { StateDb } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
-import { listRunningContainers } from "./docker.js";
+import { listRunningContainers, killContainer } from "./docker.js";
 import { authMiddleware, createToken, verifyToken } from "./auth.js";
 
 export interface AdminConfig {
@@ -223,6 +223,32 @@ export function createAdminRoutes(
   app.get("/containers", async (c) => {
     const containers = await listRunningContainers();
     return c.json({ containers });
+  });
+
+  // Kill a sandbox container and mark related DB executions as failed
+  app.delete("/containers/:name", async (c) => {
+    const name = c.req.param("name");
+    if (!name.startsWith("lastlight-sandbox-")) {
+      return c.json({ error: "can only kill sandbox containers" }, 400);
+    }
+    try {
+      await killContainer(name);
+      // Parse taskId from container name: lastlight-sandbox-{taskId}-{uuid}
+      const match = name.match(/^lastlight-sandbox-(.+?)-[a-f0-9]{8}$/);
+      if (match) {
+        const taskId = match[1];
+        // Mark any running executions with matching skill as failed
+        const skills = db.runningExecutions()
+          .filter((e) => e.skill.startsWith("build:") || e.skill === "pr-fix")
+          .filter((e) => taskId.includes(e.triggerId?.replace(/[^a-z0-9]/gi, "") || "---"));
+        for (const e of skills) {
+          db.recordFinish(e.id, { success: false, error: "terminated via admin dashboard" });
+        }
+      }
+      return c.json({ killed: name });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
   });
 
   // Execution records from DB

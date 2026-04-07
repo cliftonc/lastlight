@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
+import { OctagonX } from "lucide-react";
 import { useMessageStream, type StreamStatus } from "../hooks/useMessageStream";
 import { toBaseMessages } from "../adapters/lastlightToTimeline";
 import { processMessages, isToolPair } from "../timeline";
@@ -13,6 +14,8 @@ interface Props {
   order: MessageOrder;
   onOrderChange: (o: MessageOrder) => void;
   searchQuery: string;
+  isLive?: boolean;
+  onTerminate?: () => Promise<void>;
 }
 
 const STATUS_DOT: Record<StreamStatus, string> = {
@@ -31,8 +34,21 @@ function isUserMessage(item: TimelineItemT): boolean {
   return !isToolPair(item) && item.message.type === "user";
 }
 
-export function MessageFeed({ sessionId, order, onOrderChange, searchQuery }: Props) {
+export function MessageFeed({ sessionId, order, onOrderChange, searchQuery, isLive, onTerminate }: Props) {
   const { messages, status, error, newIds } = useMessageStream(sessionId);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [terminating, setTerminating] = useState(false);
+
+  const handleTerminate = useCallback(async () => {
+    if (!onTerminate) return;
+    setTerminating(true);
+    try {
+      await onTerminate();
+    } finally {
+      setTerminating(false);
+      setShowConfirm(false);
+    }
+  }, [onTerminate]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledAwayRef = useRef(false);
@@ -112,6 +128,16 @@ export function MessageFeed({ sessionId, order, onOrderChange, searchQuery }: Pr
         </span>
         {error && <span className="text-xs text-error">- {error}</span>}
         <div className="ml-auto flex items-center gap-1 shrink-0">
+          {isLive && onTerminate && (
+            <button
+              onClick={() => setShowConfirm(true)}
+              className="btn btn-xs h-6 min-h-0 btn-error btn-outline gap-1"
+              title="Terminate this session"
+            >
+              <OctagonX size={12} />
+              terminate
+            </button>
+          )}
           <button
             onClick={() => onOrderChange("newest")}
             className={clsx(
@@ -159,6 +185,34 @@ export function MessageFeed({ sessionId, order, onOrderChange, searchQuery }: Pr
           </div>
         )}
       </div>
+
+      {/* Terminate confirmation modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-base-200 border border-base-300 rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl">
+            <h3 className="text-base font-semibold text-base-content mb-2">Terminate session?</h3>
+            <p className="text-sm text-base-content/60 mb-4">
+              This will kill the Docker sandbox container and mark the execution as failed. The agent's work in progress will be lost.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="btn btn-sm btn-ghost"
+                disabled={terminating}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTerminate}
+                className="btn btn-sm btn-error"
+                disabled={terminating}
+              >
+                {terminating ? "Terminating..." : "Terminate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

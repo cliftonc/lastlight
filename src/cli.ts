@@ -15,6 +15,7 @@
  */
 
 const SERVER_URL = process.env.LASTLIGHT_URL || "http://localhost:8644";
+let AUTH_TOKEN = process.env.LASTLIGHT_TOKEN || "";
 
 const args = process.argv.slice(2);
 
@@ -34,6 +35,35 @@ The server must be running (npm run dev). Set LASTLIGHT_URL to override.
   process.exit(0);
 }
 
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (AUTH_TOKEN) headers.Authorization = `Bearer ${AUTH_TOKEN}`;
+  return headers;
+}
+
+async function authenticate(): Promise<void> {
+  // If we already have a token, verify it works
+  if (AUTH_TOKEN) return;
+
+  // Try to login with ADMIN_PASSWORD
+  const password = process.env.ADMIN_PASSWORD;
+  if (!password) return; // No auth configured
+
+  try {
+    const res = await fetch(`${SERVER_URL}/admin/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (res.ok) {
+      const { token } = await res.json() as { token: string };
+      AUTH_TOKEN = token;
+    }
+  } catch {
+    // Auth may not be required — continue without token
+  }
+}
+
 async function main() {
   // Check server is running
   try {
@@ -44,6 +74,9 @@ async function main() {
     console.error(`Start it first: npm run dev`);
     process.exit(1);
   }
+
+  // Authenticate if needed
+  await authenticate();
 
   const firstArg = args[0];
 
@@ -66,7 +99,7 @@ async function main() {
 
     const res = await fetch(`${SERVER_URL}/api/run`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({
         skill: skillMap[firstArg],
         context: { repos: [repoArg], mode: "scan" },
@@ -98,7 +131,7 @@ async function main() {
 
   const res = await fetch(`${SERVER_URL}/api/build`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify({
       owner,
       repo,

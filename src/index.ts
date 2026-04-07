@@ -12,6 +12,7 @@ import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { mountAdmin } from "./admin/index.js";
+import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { runBuildCycle, runPrFix } from "./engine/orchestrator.js";
 import type { EventEnvelope } from "./connectors/types.js";
@@ -149,6 +150,14 @@ async function main() {
   // API endpoints (require HTTP server from GitHub connector)
   if (!githubConnector) {
     console.log(`[api] No HTTP server — API endpoints disabled (Slack Socket Mode only)`);
+  }
+
+  // Protect API endpoints with auth when ADMIN_PASSWORD is set
+  const adminPassword = process.env.ADMIN_PASSWORD ?? "";
+  const adminSecret = process.env.ADMIN_SECRET ?? "lastlight-dev-secret";
+  if (githubConnector && adminPassword) {
+    githubConnector.honoApp.use("/api/*", authMiddleware(adminPassword, adminSecret));
+    console.log(`[api] API endpoints protected with auth`);
   }
 
   // API endpoint for CLI triggers

@@ -12,6 +12,10 @@ export interface ContainerInfo {
   image: string;
 }
 
+export async function killContainer(containerName: string): Promise<void> {
+  await exec("docker", ["rm", "-f", containerName]);
+}
+
 export async function listRunningContainers(): Promise<ContainerInfo[]> {
   try {
     const { stdout } = await exec("docker", [
