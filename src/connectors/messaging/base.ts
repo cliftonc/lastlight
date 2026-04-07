@@ -49,9 +49,11 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
       return;
     }
 
-    // In channels, only respond to @mentions
+    // In channels, respond to @mentions or replies in threads the bot is already in
     if (!isDM && !isMention) {
-      return;
+      if (!threadId || !this.sessionManager.hasActiveThread(this.name, channelId, threadId)) {
+        return;
+      }
     }
 
     // Strip bot mention from the message text

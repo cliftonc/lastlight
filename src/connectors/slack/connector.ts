@@ -2,6 +2,7 @@ import { App } from "@slack/bolt";
 import { MessagingConnector } from "../messaging/base.js";
 import type { SessionManager } from "../messaging/session-manager.js";
 import type { MessagingConfig } from "../messaging/types.js";
+import { markdownToSlackMrkdwn } from "./mrkdwn.js";
 
 /** Rotating status messages shown while the agent is thinking */
 const THINKING_MESSAGES = [
@@ -66,7 +67,7 @@ export class SlackConnector extends MessagingConnector {
   async sendMessage(channelId: string, threadId: string | null, text: string): Promise<string | void> {
     const result = await this.app.client.chat.postMessage({
       channel: channelId,
-      text,
+      text: markdownToSlackMrkdwn(text),
       thread_ts: threadId || undefined,
     });
     return result.ts;

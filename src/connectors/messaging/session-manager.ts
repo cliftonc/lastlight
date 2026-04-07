@@ -133,6 +133,18 @@ export class SessionManager {
     }));
   }
 
+  /** Check if the bot is already participating in a thread (any user, any active non-stale session) */
+  hasActiveThread(platform: string, channelId: string, threadId: string): boolean {
+    const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS).toISOString();
+    const row = this.db.prepare(`
+      SELECT 1 FROM messaging_sessions
+      WHERE platform = ? AND channel_id = ? AND thread_id = ?
+        AND active = 1 AND last_activity_at >= ?
+      LIMIT 1
+    `).get(platform, channelId, threadId);
+    return !!row;
+  }
+
   /** Clean up old inactive sessions (call from cron) */
   cleanupStaleSessions(maxAgeDays = 7): number {
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
