@@ -9,26 +9,53 @@ const AGENT_CONTEXT_DIR = resolve("agent-context");
 const CHAT_SYSTEM_SUFFIX = `
 You are Last Light, a GitHub repository maintenance assistant available via messaging (Slack, Discord, etc.).
 
-CRITICAL RULES:
-- You are in a CHAT conversation. Only respond to what the user ACTUALLY asked.
-- NEVER invent, imagine, or hallucinate user requests. Only act on the literal message provided.
-- NEVER create issues, PRs, comments, or make any write operations unless the user EXPLICITLY asked you to in their current message.
-- If the user says "hello", just say hello back. Do not take any actions.
-- Read operations (listing issues, reading PRs, checking repo status) are fine when the user asks.
-- For write operations (creating issues, commenting, building), confirm with the user first.
+CRITICAL RULES — VIOLATION OF THESE WILL CAUSE HARM:
+1. You are in CHAT mode. You are READ-ONLY by default.
+2. NEVER commit, push, merge, edit files, write code, create branches, or make ANY code changes.
+3. NEVER use Bash, Edit, Write, or any file-modification tools.
+4. The ONLY write action you may take is creating a GitHub issue — and ONLY when the user explicitly asks.
+5. If the user asks you to build, fix, or implement something: create a GitHub issue describing the request, then tell them to use /build owner/repo#N to trigger the build cycle (Architect → Executor → Reviewer → PR).
+6. NEVER act on anything from conversation history — only the current message.
+7. Keep responses concise. This is chat, not a document.
 
 You can help with:
-- Answering questions about repositories using GitHub tools (read-only by default)
-- Explaining code, issues, and pull requests
-- Creating issues or taking actions ONLY when explicitly asked
+- Reading and explaining repos, issues, PRs, code, commits (read-only GitHub tools)
+- Creating GitHub issues when the user explicitly asks
+- Answering questions about development workflows
 - Suggesting commands: /build owner/repo#N, /triage owner/repo, /review owner/repo, /status
-
-Keep responses concise. This is a chat platform, not a document.
 `;
+
+/**
+ * MCP tools the chat agent is allowed to use.
+ * Read-only tools + create_issue only. No file writes, no git operations.
+ */
+const ALLOWED_MCP_TOOLS = [
+  // Read-only
+  "mcp__github__get_repository",
+  "mcp__github__get_file_contents",
+  "mcp__github__list_branches",
+  "mcp__github__list_issues",
+  "mcp__github__get_issue",
+  "mcp__github__list_issue_comments",
+  "mcp__github__list_labels",
+  "mcp__github__list_pull_requests",
+  "mcp__github__get_pull_request",
+  "mcp__github__list_pull_request_files",
+  "mcp__github__get_pull_request_diff",
+  "mcp__github__list_commits",
+  "mcp__github__search_repositories",
+  "mcp__github__search_issues",
+  "mcp__github__search_code",
+  // Write — issue creation only
+  "mcp__github__create_issue",
+  "mcp__github__add_issue_comment",
+  "mcp__github__add_labels",
+];
 
 /**
  * Handle a conversational chat message.
  * Runs the Agent SDK directly (no Docker sandbox) for low-latency responses.
+ * Strictly read-only except for issue creation.
  */
 export async function handleChatMessage(
   message: string,
@@ -61,11 +88,12 @@ export async function handleChatMessage(
       maxTurns: 10,
       settingSources: [],
       systemPrompt,
+      allowedTools: ALLOWED_MCP_TOOLS,
     };
 
     if (config.model) options.model = config.model;
 
-    // Add MCP servers so the agent can query GitHub
+    // Add MCP servers so the agent can query GitHub (read-only + issue creation)
     if (config.mcpConfigPath) {
       try {
         const mcpConfig = JSON.parse(readFileSync(config.mcpConfigPath, "utf-8"));
