@@ -330,9 +330,16 @@ claude --version && claude -p "hello"
 
 # In Docker: check auth persisted
 docker exec lastlight-agent-1 claude -p "hello"
-# If it fails, re-login:
-docker exec -it lastlight-agent-1 claude login
+# If it fails, re-login AS THE LASTLIGHT USER (not root!):
+docker exec -it --user lastlight lastlight-agent-1 claude login
 ```
+
+**IMPORTANT**: Always use `--user lastlight` when running `claude login` in Docker. Running as root causes:
+- Permission errors (`.credentials.json` owned by root, session logs unwritable)
+- Config corruption (cached feature flags wiped, MCP auth cache polluted with Claude.ai servers)
+- `bypassPermissions` mode may stop working with MCP servers attached
+
+If you accidentally logged in as root, rebuild the container: `docker compose build agent && docker compose up -d agent`
 
 ### Webhooks not arriving
 

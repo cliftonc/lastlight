@@ -25,7 +25,7 @@ if [ -d /data/claude-home ]; then
   chmod -R a+rX /data/claude-home/ 2>/dev/null || true
   chmod a+r /data/claude-home/.credentials.json 2>/dev/null || true
 
-  for item in /data/claude-home/* /data/claude-home/.credentials.json; do
+  for item in /data/claude-home/* /data/claude-home/.credentials.json /data/claude-home/.claude.json; do
     [ ! -e "$item" ] && continue
     base="$(basename "$item")"
     [ "$base" = "skills" ] && continue  # don't override our skills
