@@ -31,6 +31,18 @@ interface PhaseResult {
  * when available, falling back to direct Agent SDK execution.
  */
 /**
+ * Check if an error was caused by manual termination (container killed).
+ */
+function isTerminated(error?: string): boolean {
+  if (!error) return false;
+  const lower = error.toLowerCase();
+  return lower.includes("terminated") ||
+    lower.includes("killed") ||
+    lower.includes("exit undefined") ||
+    lower.includes("container") && lower.includes("not running");
+}
+
+/**
  * Phase ordering for resume logic.
  * Each phase in the build cycle, in order. If status.md reports a completed phase,
  * the orchestrator skips to the next one.
@@ -244,7 +256,9 @@ Branch: ${branch}
       await onEnd("architect", phases[phases.length - 1]);
 
       if (!ar.result.success) {
-        await notify(`Architect analysis failed: ${ar.result.error}`);
+        if (!isTerminated(ar.result.error)) {
+          await notify(`Architect analysis failed — unable to complete analysis.`);
+        }
         return { success: false, phases };
       }
 
@@ -277,7 +291,9 @@ Branch: ${branch}
       await onEnd("executor", phases[phases.length - 1]);
 
       if (!er.result.success) {
-        await notify(`Executor implementation failed: ${er.result.error}`);
+        if (!isTerminated(er.result.error)) {
+          await notify(`Executor implementation failed — unable to complete.`);
+        }
         return { success: false, phases };
       }
 
@@ -344,7 +360,9 @@ Branch: ${branch}
         await onEnd(`fix_loop_${fixCycles}`, phases[phases.length - 1]);
 
         if (!fr.result.success) {
-          await notify(`Fix cycle ${fixCycles} failed. Proceeding to PR with known issues.`);
+          if (!isTerminated(fr.result.error)) {
+            await notify(`Fix cycle ${fixCycles} failed. Proceeding to PR with known issues.`);
+          }
           break;
         }
       }
@@ -664,8 +682,10 @@ export async function runPrFix(
 
   if (result.success) {
     await notify(`**Fix pushed** to \`${branch}\`. CI should re-run automatically.`);
+  } else if (isTerminated(result.error)) {
+    console.log(`[pr-fix] Session terminated — suppressing error comment`);
   } else {
-    await notify(`**Fix failed:** ${result.error}\n\nI wasn't able to resolve this automatically.`);
+    await notify(`**Fix failed** — I wasn't able to resolve this automatically.`);
   }
 
   return { success: result.success, output: result.output };

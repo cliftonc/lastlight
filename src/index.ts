@@ -458,9 +458,6 @@ async function main() {
       }).catch((err) => {
         console.error(`[event] Build cycle failed:`, err);
         db.recordFinish(executionId, { success: false, error: err.message, durationMs: 0 });
-        if (envelope.type === "message") {
-          envelope.reply(`Build cycle failed: ${err.message}`);
-        }
       });
 
       return;
