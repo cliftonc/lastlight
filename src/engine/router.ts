@@ -1,4 +1,5 @@
 import type { EventEnvelope } from "../connectors/types.js";
+import { classifyComment } from "./classifier.js";
 
 /** Skill name that should handle this event */
 export type RoutingResult =
@@ -12,10 +13,10 @@ const MAINTAINER_ROLES = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const BOT_MENTION = /@last-light\b/i;
 
 /**
- * Deterministic event routing — no LLM involved.
+ * Event routing — deterministic for most events, LLM-classified for comments.
  * Maps normalized events to the skill that should handle them.
  */
-export function routeEvent(envelope: EventEnvelope): RoutingResult {
+export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult> {
   switch (envelope.type) {
     case "issue.opened":
       return {
@@ -79,11 +80,15 @@ export function routeEvent(envelope: EventEnvelope): RoutingResult {
         };
       }
 
-      // PR comments → lightweight fix, issue comments → full build cycle
+      // Classify intent: is this a build/fix request or a lightweight action?
+      const intent = await classifyComment(envelope.body);
+      console.log(`[router] Comment classified as: ${intent}`);
+
       if (envelope.prNumber) {
+        // PR comments: build intent → pr-fix, otherwise → issue-comment
         return {
           action: "skill",
-          skill: "pr-fix",
+          skill: intent === "build" ? "pr-fix" : "issue-comment",
           context: {
             repo: envelope.repo,
             prNumber: envelope.prNumber,
@@ -96,9 +101,10 @@ export function routeEvent(envelope: EventEnvelope): RoutingResult {
         };
       }
 
+      // Issue comments: build intent → full build cycle, otherwise → issue-comment
       return {
         action: "skill",
-        skill: "github-orchestrator",
+        skill: intent === "build" ? "github-orchestrator" : "issue-comment",
         context: {
           repo: envelope.repo,
           issueNumber: envelope.issueNumber,

@@ -71,6 +71,7 @@ async function main() {
   // Map skill names to session types for model resolution
   const skillToSessionType: Record<string, string> = {
     "issue-triage": "triage",
+    "issue-comment": "triage",
     "pr-review": "review",
     "repo-health": "health",
   };
@@ -250,7 +251,7 @@ async function main() {
   registry.onEvent(async (envelope: EventEnvelope) => {
     console.log(`[event] ${envelope.source}:${envelope.type} from ${envelope.sender}${envelope.repo ? ` on ${envelope.repo}` : ""}`);
 
-    const route = routeEvent(envelope);
+    const route = await routeEvent(envelope);
 
     if (route.action === "ignore") {
       console.log(`[event] Ignored: ${route.reason}`);

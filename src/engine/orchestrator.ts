@@ -237,11 +237,14 @@ Branch: ${branch}
         return { success: false, phases };
       }
 
-      if (gr.result.success) {
-        await notify(`**Guardrails check: READY** — verified. Starting architect analysis...`);
-      } else {
-        await notify(`**Guardrails check completed with warnings.** Proceeding...`);
+      if (!gr.result.success) {
+        if (!isTerminated(gr.result.error)) {
+          await notify(`**Guardrails check failed** — unable to complete.`);
+        }
+        return { success: false, phases };
       }
+
+      await notify(`**Guardrails check: READY** — verified. Starting architect analysis...`);
     }
   }
 
