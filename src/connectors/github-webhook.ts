@@ -205,6 +205,7 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
       body,
       title,
       labels,
+      authorAssociation: payload.comment?.author_association || payload.issue?.author_association || payload.pull_request?.author_association,
       raw: payload,
       reply,
       timestamp: new Date(),

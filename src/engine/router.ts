@@ -5,8 +5,8 @@ export type RoutingResult =
   | { action: "skill"; skill: string; context: Record<string, unknown> }
   | { action: "ignore"; reason: string };
 
-/** Maintainer logins that can trigger builds via @mention */
-const MAINTAINERS = new Set(["cliftonc"]);
+/** Author associations that can trigger builds via @mention */
+const MAINTAINER_ROLES = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /** Bot mention pattern — case-insensitive */
 const BOT_MENTION = /@last-light\b/i;
@@ -65,8 +65,8 @@ export function routeEvent(envelope: EventEnvelope): RoutingResult {
         return { action: "ignore", reason: "no bot mention in comment" };
       }
 
-      // Only maintainers can trigger builds
-      if (!MAINTAINERS.has(envelope.sender)) {
+      // Only maintainers (OWNER, MEMBER, COLLABORATOR) can trigger builds
+      if (!MAINTAINER_ROLES.has(envelope.authorAssociation || "")) {
         return {
           action: "skill",
           skill: "polite-decline",
@@ -75,6 +75,23 @@ export function routeEvent(envelope: EventEnvelope): RoutingResult {
             issueNumber: envelope.issueNumber,
             sender: envelope.sender,
             body: envelope.body,
+          },
+        };
+      }
+
+      // PR comments → lightweight fix, issue comments → full build cycle
+      if (envelope.prNumber) {
+        return {
+          action: "skill",
+          skill: "pr-fix",
+          context: {
+            repo: envelope.repo,
+            prNumber: envelope.prNumber,
+            issueNumber: envelope.issueNumber,
+            title: envelope.title,
+            body: envelope.body,
+            sender: envelope.sender,
+            commentBody: envelope.body,
           },
         };
       }

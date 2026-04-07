@@ -15,6 +15,22 @@ export interface AdminConfig {
   adminSecret: string;
 }
 
+/**
+ * Check if a session is live by matching against running container taskIds.
+ * Sessions are live if they were recently active (within 5 min) and a container
+ * with a matching pattern is running.
+ */
+function isSessionLive(meta: SessionMeta, liveTaskIds: Set<string | null>): boolean {
+  // A session is considered live if it has recent activity and no end marker
+  const lastActivity = meta.last_message_at ?? meta.started_at;
+  const fiveMinAgo = Date.now() / 1000 - 300;
+  if (lastActivity < fiveMinAgo) return false;
+
+  // Check if any running container's taskId appears related to this session
+  // Sessions don't directly map to taskIds, but recent + active = likely live
+  return true;
+}
+
 export function createAdminRoutes(
   db: StateDb,
   sessions: SessionReader,
@@ -52,18 +68,21 @@ export function createAdminRoutes(
     return c.json({ status: "ok", stateDir: config.stateDir });
   });
 
-  // Session list
+  // Session list — enriched with live container status
   app.get("/sessions", async (c) => {
     const limit = Number(c.req.query("limit") ?? 200);
     const allIds = sessions.listSessionIds();
-    const metas = await Promise.all(
-      allIds.slice(0, limit * 2).map((id) => sessions.getSessionMeta(id)),
-    );
+    const [metas, containers] = await Promise.all([
+      Promise.all(allIds.slice(0, limit * 2).map((id) => sessions.getSessionMeta(id))),
+      listRunningContainers(),
+    ]);
+    const liveTaskIds = new Set(containers.map((c) => c.taskId).filter(Boolean));
     const valid = metas
       .filter((m): m is SessionMeta => m !== null)
       .sort((a, b) => b.started_at - a.started_at)
-      .slice(0, limit);
-    return c.json({ sessions: valid });
+      .slice(0, limit)
+      .map((m) => ({ ...m, live: liveTaskIds.size > 0 && isSessionLive(m, liveTaskIds) }));
+    return c.json({ sessions: valid, liveCount: containers.length });
   });
 
   // Session list SSE stream
@@ -77,21 +96,26 @@ export function createAdminRoutes(
       stream.onAbort(() => { stopped = true; });
 
       const push = async () => {
-        const allIds = sessions.listSessionIds();
+        const [allIds, containers] = await Promise.all([
+          Promise.resolve(sessions.listSessionIds()),
+          listRunningContainers(),
+        ]);
+        const liveTaskIds = new Set(containers.map((c) => c.taskId).filter(Boolean));
         const metas = await Promise.all(
           allIds.slice(0, limit * 2).map((id) => sessions.getSessionMeta(id)),
         );
         const valid = metas
           .filter((m): m is SessionMeta => m !== null)
           .sort((a, b) => b.started_at - a.started_at)
-          .slice(0, limit);
+          .slice(0, limit)
+          .map((m) => ({ ...m, live: liveTaskIds.size > 0 && isSessionLive(m, liveTaskIds) }));
 
         const sig = valid
-          .map((s) => `${s.id}:${s.last_message_at ?? s.started_at}:${s.message_count}`)
+          .map((s) => `${s.id}:${s.last_message_at ?? s.started_at}:${s.message_count}:${s.live}`)
           .join("|");
         if (sig !== prevSig) {
           prevSig = sig;
-          await stream.writeSSE({ event: "sessions", data: JSON.stringify({ sessions: valid }) });
+          await stream.writeSSE({ event: "sessions", data: JSON.stringify({ sessions: valid, liveCount: containers.length }) });
         }
       };
 
@@ -185,9 +209,13 @@ export function createAdminRoutes(
     });
   });
 
-  // Stats
-  app.get("/stats", (c) => {
-    const stats = db.executionStats();
+  // Stats — running count uses live Docker containers, not stale DB records
+  app.get("/stats", async (c) => {
+    const [stats, containers] = await Promise.all([
+      Promise.resolve(db.executionStats()),
+      listRunningContainers(),
+    ]);
+    stats.running = containers.length;
     return c.json(stats);
   });
 

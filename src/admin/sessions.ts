@@ -48,6 +48,7 @@ function detectSessionType(firstUserMessage: string): string {
   if (msg.includes("You are the EXECUTOR")) return "executor";
   if (msg.includes("You are the CODE REVIEWER")) return "reviewer";
   if (msg.includes("Create a pull request for the work on branch")) return "pr";
+  if (msg.includes("You are fixing a PR based on")) return "pr-fix";
   if (msg.includes("Check if a build cycle already exists")) return "resume";
   // Skills
   if (msg.includes("issue-triage")) return "triage";

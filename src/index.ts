@@ -13,7 +13,7 @@ import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { mountAdmin } from "./admin/index.js";
 import { GitHubClient } from "./engine/github.js";
-import { runBuildCycle } from "./engine/orchestrator.js";
+import { runBuildCycle, runPrFix } from "./engine/orchestrator.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 async function main() {
@@ -210,7 +210,8 @@ async function main() {
           onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
           onPhaseEnd: async (phase, result) =>
             console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
-        }
+        },
+        db,
     ).catch((err) => {
       console.error(`[api] Build failed:`, err);
     });
@@ -286,6 +287,73 @@ async function main() {
       return;
     }
 
+    // PR fix: lightweight fix-and-push, no full build cycle
+    if (skill === "pr-fix" && context.prNumber && context.repo) {
+      const repoStr = context.repo as string;
+      const [owner, repo] = repoStr.includes("/") ? repoStr.split("/") : ["", repoStr];
+      const prNumber = context.prNumber as number;
+
+      if (!owner || !repo) {
+        console.error(`[event] Invalid repo format: ${repoStr}`);
+        return;
+      }
+
+      // Fetch PR details to get the branch name
+      let prTitle = (context.title as string) || "";
+      let prBody = (context.body as string) || "";
+      let branch = "";
+      if (github) {
+        try {
+          const pr = await github.getPullRequest(owner, repo, prNumber);
+          prTitle = prTitle || pr.title;
+          prBody = prBody || pr.body || "";
+          branch = pr.head.ref;
+        } catch (err: any) {
+          console.warn(`[event] Could not fetch PR: ${err.message}`);
+        }
+      }
+
+      if (!branch) {
+        console.error(`[event] Could not determine branch for PR #${prNumber}`);
+        return;
+      }
+
+      console.log(`[event] PR fix for ${repoStr}#${prNumber} on branch ${branch}`);
+
+      runPrFix(
+        {
+          owner,
+          repo,
+          prNumber,
+          prTitle,
+          prBody,
+          commentBody: (context.commentBody as string) || "",
+          sender: (context.sender as string) || "unknown",
+          branch,
+        },
+        {
+          mcpConfigPath,
+          model: config.model,
+          maxTurns: config.maxTurns,
+          stateDir: config.stateDir,
+          sandboxDir: config.sandboxDir,
+        },
+        {
+          postComment: async (msg) => {
+            console.log(`[pr-fix] ${msg}`);
+            if (github) {
+              try { await github.postComment(owner, repo, prNumber, msg); }
+              catch (err: any) { console.error(`[pr-fix] Failed to post comment: ${err.message}`); }
+            }
+          },
+        }
+      ).catch((err) => {
+        console.error(`[event] PR fix failed:`, err);
+      });
+
+      return;
+    }
+
     // Build requests: route to the programmatic orchestrator instead of the SKILL.md
     if (skill === "github-orchestrator" && context.issueNumber && context.repo) {
       const repoStr = context.repo as string;
@@ -356,7 +424,8 @@ async function main() {
           onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
           onPhaseEnd: async (phase, result) =>
             console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
-        }
+        },
+        db,
       ).then((result) => {
         db.recordFinish(executionId, {
           success: result.success,

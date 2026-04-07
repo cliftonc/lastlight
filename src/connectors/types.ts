@@ -28,6 +28,8 @@ export interface EventEnvelope {
   title?: string;
   /** Labels on the issue/PR */
   labels?: string[];
+  /** GitHub author association (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE) */
+  authorAssociation?: string;
   /** Original platform payload (for connector-specific logic) */
   raw: unknown;
   /** Reply on the same platform/thread */

@@ -40,4 +40,13 @@ export class GitHubClient {
     });
     return data;
   }
+
+  async getPullRequest(owner: string, repo: string, pullNumber: number) {
+    const { data } = await this.octokit.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    return data;
+  }
 }

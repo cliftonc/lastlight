@@ -25,6 +25,7 @@ function Dashboard() {
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [showLiveOnly, setShowLiveOnly] = useState(false);
   const [order, setOrder] = useState<MessageOrder>(
     () => (localStorage.getItem("ll-order") as MessageOrder) ?? "newest",
   );
@@ -105,6 +106,8 @@ function Dashboard() {
           query={debouncedQuery}
           onLoadMore={() => setLimit((l) => l + PAGE_SIZE)}
           totalAvailable={sessions.length}
+          showLiveOnly={showLiveOnly}
+          onToggleLiveOnly={() => setShowLiveOnly((v) => !v)}
         />
         <MessageFeed
           sessionId={selectedId}

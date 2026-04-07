@@ -47,6 +47,7 @@ export function StatsHeader({
   return (
     <header className="bg-base-200 border-b border-base-300 flex items-center gap-3 px-3 h-12 shrink-0">
       <div className="flex items-center gap-2 shrink-0">
+        <img src="/admin/logo.png" alt="Last Light" width="24" height="24" style={{ width: 24, height: 24, objectFit: "contain" }} />
         <div className="flex flex-col leading-none">
           <span className="text-sm font-semibold tracking-tight">Last Light</span>
           <span className="flex items-center gap-1 text-2xs text-base-content/50 mt-0.5">

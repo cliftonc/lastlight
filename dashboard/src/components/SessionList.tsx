@@ -12,6 +12,7 @@ import {
   Activity,
   MessageSquare,
   Bot,
+  Radio,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Session } from "../api";
@@ -24,6 +25,7 @@ const SESSION_TYPE_CONFIG: Record<string, { label: string; Icon: LucideIcon; col
   reviewer:    { label: "Reviewer",    Icon: Search,         color: "text-secondary" },
   fix:         { label: "Fix",         Icon: Wrench,         color: "text-warning" },
   pr:          { label: "PR",          Icon: GitPullRequest,  color: "text-accent" },
+  "pr-fix":    { label: "PR Fix",     Icon: Wrench,         color: "text-accent" },
   resume:      { label: "Resume",      Icon: FastForward,    color: "text-base-content/50" },
   // Skills
   triage:      { label: "Triage",      Icon: Tag,            color: "text-warning" },
@@ -99,6 +101,8 @@ interface Props {
   query: string;
   onLoadMore: () => void;
   totalAvailable: number;
+  showLiveOnly: boolean;
+  onToggleLiveOnly: () => void;
 }
 
 export function SessionList({
@@ -109,14 +113,34 @@ export function SessionList({
   query,
   onLoadMore,
   totalAvailable,
+  showLiveOnly,
+  onToggleLiveOnly,
 }: Props) {
+  const liveCount = sessions.filter((s) => s.live).length;
+  const displayed = showLiveOnly ? sessions.filter((s) => s.live) : sessions;
+
   return (
     <aside className="w-80 shrink-0 border-r border-base-300 bg-base-200/40 overflow-y-auto flex flex-col">
+      {liveCount > 0 && (
+        <button
+          onClick={onToggleLiveOnly}
+          className={clsx(
+            "flex items-center gap-1.5 px-3 py-1.5 text-2xs font-semibold border-b border-base-300 transition-colors",
+            showLiveOnly
+              ? "bg-success/15 text-success"
+              : "bg-base-200 text-base-content/50 hover:text-success",
+          )}
+        >
+          <Radio size={12} className={showLiveOnly ? "animate-pulse" : ""} />
+          {liveCount} live {liveCount === 1 ? "session" : "sessions"}
+          {showLiveOnly && <span className="ml-auto text-base-content/40">show all</span>}
+        </button>
+      )}
       {error && (
         <div className="px-3 py-2 text-2xs text-error border-b border-base-300">{error}</div>
       )}
       <ul className="flex-1">
-        {sessions.map((s) => {
+        {displayed.map((s) => {
           const active = s.id === selectedId;
           const title = titleFor(s);
           return (
@@ -140,8 +164,11 @@ export function SessionList({
                       </span>
                     );
                   })()}
+                  {s.live && (
+                    <span className="w-2 h-2 rounded-full bg-success animate-pulse" title="Live" />
+                  )}
                   <span className="text-base-content/50">
-                    {timeAgo(s.last_message_at ?? s.started_at)} ago
+                    {s.live ? "live" : `${timeAgo(s.last_message_at ?? s.started_at)} ago`}
                   </span>
                   <span className="ml-auto text-base-content/40 font-mono">
                     {s.message_count}
@@ -158,8 +185,10 @@ export function SessionList({
             </li>
           );
         })}
-        {sessions.length === 0 && (
-          <li className="p-6 text-center text-base-content/40 text-xs">no sessions match</li>
+        {displayed.length === 0 && (
+          <li className="p-6 text-center text-base-content/40 text-xs">
+            {showLiveOnly ? "no live sessions" : "no sessions match"}
+          </li>
         )}
       </ul>
       <div className="sticky bottom-0 border-t border-base-300 bg-base-200 p-2 flex items-center justify-between text-2xs">

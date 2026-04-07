@@ -100,6 +100,46 @@ export class StateDb {
     return !!row;
   }
 
+  /** Check if a skill has already completed successfully for a given trigger */
+  isCompleted(skill: string, triggerId: string): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM executions
+      WHERE skill = ? AND trigger_id = ? AND success = 1
+      LIMIT 1
+    `).get(skill, triggerId);
+    return !!row;
+  }
+
+  /** Check if a phase should run: not currently running AND not already succeeded */
+  shouldRunPhase(skill: string, triggerId: string): "run" | "running" | "done" {
+    const running = this.db.prepare(`
+      SELECT 1 FROM executions
+      WHERE skill = ? AND trigger_id = ? AND finished_at IS NULL
+      LIMIT 1
+    `).get(skill, triggerId);
+    if (running) return "running";
+
+    const done = this.db.prepare(`
+      SELECT 1 FROM executions
+      WHERE skill = ? AND trigger_id = ? AND success = 1
+      LIMIT 1
+    `).get(skill, triggerId);
+    if (done) return "done";
+
+    return "run";
+  }
+
+  /** Mark all stale "running" executions for a skill/trigger as failed.
+   *  Called when we detect no matching Docker container is alive. */
+  markStaleAsFailed(skill: string, triggerId: string): number {
+    const result = this.db.prepare(`
+      UPDATE executions
+      SET finished_at = ?, success = 0, error = 'stale: container no longer running'
+      WHERE skill = ? AND trigger_id = ? AND finished_at IS NULL
+    `).run(new Date().toISOString(), skill, triggerId);
+    return result.changes;
+  }
+
   /** Get recent executions for a skill */
   recentExecutions(skill: string, limit = 10): ExecutionRecord[] {
     return this.db.prepare(`
