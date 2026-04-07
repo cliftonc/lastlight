@@ -52,7 +52,7 @@ export class GitHubClient {
 
   /**
    * Get failed check runs for a PR's head SHA.
-   * Returns a summary of failures including name, conclusion, and output.
+   * Fetches the actual job logs (not just annotations) to show real errors.
    */
   async getFailedChecks(owner: string, repo: string, ref: string): Promise<string> {
     try {
@@ -70,27 +70,67 @@ export class GitHubClient {
       if (failed.length === 0) return "No failed checks found.";
 
       const summaries = await Promise.all(failed.map(async (run) => {
-        let log = "";
-        // Try to get the log annotations (error messages from CI)
-        try {
-          const { data: annotations } = await this.octokit.rest.checks.listAnnotations({
-            owner,
-            repo,
-            check_run_id: run.id,
-          });
-          if (annotations.length > 0) {
-            log = annotations
-              .slice(0, 20) // Cap at 20 annotations
-              .map((a) => `  ${a.path}:${a.start_line} — ${a.annotation_level}: ${a.message}`)
-              .join("\n");
+        let logExcerpt = "";
+
+        // Try to fetch the actual job log (contains the real errors)
+        if (run.details_url) {
+          try {
+            // Extract the job ID from the check run — the run is linked to a workflow job
+            const jobId = run.id;
+            const { data: logData } = await this.octokit.rest.actions.downloadJobLogsForWorkflowRun({
+              owner,
+              repo,
+              job_id: jobId,
+            });
+            // logData is a string with the full log
+            const fullLog = typeof logData === "string" ? logData : String(logData);
+            // Extract the last N lines which typically contain the error
+            const lines = fullLog.split("\n");
+            // Find error lines and surrounding context
+            const errorLines: string[] = [];
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (line.match(/error|ERR!|FAIL|failed|Error:|npm ERR/i) && !line.match(/^$/)) {
+                // Include some context before and after
+                const start = Math.max(0, i - 2);
+                const end = Math.min(lines.length, i + 5);
+                for (let j = start; j < end; j++) {
+                  if (!errorLines.includes(lines[j])) {
+                    errorLines.push(lines[j]);
+                  }
+                }
+              }
+            }
+            if (errorLines.length > 0) {
+              logExcerpt = errorLines.slice(0, 50).join("\n");
+            } else {
+              // No error lines found — show the last 30 lines
+              logExcerpt = lines.slice(-30).join("\n");
+            }
+          } catch {
+            // Job logs may not be available — fall back to annotations
           }
-        } catch { /* annotations may not be available */ }
+        }
 
-        const output = run.output?.summary
-          ? `\n  Summary: ${run.output.summary.slice(0, 500)}`
-          : "";
+        // Fall back to annotations if no job logs
+        if (!logExcerpt) {
+          try {
+            const { data: annotations } = await this.octokit.rest.checks.listAnnotations({
+              owner,
+              repo,
+              check_run_id: run.id,
+            });
+            if (annotations.length > 0) {
+              logExcerpt = annotations
+                .filter((a) => a.annotation_level === "failure")
+                .slice(0, 10)
+                .map((a) => `${a.path}:${a.start_line} — ${a.message}`)
+                .join("\n");
+            }
+          } catch { /* annotations may not be available */ }
+        }
 
-        return `- **${run.name}**: ${run.conclusion}${output}${log ? `\n  Annotations:\n${log}` : ""}`;
+        return `### ${run.name}: ${run.conclusion}\n${logExcerpt || "No log details available."}`;
       }));
 
       return summaries.join("\n\n");

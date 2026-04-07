@@ -12,6 +12,7 @@ import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { mountAdmin } from "./admin/index.js";
+import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { runBuildCycle, runPrFix } from "./engine/orchestrator.js";
@@ -24,6 +25,9 @@ async function main() {
   // Load config
   const config = loadConfig();
   console.log(`[config] Port: ${config.port}, Model: ${config.model}`);
+
+  // Clean up any sandbox containers left over from a previous run
+  cleanupOrphanedSandboxes();
 
   // Ensure state directory structure exists (mountable as Docker volume)
   for (const sub of ["sessions", "logs", "sandboxes"]) {

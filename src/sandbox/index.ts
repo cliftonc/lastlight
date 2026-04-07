@@ -6,6 +6,26 @@ import { DockerSandbox } from "./docker.js";
 
 export { DockerSandbox } from "./docker.js";
 
+/**
+ * Clean up orphaned sandbox containers from previous runs.
+ * Called on startup to remove containers that survived a harness restart.
+ */
+export function cleanupOrphanedSandboxes(): void {
+  try {
+    const out = execFileSync("docker", [
+      "ps", "-q", "--filter", "name=lastlight-sandbox",
+    ], { encoding: "utf-8", timeout: 5000 });
+
+    const ids = out.trim().split("\n").filter(Boolean);
+    if (ids.length > 0) {
+      console.log(`[sandbox] Cleaning up ${ids.length} orphaned sandbox container(s)`);
+      execFileSync("docker", ["rm", "-f", ...ids], { stdio: "ignore", timeout: 15000 });
+    }
+  } catch {
+    // Docker not available or no containers — fine
+  }
+}
+
 const SANDBOX_IMAGE = "lastlight-sandbox:latest";
 
 /**
