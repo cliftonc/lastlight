@@ -7,10 +7,8 @@ description: >
 version: 1.0.0
 author: Last Light
 license: MIT
-metadata:
-  hermes:
-    tags: [guardrails, pre-flight, testing, linting, quality, workflow]
-    related_skills: [architect, subagent-driven-development, test-driven-development, requesting-code-review]
+tags: [guardrails, pre-flight, testing, linting, quality, workflow]
+related_skills: [architect, subagent-driven-development, test-driven-development, requesting-code-review]
 ---
 
 # Assure Guardrails

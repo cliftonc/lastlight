@@ -62,6 +62,39 @@ Branch: ${branch}
     phases.push({ phase: "phase_0", success: true, output: "Context assembled" });
     await onEnd("phase_0", phases[phases.length - 1]);
 
+    // ── Guardrails Check ──────────────────────────────────────────
+    // Runs once per build — the result is persisted in status.md on the branch.
+    // If the branch already exists with guardrails_status: READY, skip.
+
+    await onStart("guardrails");
+    console.log(`[orchestrator] Guardrails check for ${owner}/${repo}`);
+
+    const guardrailsResult = await executeAgent(
+      buildGuardrailsPrompt(request, branch),
+      config, { taskId: `${taskId}-guardrails` }
+    );
+
+    phases.push({ phase: "guardrails", ...pick(guardrailsResult) });
+    await onEnd("guardrails", phases[phases.length - 1]);
+
+    const guardrailsOutput = guardrailsResult.output?.toUpperCase() || "";
+    if (guardrailsOutput.includes("BLOCKED")) {
+      await notify(
+        `**Guardrails check: BLOCKED** — missing foundational tooling (tests, linting, or type checking).\n\n` +
+        `A separate issue has been created to add the missing guardrails. ` +
+        `Implementation will proceed once foundations are in place.\n\n` +
+        `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\``
+      );
+      return { success: false, phases };
+    }
+
+    if (guardrailsResult.success) {
+      await notify(`**Guardrails check: READY** — test framework, linting, and type checking verified. Starting architect analysis...`);
+    } else {
+      // Non-blocking failure — proceed with a warning
+      await notify(`**Guardrails check completed with warnings.** Proceeding to architect analysis...`);
+    }
+
     // ── Phase 1: Architect ─────────────────────────────────────────
 
     await onStart("architect");
@@ -194,13 +227,55 @@ function slugify(text: string): string {
 
 // ── Prompt Builders ─────────────────────────────────────────────────
 
+function buildGuardrailsPrompt(req: BuildRequest, branch: string): string {
+  return `You are running a PRE-FLIGHT GUARDRAILS CHECK before implementation work begins.
+
+SETUP (git is pre-configured, you are in a sandbox workspace):
+1. Try: git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+   If the branch doesn't exist yet: git clone https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo} && git checkout -b ${branch}
+2. Read CLAUDE.md and AGENTS.md if they exist
+
+SKIP CHECK — if .lastlight/issue-${req.issueNumber}/status.md already exists and contains
+guardrails_status: READY, output "READY — guardrails already verified" and stop.
+
+CHECK THESE GUARDRAILS:
+
+1. **Test Framework** — Does the repo have a test runner (vitest, jest, pytest, cargo test, etc.)?
+   Do test files exist? Does the test command actually run?
+
+2. **Linting** — Is a linter configured (eslint, biome, ruff, clippy, etc.)?
+   Does the lint command run?
+
+3. **Type Checking** — Is type checking configured (tsconfig.json + tsc, mypy, cargo check, etc.)?
+   Does the typecheck command run?
+
+4. **CI Pipeline** (informational only) — Does .github/workflows/ exist with test/lint steps?
+
+AFTER CHECKING:
+1. mkdir -p .lastlight/issue-${req.issueNumber}
+2. Write .lastlight/issue-${req.issueNumber}/guardrails-report.md with the status of each check
+3. Write .lastlight/issue-${req.issueNumber}/status.md with current_phase: guardrails AND guardrails_status: READY or BLOCKED
+4. git add .lastlight/ && git commit -m "docs: guardrails check for #${req.issueNumber}"
+5. git push -u origin HEAD
+
+IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests completely broken):
+- Use the MCP tool create_issue to create a guardrails issue in the repo
+- Use add_issue_comment on issue #${req.issueNumber} to link the guardrails issue
+- OUTPUT must include: BLOCKED
+
+IF ALL CRITICAL GUARDRAILS ARE PRESENT (tests work, even if linting/types are missing):
+- OUTPUT must include: READY
+
+OUTPUT: Exactly one of READY or BLOCKED, followed by a brief summary of what was found.`;
+}
+
 function buildArchitectPrompt(req: BuildRequest, branch: string, context: string): string {
   return `You are the ARCHITECT. Analyze the codebase and produce an implementation plan.
 
 SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-2. git checkout -b ${branch}
-3. Read CLAUDE.md and AGENTS.md if they exist
+1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
+2. Read CLAUDE.md and AGENTS.md if they exist
+3. Read .lastlight/issue-${req.issueNumber}/guardrails-report.md for pre-flight results
 
 CONTEXT:
 ${context}
