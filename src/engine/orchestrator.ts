@@ -15,8 +15,29 @@ export interface BuildRequest {
   issueNumber: number;
   issueTitle: string;
   issueBody: string;
+  /** Labels currently on the issue — used to detect bootstrap tasks. */
+  issueLabels?: string[];
   commentBody?: string;
   sender: string;
+}
+
+/** Label applied to issues that exist solely to set up missing guardrails. */
+export const BOOTSTRAP_LABEL = "lastlight:bootstrap";
+
+/**
+ * A "bootstrap" task is one whose explicit purpose is to add the missing
+ * foundational tooling that the guardrails check looks for (test framework,
+ * linter, type checker, etc.). For these issues we still RUN the guardrails
+ * check (so the agent has an up-to-date report) but we don't BLOCK on it —
+ * otherwise the chicken-and-egg makes the issue impossible to build.
+ *
+ * Detection: explicit label, or a recognisable title prefix the bot itself
+ * applies when it creates the blocker issue.
+ */
+function isBootstrapTask(req: BuildRequest): boolean {
+  if (req.issueLabels?.includes(BOOTSTRAP_LABEL)) return true;
+  const title = (req.issueTitle || "").toLowerCase();
+  return title.startsWith("guardrails:") || title.startsWith("[guardrails]");
 }
 
 interface PhaseResult {
@@ -230,11 +251,22 @@ Branch: ${branch}
 
       const guardrailsOutput = gr.result.output?.toUpperCase() || "";
       if (guardrailsOutput.includes("BLOCKED")) {
-        await notify(
-          `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
-          `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\``
-        );
-        return { success: false, phases };
+        if (isBootstrapTask(request)) {
+          await notify(
+            `**Guardrails check: BLOCKED** — but this is a bootstrap task ` +
+            `(label \`${BOOTSTRAP_LABEL}\` or "guardrails:" title prefix detected). ` +
+            `Proceeding with the build cycle so the architect can plan, and the ` +
+            `executor can install, the missing tooling. The guardrails report at ` +
+            `\`.lastlight/issue-${issueNumber}/guardrails-report.md\` lists what's missing.`
+          );
+          // fall through to architect — don't return
+        } else {
+          await notify(
+            `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
+            `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\``
+          );
+          return { success: false, phases };
+        }
       }
 
       if (!gr.result.success) {
@@ -471,7 +503,11 @@ AFTER CHECKING:
 5. git push -u origin HEAD
 
 IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests completely broken):
-- Use the MCP tool create_issue to create a guardrails issue in the repo
+- Use the MCP tool create_issue to create a guardrails issue in the repo with:
+  - title prefixed exactly with "guardrails:" (e.g. "guardrails: no test framework configured")
+  - labels including ${BOOTSTRAP_LABEL} so subsequent build attempts on this issue
+    can detect that the task IS to set up guardrails (the orchestrator will then
+    skip the BLOCKED gate and let the executor install the missing tooling).
 - Use add_issue_comment on issue #${req.issueNumber} to link the guardrails issue
 - OUTPUT must include: BLOCKED
 
