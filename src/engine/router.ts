@@ -91,6 +91,23 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
         };
       }
 
+      // Check for approval commands before LLM classification
+      const approveMatch = envelope.body.match(/@last-light\s+approve\b/i);
+      const rejectMatch = envelope.body.match(/@last-light\s+reject\b(.*)/i);
+      if (approveMatch || rejectMatch) {
+        return {
+          action: "skill",
+          skill: "approval-response",
+          context: {
+            repo: envelope.repo,
+            issueNumber: envelope.issueNumber,
+            sender: envelope.sender,
+            decision: approveMatch ? "approved" : "rejected",
+            reason: rejectMatch ? rejectMatch[1].trim() || undefined : undefined,
+          },
+        };
+      }
+
       // Classify intent: is this a build/fix request or a lightweight action?
       const intent = await classifyComment(envelope.body);
       console.log(`[router] Comment classified as: ${intent}`);
@@ -212,6 +229,37 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
           skill: "status-report",
           context: {
             sender: envelope.sender,
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Command: /approve [workflow_run_id] — approve pending gate
+      const approveSlash = text.match(/^\/approve(?:\s+(\S+))?$/i);
+      if (approveSlash) {
+        return {
+          action: "skill",
+          skill: "approval-response",
+          context: {
+            workflowRunId: approveSlash[1] || undefined,
+            sender: envelope.sender,
+            decision: "approved",
+            source: envelope.source,
+          },
+        };
+      }
+
+      // Command: /reject [workflow_run_id] [reason] — reject pending gate
+      const rejectSlash = text.match(/^\/reject(?:\s+(\S+))?(?:\s+(.+))?$/i);
+      if (rejectSlash) {
+        return {
+          action: "skill",
+          skill: "approval-response",
+          context: {
+            workflowRunId: rejectSlash[1] || undefined,
+            sender: envelope.sender,
+            decision: "rejected",
+            reason: rejectSlash[2] || undefined,
             source: envelope.source,
           },
         };

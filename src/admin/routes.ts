@@ -3,7 +3,7 @@ import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { streamSSE } from "hono/streaming";
 import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
-import type { StateDb } from "../state/db.js";
+import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
 import { listRunningContainers, killContainer } from "./docker.js";
 import { authMiddleware, createToken, verifyToken } from "./auth.js";
@@ -15,6 +15,8 @@ export interface AdminConfig {
   adminSecret: string;
   /** Optional admin notifier (e.g. Slack) used by the recheck endpoint */
   adminNotifier?: (msg: string) => Promise<void>;
+  /** Optional callback to actively resume a paused workflow after dashboard approval */
+  resumeWorkflow?: (workflowRun: WorkflowRun, sender: string) => Promise<void>;
 }
 
 /**
@@ -310,6 +312,33 @@ export function createAdminRoutes(
     }
     db.cancelWorkflowRun(id);
     return c.json({ cancelled: id });
+  });
+
+  // ── Approval Gates ─────────────────────────────────────────────
+
+  app.get("/approvals", (c) => {
+    const approvals = db.listPendingApprovals();
+    return c.json({ approvals });
+  });
+
+  app.post("/approvals/:id/respond", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ decision: "approved" | "rejected"; reason?: string }>();
+    const approval = db.getApproval(id);
+    if (!approval) return c.json({ error: "approval not found" }, 404);
+    if (approval.status !== "pending") return c.json({ error: `already ${approval.status}` }, 400);
+    db.respondToApproval(id, body.decision, "admin", body.reason);
+    const workflowRun = db.getWorkflowRun(approval.workflowRunId);
+    if (body.decision === "rejected") {
+      if (workflowRun) {
+        db.finishWorkflowRun(approval.workflowRunId, "failed", `Rejected via dashboard: ${body.reason || "no reason"}`);
+      }
+    } else if (body.decision === "approved" && workflowRun && config.resumeWorkflow) {
+      config.resumeWorkflow(workflowRun, "admin").catch((err) => {
+        console.error(`[admin] Failed to resume workflow ${workflowRun.id}:`, err);
+      });
+    }
+    return c.json({ status: body.decision });
   });
 
   return app;

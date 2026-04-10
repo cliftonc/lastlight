@@ -242,6 +242,137 @@ describe("cancelWorkflowRun", () => {
   });
 });
 
+describe("pauseWorkflowRun", () => {
+  it("sets status to paused", () => {
+    const id = randomUUID();
+    db.createWorkflowRun({ id, workflowName: "build", triggerId: "t-pause", currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+    db.pauseWorkflowRun(id);
+
+    const run = db.getWorkflowRun(id);
+    expect(run!.status).toBe("paused");
+  });
+});
+
+describe("workflow_approvals CRUD", () => {
+  it("creates an approval and retrieves it by ID", () => {
+    const id = randomUUID();
+    const workflowRunId = randomUUID();
+    db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId: "owner/repo#20", currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+
+    const now = new Date().toISOString();
+    db.createApproval({
+      id,
+      workflowRunId,
+      gate: "post_architect",
+      summary: "Plan ready for review",
+      requestedBy: "alice",
+      createdAt: now,
+    });
+
+    const approval = db.getApproval(id);
+    expect(approval).not.toBeNull();
+    expect(approval!.id).toBe(id);
+    expect(approval!.workflowRunId).toBe(workflowRunId);
+    expect(approval!.gate).toBe("post_architect");
+    expect(approval!.summary).toBe("Plan ready for review");
+    expect(approval!.status).toBe("pending");
+    expect(approval!.requestedBy).toBe("alice");
+    expect(approval!.createdAt).toBe(now);
+  });
+
+  it("returns null for a non-existent approval", () => {
+    expect(db.getApproval("no-such-id")).toBeNull();
+  });
+
+  it("getPendingApprovalForWorkflow returns pending approval", () => {
+    const workflowRunId = randomUUID();
+    db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId: "owner/repo#21", currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+
+    const approvalId = randomUUID();
+    db.createApproval({ id: approvalId, workflowRunId, gate: "post_architect", summary: "Test", createdAt: new Date().toISOString() });
+
+    const approval = db.getPendingApprovalForWorkflow(workflowRunId);
+    expect(approval).not.toBeNull();
+    expect(approval!.id).toBe(approvalId);
+    expect(approval!.status).toBe("pending");
+  });
+
+  it("getPendingApprovalForWorkflow returns null when no pending approval", () => {
+    expect(db.getPendingApprovalForWorkflow("no-such-workflow")).toBeNull();
+  });
+
+  it("getPendingApprovalByTrigger returns pending approval by trigger ID", () => {
+    const workflowRunId = randomUUID();
+    const triggerId = "owner/repo#22";
+    db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId, currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+
+    const approvalId = randomUUID();
+    db.createApproval({ id: approvalId, workflowRunId, gate: "post_architect", summary: "Test", createdAt: new Date().toISOString() });
+
+    const approval = db.getPendingApprovalByTrigger(triggerId);
+    expect(approval).not.toBeNull();
+    expect(approval!.id).toBe(approvalId);
+  });
+
+  it("getPendingApprovalByTrigger returns null when trigger has no pending approval", () => {
+    expect(db.getPendingApprovalByTrigger("owner/repo#9999")).toBeNull();
+  });
+
+  it("listPendingApprovals returns all pending approvals", () => {
+    for (let i = 0; i < 3; i++) {
+      const workflowRunId = randomUUID();
+      db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId: `owner/repo#${30 + i}`, currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+      db.createApproval({ id: randomUUID(), workflowRunId, gate: "post_architect", summary: `Summary ${i}`, createdAt: new Date().toISOString() });
+    }
+
+    const pending = db.listPendingApprovals();
+    expect(pending.length).toBeGreaterThanOrEqual(3);
+    expect(pending.every((a) => a.status === "pending")).toBe(true);
+  });
+
+  it("respondToApproval sets status and respondedBy", () => {
+    const workflowRunId = randomUUID();
+    db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId: "owner/repo#23", currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+
+    const approvalId = randomUUID();
+    db.createApproval({ id: approvalId, workflowRunId, gate: "post_architect", summary: "Test", createdAt: new Date().toISOString() });
+
+    db.respondToApproval(approvalId, "approved", "bob");
+
+    const approval = db.getApproval(approvalId);
+    expect(approval!.status).toBe("approved");
+    expect(approval!.respondedBy).toBe("bob");
+    expect(approval!.respondedAt).toBeTruthy();
+    expect(approval!.response).toBeUndefined();
+  });
+
+  it("respondToApproval stores rejection reason", () => {
+    const workflowRunId = randomUUID();
+    db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId: "owner/repo#24", currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+
+    const approvalId = randomUUID();
+    db.createApproval({ id: approvalId, workflowRunId, gate: "post_architect", summary: "Test", createdAt: new Date().toISOString() });
+
+    db.respondToApproval(approvalId, "rejected", "carol", "Plan is incomplete");
+
+    const approval = db.getApproval(approvalId);
+    expect(approval!.status).toBe("rejected");
+    expect(approval!.respondedBy).toBe("carol");
+    expect(approval!.response).toBe("Plan is incomplete");
+  });
+
+  it("getPendingApprovalForWorkflow ignores responded approvals", () => {
+    const workflowRunId = randomUUID();
+    db.createWorkflowRun({ id: workflowRunId, workflowName: "build", triggerId: "owner/repo#25", currentPhase: "architect", status: "running", startedAt: new Date().toISOString() });
+
+    const approvalId = randomUUID();
+    db.createApproval({ id: approvalId, workflowRunId, gate: "post_architect", summary: "Test", createdAt: new Date().toISOString() });
+    db.respondToApproval(approvalId, "approved", "dave");
+
+    expect(db.getPendingApprovalForWorkflow(workflowRunId)).toBeNull();
+  });
+});
+
 describe("context JSON round-trip", () => {
   it("stores and retrieves complex context objects", () => {
     const id = randomUUID();
