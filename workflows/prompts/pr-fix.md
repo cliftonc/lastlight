@@ -8,6 +8,9 @@ CONTEXT:
 - PR #{{prNumber}}: {{prTitle}}
 - Maintainer request: {{commentBody}}
 {{ciSection}}
+{{#if ciSection}}
+NOTE: The CI failures above are the primary issue — fix those first.
+{{/if}}
 INSTRUCTIONS:
 1. Understand what the maintainer is asking for
 2. Read the relevant code and understand what needs to change

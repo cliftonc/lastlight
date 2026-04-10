@@ -140,6 +140,9 @@ function phaseIndex(phase: string): number {
 /**
  * Run a build workflow defined by a YAML definition.
  * Interprets phases, approval gates, and the reviewer loop generically.
+ *
+ * @param startFrom - Optional phase name to resume from. When provided (e.g. from the
+ *   no-DB agent-based resume check), overrides the DB-derived resume point.
  */
 export async function runWorkflow(
   definition: BuildWorkflowDefinition,
@@ -150,6 +153,7 @@ export async function runWorkflow(
   models?: ModelConfig,
   approvalConfig?: ApprovalGateConfig,
   workflowId?: string,
+  startFrom?: string,
 ): Promise<WorkflowResult> {
   const phases: PhaseResult[] = [];
   const { taskId, branch, issueDir } = ctx;
@@ -187,9 +191,11 @@ export async function runWorkflow(
     }
   };
 
-  // Determine resume point from DB or status
+  // Determine resume point: explicit override → DB-derived → default phase_0
   let resumeFrom = "phase_0";
-  if (db && workflowId) {
+  if (startFrom) {
+    resumeFrom = startFrom;
+  } else if (db && workflowId) {
     const run = db.getWorkflowRun(workflowId);
     if (run?.currentPhase && run.currentPhase !== "phase_0") {
       const idx = phaseIndex(run.currentPhase);

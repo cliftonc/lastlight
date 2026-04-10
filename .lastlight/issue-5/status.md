@@ -4,11 +4,11 @@
 |-------|-------|
 | issue | cliftonc/lastlight#5 |
 | branch | lastlight/5-yaml-workflow-definitions-replacing-hard |
-| current_phase | reviewer |
+| current_phase | fix_loop_1 |
 | last_updated | 2026-04-10T09:25:00Z |
 | fix_cycles | 0 |
 | pr_number | |
-| reviewer_status | REQUEST_CHANGES |
+| reviewer_status | REQUEST_CHANGES — fix cycle 1 in progress |
 
 ## Phase Log
 | Phase | Status | Timestamp | Notes |

@@ -73,3 +73,48 @@ npx tsc --noEmit  → exit 0, no errors
 ## Known Issues
 
 None. All guardrails pass.
+
+## Fix Cycle 1
+
+### Issues Fixed
+
+**Important #1 — No-DB resume regression** (`src/engine/orchestrator.ts`, `src/workflows/runner.ts`):
+- Restored the `current_phase:` marker parsing in the no-DB agent-based resume path. When the resume-check agent reports a completed phase, the orchestrator now parses it and computes `noDbResumeFrom` (the next phase to run from).
+- Added `startFrom?: string` parameter to `runWorkflow` so the orchestrator can pass the no-DB derived resume point to the runner, bypassing the DB-derived computation.
+- The runner now prefers `startFrom` over the DB lookup when both are present.
+
+**Important #2 — Post-gate approval relies on implicit phase dedup** (`src/engine/orchestrator.ts`):
+- When an approved gate is resumed, the orchestrator now calls `db.updateWorkflowPhase(workflowId, lastCompletedPhase, ...)` before `db.resumeWorkflowRun()` to set `currentPhase` to the actual last completed phase (`"architect"` for `post_architect` gate, `"executor"` for `post_reviewer` gate).
+- This makes the runner's DB-derived `resumeFrom` correct without relying on implicit per-phase dedup for the pre-gate phases.
+
+**Suggestion #3 — `pr-fix.md` CI-priority instruction** (`workflows/prompts/pr-fix.md`):
+- Added a `{{#if ciSection}}` conditional block that instructs the agent to fix CI failures first when a `ciSection` is present, restoring the behavior that was in the original `buildPrFixPrompt`.
+
+**Suggestion #4 — No tests for approval gate pause/resume** (`src/workflows/runner.test.ts`):
+- Added 3 new tests in a `runWorkflow — approval gate` describe block:
+  - Verifies the runner returns `paused: true` and stops before executor when `post_architect` gate is configured.
+  - Verifies the runner resumes from executor (skipping architect) when `currentPhase = "architect"` in the mock DB — validating the fix for issue #2.
+  - Verifies the `startFrom` parameter correctly skips phases in the no-DB path — validating the fix for issue #1.
+
+### Test Results
+
+```
+ RUN  v4.1.4 /home/agent/workspace/lastlight
+
+ Test Files  8 passed (8)
+      Tests  144 passed (144)
+   Start at  09:27:57
+   Duration  1.52s (transform 250ms, setup 0ms, import 435ms, tests 192ms, environment 1ms)
+```
+
+141 pre-existing tests pass unchanged. 3 new tests added in `runner.test.ts`.
+
+### Lint Results
+
+No linter configured (non-blocking per guardrails report).
+
+### Typecheck Results
+
+```
+npx tsc --noEmit  → exit 0, no errors
+```

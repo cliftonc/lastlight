@@ -73,6 +73,8 @@ export async function runBuildCycle(
   // ── Resume logic (DB-driven) ─────────────────────────────────────────────
 
   let workflowId: string;
+  let noDbResumeFrom: string | undefined;
+
   const PHASE_ORDER = ["phase_0", "guardrails", "architect", "executor", "reviewer", "complete"] as const;
   type Phase = (typeof PHASE_ORDER)[number];
 
@@ -105,6 +107,15 @@ export async function runBuildCycle(
         if (pendingApproval?.status === "approved") {
           const gate = pendingApproval.gate;
           const resumeFrom = gate === "post_architect" ? "executor" : "reviewer";
+          // Update currentPhase to the last real completed phase so the runner's
+          // DB-derived resumeFrom is correct (not stuck on "waiting_approval").
+          const lastCompletedPhase = gate === "post_architect" ? "architect" : "executor";
+          db.updateWorkflowPhase(workflowId, lastCompletedPhase, {
+            phase: lastCompletedPhase,
+            timestamp: new Date().toISOString(),
+            success: true,
+            summary: `Resumed after gate approval: ${gate}`,
+          });
           console.log(
             `[orchestrator] Approval received for gate ${gate} — resuming from ${resumeFrom}`,
           );
@@ -177,6 +188,21 @@ export async function runBuildCycle(
           phases: [{ phase: "resume", success: true, output: "Already complete" }],
         };
       }
+      const phaseMatch = output.match(/current_phase:\s*(\S+)/);
+      if (phaseMatch) {
+        const completedPhase = phaseMatch[1];
+        const completedIdx = phaseIndex(completedPhase);
+        if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
+          noDbResumeFrom = PHASE_ORDER[completedIdx + 1];
+          console.log(
+            `[orchestrator] No-DB resume: last completed phase "${completedPhase}", resuming from "${noDbResumeFrom}"`,
+          );
+          await notify(
+            `**Resuming build cycle** for #${issueNumber} from **${noDbResumeFrom}** phase.\n` +
+              `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`,
+          );
+        }
+      }
     }
   }
 
@@ -218,7 +244,7 @@ Branch: ${branch}
     postComment: callbacks?.postComment,
   };
 
-  return runWorkflow(definition, ctx, config, runnerCallbacks, db, models, approvalConfig, workflowId);
+  return runWorkflow(definition, ctx, config, runnerCallbacks, db, models, approvalConfig, workflowId, noDbResumeFrom);
 }
 
 // ── PR Fix ────────────────────────────────────────────────────────────────────

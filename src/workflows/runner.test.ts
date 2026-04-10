@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { BuildWorkflowDefinition } from "./schema.js";
 import type { TemplateContext } from "./templates.js";
-import type { RunnerCallbacks } from "./runner.js";
+import type { RunnerCallbacks, ApprovalGateConfig } from "./runner.js";
+import type { StateDb } from "../state/db.js";
 
 // Mock the executor so we don't make real agent calls
 vi.mock("../engine/executor.js", () => ({
@@ -295,6 +296,124 @@ describe("runWorkflow — reviewer loop", () => {
     const result = await runWorkflow(WORKFLOW_WITH_REVIEWER_LOOP, BASE_CTX, {} as never, {});
     expect(result.success).toBe(true);
     expect(result.prNumber).toBe(10);
+  });
+});
+
+const WORKFLOW_WITH_APPROVAL_GATE: BuildWorkflowDefinition = {
+  type: "build",
+  name: "gated",
+  phases: [
+    { name: "phase_0", type: "context" },
+    { name: "architect", type: "agent", prompt: "prompts/architect.md", approval_gate: "post_architect" },
+    { name: "executor", type: "agent", prompt: "prompts/executor.md" },
+    { name: "pr", type: "agent", prompt: "prompts/pr.md", on_success: { set_phase: "complete" } },
+  ],
+};
+
+/**
+ * Minimal StateDb mock providing the methods used by runWorkflow.
+ * currentPhase controls what getWorkflowRun returns (simulating DB state after
+ * the orchestrator updates it prior to calling runWorkflow).
+ */
+function makeMockDb(currentPhase = "phase_0"): StateDb {
+  let phase = currentPhase;
+  return {
+    shouldRunPhase: vi.fn(() => "run"),
+    recordStart: vi.fn(),
+    recordFinish: vi.fn(),
+    markStaleAsFailed: vi.fn(),
+    markLatestAsFailed: vi.fn(),
+    updateWorkflowPhase: vi.fn((_id: string, newPhase: string) => { phase = newPhase; }),
+    pauseWorkflowRun: vi.fn(),
+    resumeWorkflowRun: vi.fn(),
+    finishWorkflowRun: vi.fn(),
+    createApproval: vi.fn(),
+    getWorkflowRun: vi.fn(() => ({ currentPhase: phase, status: "running" })),
+    getPendingApprovalForWorkflow: vi.fn(() => null),
+  } as unknown as StateDb;
+}
+
+describe("runWorkflow — approval gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("pauses at post_architect gate and does not run executor", async () => {
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("architect plan done"));
+
+    const db = makeMockDb("phase_0");
+    const approvalConfig: ApprovalGateConfig = { postArchitect: true, postReviewer: false };
+
+    const result = await runWorkflow(
+      WORKFLOW_WITH_APPROVAL_GATE,
+      BASE_CTX,
+      {} as never,
+      {},
+      db,
+      undefined,
+      approvalConfig,
+      "wf-gate-1",
+    );
+
+    expect(result.paused).toBe(true);
+    expect(result.success).toBe(true);
+    // Only architect ran — executor and pr were not reached
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+    expect(result.phases.map((p) => p.phase)).not.toContain("executor");
+  });
+
+  it("resumes from executor after post_architect gate approval (currentPhase=architect in DB)", async () => {
+    // Simulate what the orchestrator does after approval: update currentPhase to "architect"
+    // so the runner computes resumeFrom = "executor"
+    const db = makeMockDb("architect");
+    const approvalConfig: ApprovalGateConfig = { postArchitect: true, postReviewer: false };
+
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("executor done"))
+      .mockResolvedValueOnce(makeSuccessResult("PR #5 created"));
+
+    const result = await runWorkflow(
+      WORKFLOW_WITH_APPROVAL_GATE,
+      BASE_CTX,
+      {} as never,
+      {},
+      db,
+      undefined,
+      approvalConfig,
+      "wf-gate-1",
+    );
+
+    // Not paused — gate phase (architect) was skipped, executor and pr ran
+    expect(result.paused).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.prNumber).toBe(5);
+    // Only executor + pr ran (architect skipped by shouldRun check)
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes from specified startFrom phase (no-DB path)", async () => {
+    // Simulate no-DB resume: orchestrator parsed current_phase: architect from agent output
+    // and passes startFrom="executor" to skip re-running architect
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("executor done"));
+
+    const result = await runWorkflow(
+      SIMPLE_WORKFLOW, // phases: phase_0, architect, executor
+      BASE_CTX,
+      {} as never,
+      {},
+      undefined, // no DB
+      undefined,
+      undefined,
+      undefined,
+      "executor", // startFrom — skip architect
+    );
+
+    expect(result.success).toBe(true);
+    // Only executor ran — architect was skipped by startFrom
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+    const phaseNames = result.phases.map((p) => p.phase);
+    expect(phaseNames).toContain("executor");
+    expect(phaseNames).not.toContain("architect");
   });
 });
 
