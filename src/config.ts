@@ -78,6 +78,13 @@ export interface LastLightConfig {
   };
   /** Slack connector config (present when SLACK_BOT_TOKEN is set) */
   slack?: SlackConfig;
+  /** Approval gate configuration */
+  approval?: {
+    /** Pause after architect, before executor — requires human approval to proceed */
+    postArchitect: boolean;
+    /** Pause after reviewer REQUEST_CHANGES, before fix loop — requires human approval to retry */
+    postReviewer: boolean;
+  };
 }
 
 /**
@@ -122,6 +129,10 @@ export function loadConfig(): LastLightConfig {
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
     githubApp,
     slack,
+    approval: {
+      postArchitect: process.env.APPROVAL_POST_ARCHITECT === 'true',
+      postReviewer: process.env.APPROVAL_POST_REVIEWER === 'true',
+    },
   };
 }
 

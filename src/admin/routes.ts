@@ -312,5 +312,28 @@ export function createAdminRoutes(
     return c.json({ cancelled: id });
   });
 
+  // ── Approval Gates ─────────────────────────────────────────────
+
+  app.get("/approvals", (c) => {
+    const approvals = db.listPendingApprovals();
+    return c.json({ approvals });
+  });
+
+  app.post("/approvals/:id/respond", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ decision: "approved" | "rejected"; reason?: string }>();
+    const approval = db.getApproval(id);
+    if (!approval) return c.json({ error: "approval not found" }, 404);
+    if (approval.status !== "pending") return c.json({ error: `already ${approval.status}` }, 400);
+    db.respondToApproval(id, body.decision, "admin", body.reason);
+    if (body.decision === "rejected") {
+      const workflowRun = db.getWorkflowRun(approval.workflowRunId);
+      if (workflowRun) {
+        db.finishWorkflowRun(approval.workflowRunId, "failed", `Rejected via dashboard: ${body.reason || "no reason"}`);
+      }
+    }
+    return c.json({ status: body.decision });
+  });
+
   return app;
 }

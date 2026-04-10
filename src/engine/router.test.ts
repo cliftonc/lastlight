@@ -220,6 +220,108 @@ describe('routeEvent — message events', () => {
   });
 });
 
+describe('routeEvent — approval commands in comment.created', () => {
+  it('routes @last-light approve to approval-response with approved decision', async () => {
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light approve',
+      authorAssociation: 'OWNER',
+      issueNumber: 10,
+      repo: 'cliftonc/drizzle-cube',
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('approved');
+      expect(result.context.issueNumber).toBe(10);
+      expect(result.context.repo).toBe('cliftonc/drizzle-cube');
+    }
+  });
+
+  it('routes @last-light reject with reason to approval-response with rejected decision', async () => {
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light reject plan needs more detail',
+      authorAssociation: 'OWNER',
+      issueNumber: 10,
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('rejected');
+      expect(result.context.reason).toBe('plan needs more detail');
+    }
+  });
+
+  it('routes @last-light reject without reason', async () => {
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light reject',
+      authorAssociation: 'MEMBER',
+      issueNumber: 5,
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('rejected');
+    }
+  });
+
+  it('does not route approval for non-maintainer — falls through to polite-decline', async () => {
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light approve',
+      authorAssociation: 'NONE',
+      issueNumber: 10,
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('polite-decline');
+    }
+  });
+});
+
+describe('routeEvent — approval commands in message events', () => {
+  it('routes /approve to approval-response with approved decision', async () => {
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/approve' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('approved');
+    }
+  });
+
+  it('routes /approve with workflow ID', async () => {
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/approve abc-123' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('approved');
+      expect(result.context.workflowRunId).toBe('abc-123');
+    }
+  });
+
+  it('routes /reject to approval-response with rejected decision', async () => {
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/reject' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('rejected');
+    }
+  });
+
+  it('routes /reject with workflow ID and reason', async () => {
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/reject abc-123 too risky' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('rejected');
+      expect(result.context.workflowRunId).toBe('abc-123');
+      expect(result.context.reason).toBe('too risky');
+    }
+  });
+});
+
 describe('routeEvent — unhandled events', () => {
   it('ignores unknown event types', async () => {
     const result = await routeEvent(makeEnvelope({ type: 'pr_review.submitted' }));

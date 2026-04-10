@@ -106,6 +106,38 @@ describe('loadConfig — model overrides via CLAUDE_MODELS', () => {
   });
 });
 
+describe('loadConfig — approval gates', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('approval gates default to disabled', () => {
+    vi.stubEnv('APPROVAL_POST_ARCHITECT', '');
+    vi.stubEnv('APPROVAL_POST_REVIEWER', '');
+    const config = loadConfig();
+    expect(config.approval?.postArchitect).toBe(false);
+    expect(config.approval?.postReviewer).toBe(false);
+  });
+
+  it('enables postArchitect gate from env var', () => {
+    vi.stubEnv('APPROVAL_POST_ARCHITECT', 'true');
+    vi.stubEnv('APPROVAL_POST_REVIEWER', '');
+    const config = loadConfig();
+    expect(config.approval?.postArchitect).toBe(true);
+    expect(config.approval?.postReviewer).toBe(false);
+  });
+
+  it('enables postReviewer gate from env var', () => {
+    vi.stubEnv('APPROVAL_POST_ARCHITECT', '');
+    vi.stubEnv('APPROVAL_POST_REVIEWER', 'true');
+    const config = loadConfig();
+    expect(config.approval?.postArchitect).toBe(false);
+    expect(config.approval?.postReviewer).toBe(true);
+  });
+});
+
 describe('loadConfig — structure', () => {
   beforeEach(() => {
     vi.stubEnv('GITHUB_APP_ID', '');

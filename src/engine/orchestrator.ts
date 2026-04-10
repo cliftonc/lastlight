@@ -8,6 +8,18 @@ import { listRunningContainers } from "../admin/docker.js";
 import { randomUUID } from "crypto";
 
 /**
+ * Configuration for approval gates in the build cycle.
+ * When a gate is enabled, the orchestrator pauses and posts a notification
+ * asking a maintainer to approve or reject before proceeding.
+ */
+export interface ApprovalGateConfig {
+  /** Pause after architect analysis, before executor implementation */
+  postArchitect: boolean;
+  /** Pause after reviewer REQUEST_CHANGES, before the fix loop */
+  postReviewer: boolean;
+}
+
+/**
  * Build request context.
  */
 export interface BuildRequest {
@@ -166,7 +178,8 @@ export async function runBuildCycle(
   },
   db?: StateDb,
   models?: ModelConfig,
-): Promise<{ success: boolean; phases: PhaseResult[]; prNumber?: number }> {
+  approvalConfig?: ApprovalGateConfig,
+): Promise<{ success: boolean; phases: PhaseResult[]; prNumber?: number; paused?: boolean }> {
   const { owner, repo, issueNumber } = request;
   const phases: PhaseResult[] = [];
   const branch = `lastlight/${issueNumber}-${slugify(request.issueTitle)}`;
@@ -198,14 +211,38 @@ export async function runBuildCycle(
         return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
       }
 
-      const completedIdx = phaseIndex(completedPhase);
-      if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
-        resumeFrom = PHASE_ORDER[completedIdx + 1];
-        console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase}) — DB run ${workflowId}`);
-        await notify(
-          `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
-          `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
-        );
+      // Handle paused workflow waiting for approval
+      if (existingRun.status === "paused" && completedPhase === "waiting_approval") {
+        const pendingApproval = db.getPendingApprovalForWorkflow(workflowId);
+        if (pendingApproval?.status === "approved") {
+          // Resume from the phase after the gate
+          const gate = pendingApproval.gate;
+          resumeFrom = gate === "post_architect" ? "executor" : "executor";
+          console.log(`[orchestrator] Approval received for gate ${gate} — resuming from ${resumeFrom}`);
+          db.resumeWorkflowRun(workflowId);
+          await notify(
+            `**Approval received** — resuming build cycle from **${resumeFrom}** phase.`
+          );
+        } else if (pendingApproval?.status === "rejected") {
+          const reason = pendingApproval.response || "no reason given";
+          db.finishWorkflowRun(workflowId, "failed", `Rejected: ${reason}`);
+          await notify(`Build cycle for #${issueNumber} was rejected. Reason: ${reason}`);
+          return { success: false, phases: [{ phase: "rejected", success: false, output: `Rejected: ${reason}` }] };
+        } else {
+          // Still pending — don't do anything, stay paused
+          await notify(`Build cycle for #${issueNumber} is paused, awaiting approval.`);
+          return { success: true, phases: [], paused: true };
+        }
+      } else {
+        const completedIdx = phaseIndex(completedPhase);
+        if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
+          resumeFrom = PHASE_ORDER[completedIdx + 1];
+          console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase}) — DB run ${workflowId}`);
+          await notify(
+            `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
+            `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
+          );
+        }
       }
     } else {
       // No active run — create one. (Failed/cancelled runs are not resumed; a new run is created.)
@@ -370,6 +407,35 @@ Branch: ${branch}
       }
 
       persistPhase("architect");
+
+      // Post-architect approval gate
+      if (approvalConfig?.postArchitect && db && workflowId) {
+        const approvalId = randomUUID();
+        db.createApproval({
+          id: approvalId,
+          workflowRunId: workflowId,
+          gate: "post_architect",
+          summary: `Architect plan ready.\n- Branch: \`${branch}\`\n- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\``,
+          requestedBy: request.sender,
+          createdAt: new Date().toISOString(),
+        });
+        db.updateWorkflowPhase(workflowId, "waiting_approval", {
+          phase: "waiting_approval",
+          timestamp: new Date().toISOString(),
+          success: true,
+          summary: `Waiting for approval: post_architect (${approvalId})`,
+        });
+        db.pauseWorkflowRun(workflowId);
+        await notify(
+          `**Architect analysis complete** — approval required before implementation.\n\n` +
+          `- Branch: \`${branch}\`\n` +
+          `- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\`\n\n` +
+          `**To proceed:** comment \`@last-light approve\`\n` +
+          `**To abort:** comment \`@last-light reject [reason]\``,
+        );
+        return { success: true, phases, paused: true };
+      }
+
       await notify(
         `**Architect analysis complete.**\n` +
         `- Branch: \`${branch}\`\n` +
@@ -454,6 +520,34 @@ Branch: ${branch}
     } else if (fixCycles < MAX_FIX_CYCLES) {
       fixCycles++;
       persistPhase(reviewLabel, "REQUEST_CHANGES");
+
+      // Post-reviewer approval gate
+      if (approvalConfig?.postReviewer && db && workflowId) {
+        const approvalId = randomUUID();
+        db.createApproval({
+          id: approvalId,
+          workflowRunId: workflowId,
+          gate: "post_reviewer",
+          summary: `Reviewer requested changes (cycle ${fixCycles}/${MAX_FIX_CYCLES}).\nVerdict: \`.lastlight/issue-${issueNumber}/reviewer-verdict.md\``,
+          requestedBy: request.sender,
+          createdAt: new Date().toISOString(),
+        });
+        db.updateWorkflowPhase(workflowId, "waiting_approval", {
+          phase: "waiting_approval",
+          timestamp: new Date().toISOString(),
+          success: true,
+          summary: `Waiting for approval: post_reviewer (${approvalId})`,
+        });
+        db.pauseWorkflowRun(workflowId);
+        await notify(
+          `**Review: REQUEST_CHANGES** — approval required before fix loop.\n\n` +
+          `- Verdict: \`.lastlight/issue-${issueNumber}/reviewer-verdict.md\`\n\n` +
+          `**To proceed with fixes:** comment \`@last-light approve\`\n` +
+          `**To abort:** comment \`@last-light reject [reason]\``,
+        );
+        return { success: true, phases, paused: true };
+      }
+
       await notify(`**Review: REQUEST_CHANGES** — fixing issues (cycle ${fixCycles}/${MAX_FIX_CYCLES})...`);
 
       await onStart(`fix_loop_${fixCycles}`);

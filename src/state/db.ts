@@ -10,6 +10,19 @@ export interface PhaseHistoryEntry {
   summary?: string;
 }
 
+export interface WorkflowApproval {
+  id: string;
+  workflowRunId: string;
+  gate: string;
+  summary: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestedBy?: string;
+  respondedBy?: string;
+  response?: string;
+  respondedAt?: string;
+  createdAt: string;
+}
+
 export interface WorkflowRun {
   id: string;
   workflowName: string;
@@ -104,6 +117,21 @@ export class StateDb {
       );
       CREATE INDEX IF NOT EXISTS idx_workflow_runs_trigger ON workflow_runs(trigger_id, status);
       CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+
+      CREATE TABLE IF NOT EXISTS workflow_approvals (
+        id TEXT PRIMARY KEY,
+        workflow_run_id TEXT NOT NULL,
+        gate TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_by TEXT,
+        responded_by TEXT,
+        response TEXT,
+        responded_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_approvals_workflow ON workflow_approvals(workflow_run_id);
+      CREATE INDEX IF NOT EXISTS idx_approvals_status ON workflow_approvals(status);
     `);
   }
 
@@ -439,6 +467,89 @@ export class StateDb {
     this.db.prepare(`
       UPDATE workflow_runs SET status = 'cancelled', updated_at = ?, finished_at = ? WHERE id = ?
     `).run(now, now, id);
+  }
+
+  /** Pause a workflow run (waiting for approval) */
+  pauseWorkflowRun(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE workflow_runs SET status = 'paused', updated_at = ? WHERE id = ?
+    `).run(now, id);
+  }
+
+  /** Resume a paused workflow run (set back to running) */
+  resumeWorkflowRun(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE workflow_runs SET status = 'running', updated_at = ? WHERE id = ?
+    `).run(now, id);
+  }
+
+  // ── Workflow Approvals ─────────────────────────────────────────
+
+  /** Create a new pending approval request */
+  createApproval(approval: Omit<WorkflowApproval, 'status' | 'respondedBy' | 'response' | 'respondedAt'>): void {
+    this.db.prepare(`
+      INSERT INTO workflow_approvals (id, workflow_run_id, gate, summary, status, requested_by, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?)
+    `).run(approval.id, approval.workflowRunId, approval.gate, approval.summary, approval.requestedBy ?? null, approval.createdAt);
+  }
+
+  /** Get a single approval by ID */
+  getApproval(id: string): WorkflowApproval | null {
+    const row = this.db.prepare(`SELECT * FROM workflow_approvals WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? this.deserializeApproval(row) : null;
+  }
+
+  /** Find the pending approval for a workflow run */
+  getPendingApprovalForWorkflow(workflowRunId: string): WorkflowApproval | null {
+    const row = this.db.prepare(`
+      SELECT * FROM workflow_approvals WHERE workflow_run_id = ? AND status = 'pending' LIMIT 1
+    `).get(workflowRunId) as Record<string, unknown> | undefined;
+    return row ? this.deserializeApproval(row) : null;
+  }
+
+  /** Find the pending approval by trigger ID (join with workflow_runs) */
+  getPendingApprovalByTrigger(triggerId: string): WorkflowApproval | null {
+    const row = this.db.prepare(`
+      SELECT wa.* FROM workflow_approvals wa
+      JOIN workflow_runs wr ON wa.workflow_run_id = wr.id
+      WHERE wr.trigger_id = ? AND wa.status = 'pending'
+      ORDER BY wa.created_at DESC
+      LIMIT 1
+    `).get(triggerId) as Record<string, unknown> | undefined;
+    return row ? this.deserializeApproval(row) : null;
+  }
+
+  /** List all pending approvals */
+  listPendingApprovals(): WorkflowApproval[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM workflow_approvals WHERE status = 'pending' ORDER BY created_at DESC
+    `).all() as Record<string, unknown>[];
+    return rows.map((r) => this.deserializeApproval(r));
+  }
+
+  /** Record the response to an approval */
+  respondToApproval(id: string, status: 'approved' | 'rejected', respondedBy: string, response?: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE workflow_approvals SET status = ?, responded_by = ?, response = ?, responded_at = ? WHERE id = ?
+    `).run(status, respondedBy, response ?? null, now, id);
+  }
+
+  private deserializeApproval(row: Record<string, unknown>): WorkflowApproval {
+    return {
+      id: row.id as string,
+      workflowRunId: row.workflow_run_id as string,
+      gate: row.gate as string,
+      summary: row.summary as string,
+      status: row.status as WorkflowApproval['status'],
+      requestedBy: row.requested_by as string | undefined || undefined,
+      respondedBy: row.responded_by as string | undefined || undefined,
+      response: row.response as string | undefined || undefined,
+      respondedAt: row.responded_at as string | undefined || undefined,
+      createdAt: row.created_at as string,
+    };
   }
 
   private deserializeWorkflowRun(row: Record<string, unknown>): WorkflowRun {

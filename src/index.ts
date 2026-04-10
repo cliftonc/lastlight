@@ -408,6 +408,80 @@ async function main() {
       return;
     }
 
+    // Approval responses
+    if (skill === "approval-response") {
+      const decision = context.decision as "approved" | "rejected";
+      const sender = (context.sender as string) || "unknown";
+      const reason = context.reason as string | undefined;
+      const triggerId = context.repo && context.issueNumber
+        ? `${context.repo}#${context.issueNumber}`
+        : undefined;
+
+      const approval = context.workflowRunId
+        ? db.getPendingApprovalForWorkflow(context.workflowRunId as string)
+        : triggerId
+        ? db.getPendingApprovalByTrigger(triggerId)
+        : null;
+
+      if (!approval) {
+        await envelope.reply("No pending approval found.");
+        return;
+      }
+
+      db.respondToApproval(approval.id, decision, sender, reason);
+
+      if (decision === "approved") {
+        await envelope.reply(`Approved by ${sender}. Resuming build cycle...`);
+        // Re-trigger the build cycle — resume logic in orchestrator will pick up from DB state
+        const workflowRun = db.getWorkflowRun(approval.workflowRunId);
+        if (workflowRun && github) {
+          const [owner, repo] = workflowRun.triggerId.includes("/")
+            ? workflowRun.triggerId.replace(/#\d+$/, "").split("/")
+            : ["", ""];
+          const issueNumber = workflowRun.issueNumber;
+          if (owner && repo && issueNumber) {
+            db.resumeWorkflowRun(workflowRun.id);
+            const ctx = workflowRun.context as Record<string, unknown> | undefined;
+            runBuildCycle(
+              {
+                owner,
+                repo,
+                issueNumber,
+                issueTitle: `Issue #${issueNumber}`,
+                issueBody: "",
+                sender,
+              },
+              {
+                mcpConfigPath,
+                model: config.model,
+                maxTurns: config.maxTurns,
+                stateDir: config.stateDir,
+                sandboxDir: config.sandboxDir,
+              },
+              {
+                postComment: async (msg) => {
+                  try { await github.postComment(owner, repo, issueNumber, msg); } catch {}
+                },
+                onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
+                onPhaseEnd: async (phase, result) =>
+                  console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
+              },
+              db,
+              config.models,
+              config.approval,
+            ).catch((err) => console.error(`[approval] Resume failed:`, err));
+          }
+        }
+      } else {
+        const workflowRun = db.getWorkflowRun(approval.workflowRunId);
+        if (workflowRun) {
+          db.finishWorkflowRun(approval.workflowRunId, "failed", `Rejected by ${sender}: ${reason || "no reason given"}`);
+        }
+        await envelope.reply(`Rejected by ${sender}. Build cycle aborted.${reason ? ` Reason: ${reason}` : ""}`);
+      }
+      return;
+    }
+
     // Build requests: route to the programmatic orchestrator instead of the SKILL.md
     if (skill === "github-orchestrator" && context.issueNumber && context.repo) {
       const repoStr = context.repo as string;
@@ -488,6 +562,7 @@ async function main() {
         },
         db,
         config.models,
+        config.approval,
       ).then((result) => {
         db.recordFinish(executionId, {
           success: result.success,
@@ -495,7 +570,9 @@ async function main() {
           durationMs: 0,
         });
         if (envelope.type === "message") {
-          const msg = result.prNumber
+          const msg = result.paused
+            ? `Build cycle paused — awaiting approval.`
+            : result.prNumber
             ? `Build cycle complete — PR #${result.prNumber} created.`
             : `Build cycle ${result.success ? "complete" : "failed"}.`;
           envelope.reply(msg);
