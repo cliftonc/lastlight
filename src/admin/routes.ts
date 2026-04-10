@@ -332,6 +332,9 @@ export function createAdminRoutes(
         db.finishWorkflowRun(approval.workflowRunId, "failed", `Rejected via dashboard: ${body.reason || "no reason"}`);
       }
     }
+    // Known limitation: dashboard approvals record the decision in the DB but do not
+    // actively resume the paused workflow. The next inbound event or server restart will
+    // pick up the approved status and resume automatically via the orchestrator's resume path.
     return c.json({ status: body.decision });
   });
 

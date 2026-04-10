@@ -256,6 +256,7 @@ async function main() {
         },
         db,
         config.models,
+        config.approval,
     ).catch((err) => {
       console.error(`[api] Build failed:`, err);
     });
@@ -431,10 +432,14 @@ async function main() {
       db.respondToApproval(approval.id, decision, sender, reason);
 
       if (decision === "approved") {
-        await envelope.reply(`Approved by ${sender}. Resuming build cycle...`);
         // Re-trigger the build cycle — resume logic in orchestrator will pick up from DB state
         const workflowRun = db.getWorkflowRun(approval.workflowRunId);
+        if (workflowRun && !github) {
+          await envelope.reply("Approval recorded, but cannot resume: GitHub App is not configured. Configure GITHUB_APP_ID and related env vars to enable build resumption.");
+          return;
+        }
         if (workflowRun && github) {
+          await envelope.reply(`Approved by ${sender}. Resuming build cycle...`);
           const [owner, repo] = workflowRun.triggerId.includes("/")
             ? workflowRun.triggerId.replace(/#\d+$/, "").split("/")
             : ["", ""];

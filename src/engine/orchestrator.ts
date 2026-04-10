@@ -217,7 +217,7 @@ export async function runBuildCycle(
         if (pendingApproval?.status === "approved") {
           // Resume from the phase after the gate
           const gate = pendingApproval.gate;
-          resumeFrom = gate === "post_architect" ? "executor" : "executor";
+          resumeFrom = gate === "post_architect" ? "executor" : "reviewer";
           console.log(`[orchestrator] Approval received for gate ${gate} — resuming from ${resumeFrom}`);
           db.resumeWorkflowRun(workflowId);
           await notify(
