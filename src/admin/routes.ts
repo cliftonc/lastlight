@@ -232,17 +232,13 @@ export function createAdminRoutes(
   });
 
   // Manually trigger a recheck of the host claude CLI auth.
-  // Calls checkApiUsage which clears the degraded state on success and
-  // notifies via the admin notifier on transition.
+  // Force-runs the check even if the state is currently degraded; the
+  // notifier only fires on actual state transitions, so calling this
+  // endpoint repeatedly while degraded does NOT spam the admin.
   app.post("/system-status/host-claude-auth/recheck", async (c) => {
     try {
       const { checkApiUsage } = await import("../cron/rate-limits.js");
-      // Clear existing degraded state so the cron actually runs the check
-      const existing = db.getSystemStatus("host-claude-auth");
-      if (existing && existing.state !== "ok") {
-        db.database.prepare(`DELETE FROM system_status WHERE component = ?`).run("host-claude-auth");
-      }
-      await checkApiUsage(db, config.adminNotifier);
+      await checkApiUsage(db, config.adminNotifier, { force: true });
       const status = db.getSystemStatus("host-claude-auth");
       return c.json({ status });
     } catch (err: any) {

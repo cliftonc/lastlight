@@ -22,11 +22,21 @@ export type AdminNotifier = (text: string) => Promise<void>;
  * - The capacity check creates a JSONL session file as a side effect — we
  *   delete it after parsing so it doesn't pollute the dashboard Sessions list.
  */
-export async function checkApiUsage(db: StateDb, notifyAdmin?: AdminNotifier): Promise<void> {
+export interface CheckApiUsageOptions {
+  /** Bypass the auth-degraded early return — used by manual rechecks. */
+  force?: boolean;
+}
+
+export async function checkApiUsage(
+  db: StateDb,
+  notifyAdmin?: AdminNotifier,
+  opts: CheckApiUsageOptions = {},
+): Promise<void> {
   // Halt early if we're already in a degraded state — operator must clear it
   // (e.g. after `claude /login` + recheck) before this cron resumes.
+  // The recheck endpoint passes force:true to bypass this.
   const existing = db.getSystemStatus(HOST_CLAUDE_AUTH_COMPONENT);
-  if (existing?.state === "degraded") {
+  if (!opts.force && existing?.state === "degraded") {
     console.log(`[usage] Skipping capacity check — host claude auth is degraded since ${existing.since}. Run claude /login on the host and trigger a recheck to resume.`);
     return;
   }
