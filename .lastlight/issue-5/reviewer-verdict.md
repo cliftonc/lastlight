@@ -66,6 +66,22 @@ There are 16 runner tests covering the main happy paths, guardrails BLOCKED, and
 
 `PHASE_ORDER`, the `Phase` type alias, and `phaseIndex()` are declared in the no-DB path but `PHASE_ORDER` and `phaseIndex` are used in the DB branch and the no-DB branch similarly. With the no-DB phase-match block removed (see #1), `phaseIndex` is only called from `completedIdx` in the DB path (lines 128, 196). The duplicate definitions in orchestrator vs. runner are redundant — if the orchestrator ever needs `resumeFrom` (to pass to the runner), these should become shared imports.
 
+## Re-review after Fix Cycle 1
+
+VERDICT: APPROVED
+
+All four issues raised in the original verdict were addressed:
+
+- **Important #1 (no-DB resume regression)**: The `current_phase:` marker parsing from agent output is restored in `orchestrator.ts:188-202`. A `startFrom?: string` parameter was added to `runWorkflow`, and the runner now prefers it over the DB-derived resume point (`runner.ts:194-206`).
+
+- **Important #2 (post-gate resume fragile)**: `orchestrator.ts:113-118` now calls `db.updateWorkflowPhase(workflowId, lastCompletedPhase, ...)` before `db.resumeWorkflowRun()`, so `getWorkflowRun` returns the actual last completed phase and the runner computes `resumeFrom` correctly without relying on per-phase dedup.
+
+- **Suggestion #3 (pr-fix.md CI instruction)**: `workflows/prompts/pr-fix.md` now has a `{{#if ciSection}}` block restoring the CI-priority instruction.
+
+- **Suggestion #4 (no approval gate tests)**: Three new tests added in `runner.test.ts` covering gate pause, DB-derived resume, and `startFrom` override. All 144 tests pass, `tsc --noEmit` clean.
+
+Nit #5 (dead local variables in orchestrator) was not addressed but was optional — no concern for merge.
+
 ## Test Results
 
 ```
