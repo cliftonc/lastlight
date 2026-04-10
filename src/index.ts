@@ -164,6 +164,51 @@ async function main() {
       adminNotifier: slackConnector
         ? (msg: string) => slackConnector!.sendToDeliveryChannel(msg)
         : undefined,
+      resumeWorkflow: async (workflowRun, sender) => {
+        if (!github) {
+          console.warn(`[admin] Cannot resume workflow ${workflowRun.id}: GitHub App not configured`);
+          return;
+        }
+        const [owner, repo] = workflowRun.triggerId.includes("/")
+          ? workflowRun.triggerId.replace(/#\d+$/, "").split("/")
+          : ["", ""];
+        const issueNumber = workflowRun.issueNumber;
+        if (!owner || !repo || !issueNumber) {
+          console.warn(`[admin] Cannot resume workflow ${workflowRun.id}: missing owner/repo/issueNumber`);
+          return;
+        }
+        db.resumeWorkflowRun(workflowRun.id);
+        console.log(`[admin] Resuming build cycle for ${owner}/${repo}#${issueNumber} after dashboard approval by ${sender}`);
+        runBuildCycle(
+          {
+            owner,
+            repo,
+            issueNumber,
+            issueTitle: `Issue #${issueNumber}`,
+            issueBody: "",
+            sender,
+          },
+          {
+            mcpConfigPath,
+            model: config.model,
+            maxTurns: config.maxTurns,
+            stateDir: config.stateDir,
+            sandboxDir: config.sandboxDir,
+          },
+          {
+            postComment: async (msg) => {
+              try { await github.postComment(owner, repo, issueNumber, msg); }
+              catch (err: any) { console.error(`[admin] Failed to post comment: ${err.message}`); }
+            },
+            onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
+            onPhaseEnd: async (phase, result) =>
+              console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
+          },
+          db,
+          config.models,
+          config.approval,
+        ).catch((err) => console.error(`[admin] Resume failed:`, err));
+      },
     });
     console.log(`[admin] Dashboard mounted at /admin`);
   }

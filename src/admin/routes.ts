@@ -3,7 +3,7 @@ import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { streamSSE } from "hono/streaming";
 import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
-import type { StateDb } from "../state/db.js";
+import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
 import { listRunningContainers, killContainer } from "./docker.js";
 import { authMiddleware, createToken, verifyToken } from "./auth.js";
@@ -15,6 +15,8 @@ export interface AdminConfig {
   adminSecret: string;
   /** Optional admin notifier (e.g. Slack) used by the recheck endpoint */
   adminNotifier?: (msg: string) => Promise<void>;
+  /** Optional callback to actively resume a paused workflow after dashboard approval */
+  resumeWorkflow?: (workflowRun: WorkflowRun, sender: string) => Promise<void>;
 }
 
 /**
@@ -326,15 +328,16 @@ export function createAdminRoutes(
     if (!approval) return c.json({ error: "approval not found" }, 404);
     if (approval.status !== "pending") return c.json({ error: `already ${approval.status}` }, 400);
     db.respondToApproval(id, body.decision, "admin", body.reason);
+    const workflowRun = db.getWorkflowRun(approval.workflowRunId);
     if (body.decision === "rejected") {
-      const workflowRun = db.getWorkflowRun(approval.workflowRunId);
       if (workflowRun) {
         db.finishWorkflowRun(approval.workflowRunId, "failed", `Rejected via dashboard: ${body.reason || "no reason"}`);
       }
+    } else if (body.decision === "approved" && workflowRun && config.resumeWorkflow) {
+      config.resumeWorkflow(workflowRun, "admin").catch((err) => {
+        console.error(`[admin] Failed to resume workflow ${workflowRun.id}:`, err);
+      });
     }
-    // Known limitation: dashboard approvals record the decision in the DB but do not
-    // actively resume the paused workflow. The next inbound event or server restart will
-    // pick up the approved status and resume automatically via the orchestrator's resume path.
     return c.json({ status: body.decision });
   });
 
