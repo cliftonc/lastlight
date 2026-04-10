@@ -8,6 +8,7 @@
     "dashboard"
   ],
   "scripts": {
+    "test": "vitest run",
     "build": "tsc",
     "build:dashboard": "npm run build -w dashboard",
     "build:all": "tsc && npm run build -w dashboard",

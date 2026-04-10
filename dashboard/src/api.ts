@@ -48,6 +48,28 @@ export interface Execution {
   duration_ms: number | null;
 }
 
+export interface PhaseHistoryEntry {
+  phase: string;
+  timestamp: string;
+  success: boolean;
+  summary?: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflowName: string;
+  triggerId: string;
+  repo?: string;
+  issueNumber?: number;
+  currentPhase: string;
+  phaseHistory: PhaseHistoryEntry[];
+  status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
+  context?: Record<string, unknown>;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+}
+
 export interface ContainerInfo {
   id: string;
   name: string;
@@ -135,4 +157,13 @@ export const api = {
   killContainer: (name: string) =>
     req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
   rateLimits: () => req<{ limits: RateLimit[] }>("/rate-limits"),
+  workflowRuns: (opts: { limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    const qss = qs.toString();
+    return req<{ workflowRuns: WorkflowRun[] }>(`/workflow-runs${qss ? `?${qss}` : ""}`);
+  },
+  workflowRun: (id: string) => req<{ workflowRun: WorkflowRun }>(`/workflow-runs/${id}`),
+  cancelWorkflowRun: (id: string) =>
+    req<{ cancelled: string }>(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
 };

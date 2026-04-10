@@ -286,5 +286,31 @@ export function createAdminRoutes(
     return c.json({ executions });
   });
 
+  // Workflow runs
+  app.get("/workflow-runs", (c) => {
+    const rawLimit = c.req.query("limit");
+    const limit = Math.min(Math.max(parseInt(rawLimit ?? "20", 10) || 20, 1), 100);
+    const runs = db.recentWorkflowRuns(limit);
+    return c.json({ workflowRuns: runs });
+  });
+
+  app.get("/workflow-runs/:id", (c) => {
+    const id = c.req.param("id");
+    const run = db.getWorkflowRun(id);
+    if (!run) return c.json({ error: "workflow run not found" }, 404);
+    return c.json({ workflowRun: run });
+  });
+
+  app.post("/workflow-runs/:id/cancel", (c) => {
+    const id = c.req.param("id");
+    const run = db.getWorkflowRun(id);
+    if (!run) return c.json({ error: "workflow run not found" }, 404);
+    if (run.status !== "running" && run.status !== "paused") {
+      return c.json({ error: `cannot cancel a run with status '${run.status}'` }, 400);
+    }
+    db.cancelWorkflowRun(id);
+    return c.json({ cancelled: id });
+  });
+
   return app;
 }
