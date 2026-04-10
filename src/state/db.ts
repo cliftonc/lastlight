@@ -33,6 +33,7 @@ export interface WorkflowRun {
   phaseHistory: PhaseHistoryEntry[];
   status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
   context?: Record<string, unknown>;
+  nodeStatuses?: Record<string, "pending" | "running" | "succeeded" | "failed" | "skipped">;
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;
@@ -133,6 +134,13 @@ export class StateDb {
       CREATE INDEX IF NOT EXISTS idx_approvals_workflow ON workflow_approvals(workflow_run_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON workflow_approvals(status);
     `);
+
+    // Add node_statuses column for DAG parallelism (safe for existing DBs)
+    try {
+      this.db.exec(`ALTER TABLE workflow_runs ADD COLUMN node_statuses TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
   }
 
   recordStart(record: Omit<ExecutionRecord, "finishedAt" | "success" | "error" | "turns" | "durationMs">): void {
@@ -537,6 +545,20 @@ export class StateDb {
     `).run(status, respondedBy, response ?? null, now, id);
   }
 
+  /** Update a single node's status in the workflow run's nodeStatuses map. */
+  updateNodeStatus(
+    workflowId: string,
+    nodeName: string,
+    status: "pending" | "running" | "succeeded" | "failed" | "skipped",
+  ): void {
+    const now = new Date().toISOString();
+    const row = this.db.prepare(`SELECT node_statuses FROM workflow_runs WHERE id = ?`).get(workflowId) as { node_statuses: string | null } | undefined;
+    if (!row) return;
+    const statuses = row.node_statuses ? JSON.parse(row.node_statuses) as Record<string, string> : {};
+    statuses[nodeName] = status;
+    this.db.prepare(`UPDATE workflow_runs SET node_statuses = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(statuses), now, workflowId);
+  }
+
   private deserializeApproval(row: Record<string, unknown>): WorkflowApproval {
     return {
       id: row.id as string,
@@ -563,6 +585,7 @@ export class StateDb {
       phaseHistory: JSON.parse(row.phase_history as string) as PhaseHistoryEntry[],
       status: row.status as WorkflowRun["status"],
       context: row.context ? JSON.parse(row.context as string) as Record<string, unknown> : undefined,
+      nodeStatuses: row.node_statuses ? JSON.parse(row.node_statuses as string) as Record<string, "pending" | "running" | "succeeded" | "failed" | "skipped"> : undefined,
       startedAt: row.started_at as string,
       updatedAt: row.updated_at as string,
       finishedAt: row.finished_at as string | undefined,

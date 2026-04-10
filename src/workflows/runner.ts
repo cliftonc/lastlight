@@ -11,6 +11,7 @@ import type { BuildWorkflowDefinition } from "./schema.js";
 import { loadPromptTemplate } from "./loader.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
 import { evalUntilExpression } from "./loop-eval.js";
+import { buildDag, getReadyNodes, getNodesToSkip, isComplete, type DagNode } from "./dag.js";
 
 export interface ApprovalGateConfig {
   postArchitect: boolean;
@@ -141,6 +142,11 @@ function phaseIndex(phase: string): number {
 
 // ── Main workflow runner ─────────────────────────────────────────────────────
 
+/** Returns true if any phase declares explicit dependencies — triggers DAG execution path. */
+function hasDependencies(definition: BuildWorkflowDefinition): boolean {
+  return definition.phases.some((p) => p.depends_on && p.depends_on.length > 0);
+}
+
 /**
  * Run a build workflow defined by a YAML definition.
  * Interprets phases, approval gates, and the reviewer loop generically.
@@ -217,6 +223,13 @@ export async function runWorkflow(
   };
 
   // ── Execute phases ────────────────────────────────────────────────────────
+
+  if (hasDependencies(definition)) {
+    return runDagWorkflow(
+      definition, ctx, config, callbacks, db, models, approvalConfig, workflowId,
+      { phases, triggerId, notify, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow },
+    );
+  }
 
   for (const phase of definition.phases) {
     const { name: phaseName, type: phaseType = "agent" } = phase;
@@ -752,6 +765,326 @@ export async function runWorkflow(
   }
 
   return { success: prSuccess, phases, prNumber };
+}
+
+/** Shared runner context threaded into DAG execution (avoids re-deriving these). */
+interface DagRunnerCtx {
+  phases: PhaseResult[];
+  triggerId: string;
+  notify: (msg: string) => Promise<void>;
+  onStart: (phase: string) => Promise<void>;
+  onEnd: (phase: string, result: PhaseResult) => Promise<void>;
+  modelFor: (taskType: string) => string | undefined;
+  renderPrompt: (promptPath: string, extraCtx?: Partial<TemplateContext>) => string;
+  persistPhase: (phase: string, summary?: string) => void;
+  failWorkflow: (errorMsg?: string) => void;
+}
+
+/**
+ * DAG-based workflow execution. Called when any phase declares `depends_on`.
+ * Runs independent phases concurrently via Promise.allSettled.
+ */
+async function runDagWorkflow(
+  definition: BuildWorkflowDefinition,
+  ctx: TemplateContext,
+  config: ExecutorConfig,
+  callbacks: RunnerCallbacks,
+  db: StateDb | undefined,
+  models: ModelConfig | undefined,
+  approvalConfig: ApprovalGateConfig | undefined,
+  workflowId: string | undefined,
+  runnerCtx: DagRunnerCtx,
+): Promise<WorkflowResult> {
+  const { phases, triggerId, notify, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow } = runnerCtx;
+  const { taskId } = ctx;
+
+  const dag = buildDag(definition.phases);
+  const phaseMap = new Map(definition.phases.map((p) => [p.name, p]));
+  // phase outputs: keyed by output_var name
+  const outputs: Record<string, string> = {};
+
+  /**
+   * Execute a single standard agent phase (no loop). Returns PhaseResult and
+   * whether the workflow should pause (approval gate).
+   */
+  async function executeSinglePhase(
+    phase: NonNullable<ReturnType<typeof phaseMap.get>>,
+    phaseName: string,
+  ): Promise<{ result: PhaseResult; paused?: boolean }> {
+    // Build context with current phase outputs for ${name.output} substitution
+    const phaseCtx: Partial<TemplateContext> = { phaseOutputs: { ...outputs } };
+    const prompt = renderPrompt(phase.prompt!, phaseCtx);
+    const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
+    const model = modelRaw || modelFor(phaseName);
+
+    const pr = await runPhase(phaseName, `${taskId}-${phaseName}`, triggerId, prompt, config, db, model);
+
+    if (pr.skipped) {
+      return { result: { phase: phaseName, success: true, output: "Already completed" } };
+    }
+
+    const result: PhaseResult = { phase: phaseName, ...pickResult(pr.result) };
+
+    if (!pr.result.success) {
+      return { result };
+    }
+
+    // Check on_output rules
+    if (phase.on_output?.contains_BLOCKED && (pr.result.output?.toUpperCase() || "").includes("BLOCKED")) {
+      const rule = phase.on_output.contains_BLOCKED;
+      if (rule.action === "fail") {
+        db?.markLatestAsFailed(`build:${phaseName}`, triggerId, "BLOCKED");
+        failWorkflow("guardrails BLOCKED");
+        await notify(`**${rule.message || "Guardrails: BLOCKED"}**`);
+        return { result: { phase: phaseName, success: false, output: pr.result.output ?? "", error: "BLOCKED" } };
+      }
+    }
+
+    // Approval gate
+    if (phase.approval_gate && approvalConfig && db && workflowId) {
+      const gateKey = phase.approval_gate;
+      const postGate =
+        gateKey === "post_architect"
+          ? approvalConfig.postArchitect
+          : gateKey === "post_reviewer"
+            ? approvalConfig.postReviewer
+            : false;
+      if (postGate) {
+        const approvalId = randomUUID();
+        db.createApproval({
+          id: approvalId,
+          workflowRunId: workflowId,
+          gate: gateKey,
+          summary: `${phaseName} complete.`,
+          requestedBy: ctx.sender,
+          createdAt: new Date().toISOString(),
+        });
+        db.updateWorkflowPhase(workflowId, "waiting_approval", {
+          phase: "waiting_approval",
+          timestamp: new Date().toISOString(),
+          success: true,
+          summary: `Waiting for approval: ${gateKey} (${approvalId})`,
+        });
+        db.pauseWorkflowRun(workflowId);
+        await notify(
+          `**${phaseName} complete** — approval required to continue.\n\n` +
+            `**To proceed:** comment \`@last-light approve\`\n` +
+            `**To abort:** comment \`@last-light reject [reason]\``,
+        );
+        return { result, paused: true };
+      }
+    }
+
+    persistPhase(phaseName);
+    return { result };
+  }
+
+  // ── Main DAG execution loop ────────────────────────────────────────────────
+
+  while (!isComplete(dag)) {
+    // First, mark nodes that should be skipped (trigger rule fails but deps are terminal)
+    const toSkip = getNodesToSkip(dag);
+    for (const node of toSkip) {
+      node.status = "skipped";
+      phases.push({ phase: node.name, success: true, output: "Skipped (trigger rule not satisfied)" });
+      if (db && workflowId) {
+        db.updateNodeStatus(workflowId, node.name, "skipped");
+      }
+    }
+
+    const ready = getReadyNodes(dag);
+
+    if (ready.length === 0) {
+      if (toSkip.length === 0) break; // stuck (shouldn't happen in a valid DAG)
+      continue; // only had skips — loop to process downstream
+    }
+
+    // Mark all ready nodes as running before dispatching
+    for (const node of ready) {
+      node.status = "running";
+      if (db && workflowId) {
+        db.updateNodeStatus(workflowId, node.name, "running");
+      }
+    }
+
+    // Dispatch all ready nodes concurrently
+    const nodePromises = ready.map(async (node) => {
+      const phase = phaseMap.get(node.name)!;
+      await onStart(node.name);
+
+      // Context phase — immediate
+      if (phase.type === "context" || !phase.type) {
+        const r: PhaseResult = { phase: node.name, success: true, output: "Context assembled" };
+        await onEnd(node.name, r);
+        return { node, result: r, paused: false, alreadyPushed: true };
+      }
+
+      // Phase with no prompt — skip
+      if (!phase.prompt) {
+        console.warn(`[dag] Phase "${node.name}" has type=agent but no prompt — skipping`);
+        const r: PhaseResult = { phase: node.name, success: true, output: "Skipped (no prompt)" };
+        return { node, result: r, paused: false, alreadyPushed: false };
+      }
+
+      // Loop phase (reviewer-style) — run sequentially as a single DAG node
+      if (phase.loop) {
+        const loop = phase.loop;
+        const MAX_CYCLES = loop.max_cycles;
+        let approved = false;
+        let fixCycles = 0;
+
+        while (!approved && fixCycles <= MAX_CYCLES) {
+          const reviewLabel = fixCycles === 0 ? node.name : `${node.name}_${fixCycles + 1}`;
+          const reviewPromptPath = fixCycles === 0 ? phase.prompt : loop.on_request_changes.re_review_prompt;
+          const reviewPrompt = renderPrompt(reviewPromptPath, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
+          const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
+          const reviewModel = reviewModelRaw || modelFor("reviewer");
+
+          const rr = await runPhase(reviewLabel, `${taskId}-${reviewLabel}`, triggerId, reviewPrompt, config, db, reviewModel);
+          if (rr.skipped) {
+            approved = true;
+            phases.push({ phase: reviewLabel, success: true, output: "Already completed" });
+            break;
+          }
+
+          phases.push({ phase: reviewLabel, ...pickResult(rr.result) });
+          await onEnd(reviewLabel, phases[phases.length - 1]);
+
+          const reviewerOutput = (rr.result.output || "").trim();
+          const verdictMarker = reviewerOutput.match(/^\s*VERDICT:\s*(APPROVED|REQUEST_CHANGES)\s*$/im);
+          const isApproved = verdictMarker
+            ? verdictMarker[1].toUpperCase() === "APPROVED"
+            : !(/\bREQUEST_CHANGES\b/.test(reviewerOutput.toUpperCase())) && /^APPROVED\b/.test(reviewerOutput.toUpperCase());
+
+          if (isApproved) {
+            approved = true;
+          } else if (fixCycles < MAX_CYCLES) {
+            fixCycles++;
+            const fixLabel = `fix_loop_${fixCycles}`;
+            const fixPromptRendered = renderPrompt(loop.on_request_changes.fix_prompt, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
+            const fixModelRaw = loop.on_request_changes.fix_model ? renderTemplate(loop.on_request_changes.fix_model, ctx) : undefined;
+            const fixModel = fixModelRaw || modelFor("fix");
+            const fr = await runPhase(fixLabel, `${taskId}-fix${fixCycles}`, triggerId, fixPromptRendered, config, db, fixModel);
+            if (!fr.skipped) {
+              phases.push({ phase: fixLabel, ...pickResult(fr.result) });
+              await onEnd(fixLabel, phases[phases.length - 1]);
+            }
+          } else {
+            break;
+          }
+        }
+
+        const loopResult: PhaseResult = { phase: node.name, success: approved, output: approved ? "Approved" : "Request changes" };
+        (ctx as Record<string, unknown>)["_approved"] = approved;
+        (ctx as Record<string, unknown>)["_fixCycles"] = fixCycles;
+        return { node, result: loopResult, paused: false, alreadyPushed: true };
+      }
+
+      // Generic loop phase
+      if (phase.generic_loop) {
+        const loop = phase.generic_loop;
+        const MAX_ITER = loop.max_iterations;
+        const MAX_PREV_OUTPUT_BYTES = 10 * 1024;
+        let iteration = 0;
+        let complete = false;
+        let previousOutput = "";
+
+        while (!complete && iteration < MAX_ITER) {
+          iteration++;
+          const iterLabel = `${node.name}_iter_${iteration}`;
+          const iterCtx: Partial<TemplateContext> = {
+            iteration,
+            maxIterations: MAX_ITER,
+            previousOutput: loop.fresh_context ? "" : previousOutput,
+            phaseOutputs: { ...outputs },
+          };
+          const iterPrompt = renderPrompt(phase.prompt, iterCtx);
+          const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
+          const model = modelRaw || modelFor(node.name);
+
+          const ir = await runPhase(iterLabel, `${taskId}-${iterLabel}`, triggerId, iterPrompt, config, db, model);
+          if (ir.skipped) { complete = true; break; }
+
+          phases.push({ phase: iterLabel, ...pickResult(ir.result) });
+          await onEnd(iterLabel, phases[phases.length - 1]);
+
+          if (!ir.result.success) {
+            failWorkflow(ir.result.error);
+            return { node, result: { phase: node.name, success: false, output: "", error: ir.result.error }, paused: false, alreadyPushed: true };
+          }
+
+          const iterOutput = ir.result.output || "";
+          if (!loop.fresh_context) {
+            const combined = previousOutput ? `${previousOutput}\n${iterOutput}` : iterOutput;
+            previousOutput = combined.length > MAX_PREV_OUTPUT_BYTES ? combined.slice(-MAX_PREV_OUTPUT_BYTES) : combined;
+          }
+
+          let conditionMet = false;
+          if (loop.until) {
+            conditionMet = evalUntilExpression(loop.until, { output: iterOutput, ...Object.fromEntries(Object.entries(ctx).filter(([, v]) => typeof v === "string").map(([k, v]) => [k, v as string])) });
+          }
+          if (!conditionMet && loop.until_bash) {
+            try { execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe", cwd: config.sandboxDir ?? config.cwd }); conditionMet = true; }
+            catch { conditionMet = false; }
+          }
+          if (conditionMet) { complete = true; }
+        }
+
+        if (!complete) {
+          await notify(`**${node.name}** reached max iterations (${MAX_ITER}) without satisfying the completion condition.`);
+        }
+        (ctx as Record<string, unknown>)[`_${node.name}_loopCompleted`] = complete;
+        (ctx as Record<string, unknown>)[`_${node.name}_iterations`] = iteration;
+        return { node, result: { phase: node.name, success: true, output: previousOutput || "" }, paused: false, alreadyPushed: true };
+      }
+
+      // Standard agent phase
+      const { result, paused } = await executeSinglePhase(phase, node.name);
+      await onEnd(node.name, result);
+      return { node, result, paused: paused ?? false, alreadyPushed: false };
+    });
+
+    const settled = await Promise.allSettled(nodePromises);
+
+    let anyPaused = false;
+    for (const settledItem of settled) {
+      if (settledItem.status === "rejected") {
+        console.error("[dag] Phase promise rejected:", settledItem.reason);
+        continue;
+      }
+
+      const { node, result, paused, alreadyPushed } = settledItem.value;
+
+      if (!alreadyPushed) {
+        phases.push(result);
+      }
+
+      if (paused) {
+        anyPaused = true;
+        node.status = "succeeded"; // treat paused node as succeeded for DAG purposes
+        continue;
+      }
+
+      node.status = result.success ? "succeeded" : "failed";
+      if (db && workflowId) {
+        db.updateNodeStatus(workflowId, node.name, node.status);
+      }
+
+      // Store output_var if specified
+      const phaseDef = phaseMap.get(node.name)!;
+      if (phaseDef.output_var && result.output) {
+        outputs[phaseDef.output_var] = result.output;
+      }
+    }
+
+    if (anyPaused) {
+      return { success: true, phases, paused: true };
+    }
+  }
+
+  // Determine overall success
+  const anyFailed = phases.some((p) => !p.success);
+  return { success: !anyFailed, phases };
 }
 
 /** Check if the request context represents a bootstrap task. */

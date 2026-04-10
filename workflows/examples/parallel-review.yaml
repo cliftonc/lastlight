@@ -1,0 +1,36 @@
+type: build
+name: parallel-review
+description: >
+  Parallel architect + security review, then concurrent executor + linter,
+  with a final merge phase. Demonstrates DAG parallelism via depends_on.
+
+phases:
+  - name: phase_0
+    type: context
+
+  - name: architect
+    type: agent
+    prompt: prompts/architect.md
+    depends_on: [phase_0]
+
+  - name: security_review
+    type: agent
+    prompt: prompts/security-review.md
+    depends_on: [phase_0]
+
+  - name: executor
+    type: agent
+    prompt: prompts/executor.md
+    depends_on: [architect, security_review]
+
+  - name: linter
+    type: agent
+    prompt: prompts/linter.md
+    depends_on: [executor]
+
+  - name: pr
+    type: agent
+    prompt: prompts/pr.md
+    depends_on: [executor, linter]
+    on_success:
+      set_phase: complete

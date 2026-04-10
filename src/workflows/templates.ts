@@ -49,6 +49,9 @@ export interface TemplateContext {
   maxIterations?: number;
   previousOutput?: string;
 
+  // Optional: phase outputs from DAG workflow (${phaseName.output} substitution)
+  phaseOutputs?: Record<string, string>;
+
   // Arbitrary extra context
   [key: string]: unknown;
 }
@@ -67,6 +70,14 @@ export function slugify(text: string): string {
  */
 export function renderTemplate(template: string, ctx: TemplateContext): string {
   let result = template;
+
+  // 0. Phase output substitution: ${phaseName.output} → phaseOutputs[phaseName]
+  if (ctx.phaseOutputs) {
+    const phaseOutputs = ctx.phaseOutputs;
+    result = result.replace(/\$\{(\w+)\.output\}/g, (_match, phaseName: string) => {
+      return phaseOutputs[phaseName] ?? "";
+    });
+  }
 
   // 1. Conditional blocks: {{#if varName}}...{{/if}}
   result = result.replace(
