@@ -8,6 +8,7 @@
     "dashboard"
   ],
   "scripts": {
+    "test": "vitest run",
     "build": "tsc",
     "build:dashboard": "npm run build -w dashboard",
     "build:all": "tsc && npm run build -w dashboard",
@@ -32,6 +33,7 @@
     "@types/node": "^22.0.0",
     "concurrently": "^9.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
   }
 }

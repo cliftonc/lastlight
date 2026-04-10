@@ -3,6 +3,28 @@ import { resolve } from "path";
 
 const DEFAULT_DB_PATH = "lastlight.db";
 
+export interface PhaseHistoryEntry {
+  phase: string;
+  timestamp: string;
+  success: boolean;
+  summary?: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflowName: string;
+  triggerId: string;
+  repo?: string;
+  issueNumber?: number;
+  currentPhase: string;
+  phaseHistory: PhaseHistoryEntry[];
+  status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
+  context?: Record<string, unknown>;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+}
+
 export interface ExecutionRecord {
   id: string;
   triggerType: "webhook" | "cron" | "chat" | "api";
@@ -65,6 +87,23 @@ export class StateDb {
 
       CREATE INDEX IF NOT EXISTS idx_executions_trigger ON executions(trigger_type, trigger_id);
       CREATE INDEX IF NOT EXISTS idx_executions_skill ON executions(skill, started_at);
+
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id TEXT PRIMARY KEY,
+        workflow_name TEXT NOT NULL,
+        trigger_id TEXT NOT NULL,
+        repo TEXT,
+        issue_number INTEGER,
+        current_phase TEXT NOT NULL,
+        phase_history TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'running',
+        context TEXT,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_trigger ON workflow_runs(trigger_id, status);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
     `);
   }
 
@@ -293,6 +332,109 @@ export class StateDb {
     }
 
     return { total_executions: total, today_count: todayCount, by_skill, by_trigger, running };
+  }
+
+  // ── Workflow Runs ──────────────────────────────────────────────
+
+  /** Create a new workflow run record */
+  createWorkflowRun(run: Omit<WorkflowRun, "phaseHistory" | "updatedAt">): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO workflow_runs (id, workflow_name, trigger_id, repo, issue_number, current_phase, phase_history, status, context, started_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)
+    `).run(
+      run.id,
+      run.workflowName,
+      run.triggerId,
+      run.repo ?? null,
+      run.issueNumber ?? null,
+      run.currentPhase,
+      run.status,
+      run.context ? JSON.stringify(run.context) : null,
+      run.startedAt,
+      now,
+    );
+  }
+
+  /** Update the current phase and append to phase history */
+  updateWorkflowPhase(id: string, phase: string, entry: PhaseHistoryEntry): void {
+    const now = new Date().toISOString();
+    const row = this.db.prepare(`SELECT phase_history FROM workflow_runs WHERE id = ?`).get(id) as { phase_history: string } | undefined;
+    if (!row) return;
+    const history: PhaseHistoryEntry[] = JSON.parse(row.phase_history);
+    history.push(entry);
+    this.db.prepare(`
+      UPDATE workflow_runs SET current_phase = ?, phase_history = ?, updated_at = ? WHERE id = ?
+    `).run(phase, JSON.stringify(history), now, id);
+  }
+
+  /** Mark a workflow run as finished */
+  finishWorkflowRun(id: string, status: "succeeded" | "failed" | "cancelled", error?: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE workflow_runs SET status = ?, finished_at = ?, updated_at = ?, context = CASE
+        WHEN ? IS NOT NULL THEN json_patch(COALESCE(context, '{}'), json_object('error', ?))
+        ELSE context
+      END WHERE id = ?
+    `).run(status, now, now, error ?? null, error ?? null, id);
+  }
+
+  /** Get a single workflow run by ID */
+  getWorkflowRun(id: string): WorkflowRun | null {
+    const row = this.db.prepare(`SELECT * FROM workflow_runs WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? this.deserializeWorkflowRun(row) : null;
+  }
+
+  /** Find the most recent active (running or paused) workflow run for a trigger */
+  getWorkflowRunByTrigger(triggerId: string): WorkflowRun | null {
+    const row = this.db.prepare(`
+      SELECT * FROM workflow_runs
+      WHERE trigger_id = ? AND status IN ('running', 'paused')
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).get(triggerId) as Record<string, unknown> | undefined;
+    return row ? this.deserializeWorkflowRun(row) : null;
+  }
+
+  /** List all active (running or paused) workflow runs */
+  activeWorkflowRuns(): WorkflowRun[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM workflow_runs WHERE status IN ('running', 'paused') ORDER BY started_at DESC
+    `).all() as Record<string, unknown>[];
+    return rows.map((r) => this.deserializeWorkflowRun(r));
+  }
+
+  /** List recent workflow runs, ordered by start time descending */
+  recentWorkflowRuns(limit = 20): WorkflowRun[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM workflow_runs ORDER BY started_at DESC LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map((r) => this.deserializeWorkflowRun(r));
+  }
+
+  /** Cancel a workflow run */
+  cancelWorkflowRun(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE workflow_runs SET status = 'cancelled', updated_at = ?, finished_at = ? WHERE id = ?
+    `).run(now, now, id);
+  }
+
+  private deserializeWorkflowRun(row: Record<string, unknown>): WorkflowRun {
+    return {
+      id: row.id as string,
+      workflowName: row.workflow_name as string,
+      triggerId: row.trigger_id as string,
+      repo: row.repo as string | undefined,
+      issueNumber: row.issue_number as number | undefined,
+      currentPhase: row.current_phase as string,
+      phaseHistory: JSON.parse(row.phase_history as string) as PhaseHistoryEntry[],
+      status: row.status as WorkflowRun["status"],
+      context: row.context ? JSON.parse(row.context as string) as Record<string, unknown> : undefined,
+      startedAt: row.started_at as string,
+      updatedAt: row.updated_at as string,
+      finishedAt: row.finished_at as string | undefined,
+    };
   }
 
   /** Expose the underlying Database instance (for SessionManager, etc.) */

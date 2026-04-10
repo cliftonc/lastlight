@@ -1,6 +1,7 @@
 import type { ExecutorConfig, ExecutionResult } from "./executor.js";
 import { executeAgent } from "./executor.js";
 import type { StateDb } from "../state/db.js";
+import type { PhaseHistoryEntry } from "../state/db.js";
 import type { ModelConfig } from "../config.js";
 import { resolveModel } from "../config.js";
 import { listRunningContainers } from "../admin/docker.js";
@@ -157,40 +158,96 @@ export async function runBuildCycle(
   console.log(`[orchestrator] Build cycle for ${owner}/${repo}#${issueNumber}`);
   await notify(`Acknowledged — starting build cycle for #${issueNumber}. Checking for prior progress...`);
 
-  // ── Resume check ────────────────────────────────────────────────
-  // Check if a branch already exists with status.md to resume from.
+  // ── Resume check (DB-driven) ─────────────────────────────────────
   let resumeFrom: Phase = "phase_0";
+  let workflowId: string;
 
-  const resumeResult = await executeAgent(
-    buildResumeCheckPrompt(request, branch),
-    config, { taskId: `${taskId}-resume-check` }
-  );
+  const triggerId = `${owner}/${repo}#${issueNumber}`;
+  const modelFor = (taskType: string) => models ? resolveModel(models, taskType) : undefined;
 
-  if (resumeResult.success && resumeResult.output) {
-    const output = resumeResult.output;
-    // Parse current_phase from output
-    const phaseMatch = output.match(/current_phase:\s*(\S+)/);
-    if (phaseMatch) {
-      const completedPhase = phaseMatch[1];
+  if (db) {
+    const existingRun = db.getWorkflowRunByTrigger(triggerId);
+
+    if (existingRun) {
+      workflowId = existingRun.id;
+      const completedPhase = existingRun.currentPhase;
+
+      if (completedPhase === "complete") {
+        await notify(`Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`);
+        return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
+      }
+
       const completedIdx = phaseIndex(completedPhase);
       if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
         resumeFrom = PHASE_ORDER[completedIdx + 1];
-        console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase})`);
+        console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase}) — DB run ${workflowId}`);
         await notify(
           `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
           `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
         );
       }
+    } else {
+      // No active run — create one. (Failed/cancelled runs are not resumed; a new run is created.)
+      workflowId = randomUUID();
+      db.createWorkflowRun({
+        id: workflowId,
+        workflowName: "build",
+        triggerId,
+        repo,
+        issueNumber,
+        currentPhase: "phase_0",
+        status: "running",
+        context: { branch, taskId, models: models as Record<string, unknown> | undefined },
+        startedAt: new Date().toISOString(),
+      });
+      console.log(`[orchestrator] Created workflow run ${workflowId}`);
     }
+  } else {
+    // No DB — fall back to agent-based resume check
+    workflowId = randomUUID();
+    const resumeResult = await executeAgent(
+      buildResumeCheckPrompt(request, branch),
+      config, { taskId: `${taskId}-resume-check` }
+    );
 
-    // Check if already complete
-    if (output.includes("current_phase: complete")) {
-      await notify(`Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`);
-      return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
+    if (resumeResult.success && resumeResult.output) {
+      const output = resumeResult.output;
+      const phaseMatch = output.match(/current_phase:\s*(\S+)/);
+      if (phaseMatch) {
+        const completedPhase = phaseMatch[1];
+        const completedIdx = phaseIndex(completedPhase);
+        if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
+          resumeFrom = PHASE_ORDER[completedIdx + 1];
+          console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase})`);
+          await notify(
+            `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
+            `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
+          );
+        }
+      }
+      if (output.includes("current_phase: complete")) {
+        await notify(`Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`);
+        return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
+      }
     }
   }
 
   const shouldRun = (phase: Phase) => phaseIndex(phase) >= phaseIndex(resumeFrom);
+
+  /** Helper to persist a successful phase transition to the workflow run */
+  const persistPhase = (phase: string, summary?: string) => {
+    if (db && workflowId) {
+      const entry: PhaseHistoryEntry = { phase, timestamp: new Date().toISOString(), success: true, summary };
+      db.updateWorkflowPhase(workflowId, phase, entry);
+    }
+  };
+
+  /** Helper to mark the workflow run as failed */
+  const failWorkflow = (errorMsg?: string) => {
+    if (db && workflowId) {
+      db.finishWorkflowRun(workflowId, "failed", errorMsg);
+    }
+  };
 
   // ── Phase 0: Acknowledge + Context Assembly ────────────────────
 
@@ -207,9 +264,6 @@ Branch: ${branch}
     phases.push({ phase: "phase_0", success: true, output: "Context assembled" });
     await onEnd("phase_0", phases[phases.length - 1]);
   }
-
-  const triggerId = `${owner}/${repo}#${issueNumber}`;
-  const modelFor = (taskType: string) => models ? resolveModel(models, taskType) : undefined;
 
   // ── Guardrails Check ──────────────────────────────────────────
 
@@ -234,6 +288,7 @@ Branch: ${branch}
           `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
           `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\``
         );
+        failWorkflow("guardrails BLOCKED");
         return { success: false, phases };
       }
 
@@ -241,9 +296,11 @@ Branch: ${branch}
         if (!isTerminated(gr.result.error)) {
           await notify(`**Guardrails check failed** — unable to complete.`);
         }
+        failWorkflow(gr.result.error);
         return { success: false, phases };
       }
 
+      persistPhase("guardrails", "READY");
       await notify(`**Guardrails check: READY** — verified. Starting architect analysis...`);
     }
   }
@@ -269,9 +326,11 @@ Branch: ${branch}
         if (!isTerminated(ar.result.error)) {
           await notify(`Architect analysis failed — unable to complete analysis.`);
         }
+        failWorkflow(ar.result.error);
         return { success: false, phases };
       }
 
+      persistPhase("architect");
       await notify(
         `**Architect analysis complete.**\n` +
         `- Branch: \`${branch}\`\n` +
@@ -304,9 +363,11 @@ Branch: ${branch}
         if (!isTerminated(er.result.error)) {
           await notify(`Executor implementation failed — unable to complete.`);
         }
+        failWorkflow(er.result.error);
         return { success: false, phases };
       }
 
+      persistPhase("executor");
       await notify(
         `**Implementation complete.** Running independent review...\n` +
         `- Branch: \`${branch}\`\n` +
@@ -349,9 +410,11 @@ Branch: ${branch}
     const verdict = rr.result.output?.toUpperCase() || "";
     if (verdict.includes("APPROVED")) {
       approved = true;
+      persistPhase(reviewLabel, "APPROVED");
       await notify(`**Review: APPROVED** — proceeding to PR.`);
     } else if (fixCycles < MAX_FIX_CYCLES) {
       fixCycles++;
+      persistPhase(reviewLabel, "REQUEST_CHANGES");
       await notify(`**Review: REQUEST_CHANGES** — fixing issues (cycle ${fixCycles}/${MAX_FIX_CYCLES})...`);
 
       await onStart(`fix_loop_${fixCycles}`);
@@ -375,8 +438,10 @@ Branch: ${branch}
           }
           break;
         }
+        persistPhase(`fix_loop_${fixCycles}`);
       }
     } else {
+      persistPhase(reviewLabel, "REQUEST_CHANGES — max cycles reached");
       await notify(`**Review: REQUEST_CHANGES** after ${MAX_FIX_CYCLES} fix cycles. Proceeding with remaining issues noted.`);
       break;
     }
@@ -404,11 +469,21 @@ Branch: ${branch}
   const prMatch = prOutput?.match(/#(\d+)/);
   const prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
 
+  const prSuccess = prPhase.skipped ? true : prPhase.result.success;
+
+  if (prSuccess) {
+    persistPhase("complete", prNumber ? `PR #${prNumber}` : undefined);
+    if (db && workflowId) {
+      db.finishWorkflowRun(workflowId, "succeeded");
+    }
+  } else {
+    failWorkflow((!prPhase.skipped && prPhase.result.error) || "PR creation failed");
+  }
+
   if (prNumber) {
     await notify(`**PR created:** #${prNumber}\n\nBuild cycle complete.`);
   }
 
-  const prSuccess = prPhase.skipped ? true : prPhase.result.success;
   return { success: prSuccess, phases, prNumber };
 }
 

@@ -1,2 +1,2 @@
-current_phase: architect
-guardrails_status: BLOCKED
+current_phase: executor
+guardrails_status: READY
