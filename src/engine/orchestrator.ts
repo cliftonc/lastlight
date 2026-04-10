@@ -1,23 +1,24 @@
-import type { ExecutorConfig, ExecutionResult } from "./executor.js";
+import type { ExecutorConfig } from "./executor.js";
 import { executeAgent } from "./executor.js";
 import type { StateDb } from "../state/db.js";
-import type { PhaseHistoryEntry } from "../state/db.js";
 import type { ModelConfig } from "../config.js";
 import { resolveModel } from "../config.js";
-import { listRunningContainers } from "../admin/docker.js";
 import { randomUUID } from "crypto";
+import { getWorkflow, loadPromptTemplate } from "../workflows/loader.js";
+import { renderTemplate, slugify, type TemplateContext } from "../workflows/templates.js";
+import {
+  runWorkflow,
+  isTerminated,
+  type ApprovalGateConfig,
+  type RunnerCallbacks,
+} from "../workflows/runner.js";
 
 /**
  * Configuration for approval gates in the build cycle.
  * When a gate is enabled, the orchestrator pauses and posts a notification
  * asking a maintainer to approve or reject before proceeding.
  */
-export interface ApprovalGateConfig {
-  /** Pause after architect analysis, before executor implementation */
-  postArchitect: boolean;
-  /** Pause after reviewer REQUEST_CHANGES, before the fix loop */
-  postReviewer: boolean;
-}
+export type { ApprovalGateConfig };
 
 /**
  * Build request context.
@@ -38,166 +39,50 @@ export interface BuildRequest {
 export const BOOTSTRAP_LABEL = "lastlight:bootstrap";
 
 /**
- * A "bootstrap" task is one whose explicit purpose is to add the missing
- * foundational tooling that the guardrails check looks for (test framework,
- * linter, type checker, etc.). For these issues we still RUN the guardrails
- * check (so the agent has an up-to-date report) but we don't BLOCK on it —
- * otherwise the chicken-and-egg makes the issue impossible to build.
- *
- * Detection: explicit label, or a recognisable title prefix the bot itself
- * applies when it creates the blocker issue.
+ * Run the full Architect → Executor → Reviewer build cycle for an issue.
+ * Loads the build.yaml workflow definition and delegates to the generic runner.
  */
-function isBootstrapTask(req: BuildRequest): boolean {
-  if (req.issueLabels?.includes(BOOTSTRAP_LABEL)) return true;
-  const title = (req.issueTitle || "").toLowerCase();
-  return title.startsWith("guardrails:") || title.startsWith("[guardrails]");
-}
-
-interface PhaseResult {
-  phase: string;
-  success: boolean;
-  output: string;
-  error?: string;
-}
-
-/**
- * Orchestrates the Architect → Executor → Reviewer cycle.
- *
- * Each phase runs via executeAgent which automatically uses Docker sandboxes
- * when available, falling back to direct Agent SDK execution.
- */
-/**
- * Check if an error was caused by manual termination (container killed).
- */
-function isTerminated(error?: string): boolean {
-  if (!error) return false;
-  const lower = error.toLowerCase();
-  return lower.includes("terminated") ||
-    lower.includes("killed") ||
-    lower.includes("exit undefined") ||
-    lower.includes("container") && lower.includes("not running");
-}
-
-/**
- * Phase ordering for resume logic.
- * Each phase in the build cycle, in order. If status.md reports a completed phase,
- * the orchestrator skips to the next one.
- */
-const PHASE_ORDER = ["phase_0", "guardrails", "architect", "executor", "reviewer", "complete"] as const;
-type Phase = (typeof PHASE_ORDER)[number];
-
-function phaseIndex(phase: string): number {
-  // Normalize: fix_loop_N → executor (we re-run from reviewer)
-  if (phase.startsWith("fix_loop")) return PHASE_ORDER.indexOf("executor");
-  const idx = PHASE_ORDER.indexOf(phase as Phase);
-  return idx === -1 ? -1 : idx;
-}
-
-/**
- * Check if a sandbox container is actually running for a given taskId prefix.
- * Container names: lastlight-sandbox-{taskId}-{uuid}
- */
-async function isContainerAlive(taskId: string): Promise<boolean> {
-  try {
-    const containers = await listRunningContainers();
-    return containers.some((c) => c.taskId === taskId);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Run a phase with DB-tracked deduplication.
- * Returns null if the phase is already running or already completed successfully.
- */
-async function runPhase(
-  phaseName: string,
-  taskId: string,
-  triggerId: string,
-  prompt: string,
-  config: ExecutorConfig,
-  db?: StateDb,
-  modelOverride?: string,
-): Promise<{ result: ExecutionResult; skipped: false } | { skipped: true; reason: "running" | "done" }> {
-  if (db) {
-    const status = db.shouldRunPhase(`build:${phaseName}`, triggerId);
-
-    if (status === "running") {
-      // Verify the container is actually alive
-      const alive = await isContainerAlive(taskId);
-      if (alive) {
-        console.log(`[orchestrator] Phase ${phaseName} is already running (container alive) — skipping`);
-        return { skipped: true, reason: "running" };
-      }
-      // Container died — clean up stale record
-      console.log(`[orchestrator] Phase ${phaseName} was running but container is dead — cleaning up`);
-      db.markStaleAsFailed(`build:${phaseName}`, triggerId);
-    } else if (status === "done") {
-      console.log(`[orchestrator] Phase ${phaseName} already completed successfully — skipping`);
-      return { skipped: true, reason: "done" };
-    }
-
-    // Record start
-    const executionId = randomUUID();
-    db.recordStart({
-      id: executionId,
-      triggerType: "webhook",
-      triggerId,
-      skill: `build:${phaseName}`,
-      repo: undefined,
-      issueNumber: undefined,
-      startedAt: new Date().toISOString(),
-    });
-
-    const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
-    const result = await executeAgent(prompt, phaseConfig, { taskId });
-
-    db.recordFinish(executionId, {
-      success: result.success,
-      error: result.error,
-      turns: result.turns,
-      durationMs: result.durationMs,
-    });
-
-    return { result, skipped: false };
-  }
-
-  // No DB — just run
-  const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
-  const result = await executeAgent(prompt, phaseConfig, { taskId });
-  return { result, skipped: false };
-}
-
 export async function runBuildCycle(
   request: BuildRequest,
   config: ExecutorConfig,
   callbacks?: {
     onPhaseStart?: (phase: string) => Promise<void>;
-    onPhaseEnd?: (phase: string, result: PhaseResult) => Promise<void>;
+    onPhaseEnd?: (
+      phase: string,
+      result: { phase: string; success: boolean; output: string; error?: string },
+    ) => Promise<void>;
     postComment?: (body: string) => Promise<void>;
   },
   db?: StateDb,
   models?: ModelConfig,
   approvalConfig?: ApprovalGateConfig,
-): Promise<{ success: boolean; phases: PhaseResult[]; prNumber?: number; paused?: boolean }> {
+): Promise<{ success: boolean; phases: { phase: string; success: boolean; output: string; error?: string }[]; prNumber?: number; paused?: boolean }> {
   const { owner, repo, issueNumber } = request;
-  const phases: PhaseResult[] = [];
   const branch = `lastlight/${issueNumber}-${slugify(request.issueTitle)}`;
   const taskId = `${repo}-${issueNumber}`;
+  const issueDir = `.lastlight/issue-${issueNumber}`;
+  const triggerId = `${owner}/${repo}#${issueNumber}`;
 
   const notify = callbacks?.postComment || (async () => {});
-  const onStart = callbacks?.onPhaseStart || (async () => {});
-  const onEnd = callbacks?.onPhaseEnd || (async () => {});
 
   console.log(`[orchestrator] Build cycle for ${owner}/${repo}#${issueNumber}`);
-  await notify(`Acknowledged — starting build cycle for #${issueNumber}. Checking for prior progress...`);
+  await notify(
+    `Acknowledged — starting build cycle for #${issueNumber}. Checking for prior progress...`,
+  );
 
-  // ── Resume check (DB-driven) ─────────────────────────────────────
-  let resumeFrom: Phase = "phase_0";
+  // ── Resume logic (DB-driven) ─────────────────────────────────────────────
+
   let workflowId: string;
+  let noDbResumeFrom: string | undefined;
 
-  const triggerId = `${owner}/${repo}#${issueNumber}`;
-  const modelFor = (taskType: string) => models ? resolveModel(models, taskType) : undefined;
+  const PHASE_ORDER = ["phase_0", "guardrails", "architect", "executor", "reviewer", "complete"] as const;
+  type Phase = (typeof PHASE_ORDER)[number];
+
+  function phaseIndex(phase: string): number {
+    if (phase.startsWith("fix_loop")) return PHASE_ORDER.indexOf("executor");
+    const idx = PHASE_ORDER.indexOf(phase as Phase);
+    return idx === -1 ? -1 : idx;
+  }
 
   if (db) {
     const existingRun = db.getWorkflowRunByTrigger(triggerId);
@@ -207,45 +92,63 @@ export async function runBuildCycle(
       const completedPhase = existingRun.currentPhase;
 
       if (completedPhase === "complete") {
-        await notify(`Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`);
-        return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
+        await notify(
+          `Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`,
+        );
+        return {
+          success: true,
+          phases: [{ phase: "resume", success: true, output: "Already complete" }],
+        };
       }
 
       // Handle paused workflow waiting for approval
       if (existingRun.status === "paused" && completedPhase === "waiting_approval") {
         const pendingApproval = db.getPendingApprovalForWorkflow(workflowId);
         if (pendingApproval?.status === "approved") {
-          // Resume from the phase after the gate
           const gate = pendingApproval.gate;
-          resumeFrom = gate === "post_architect" ? "executor" : "reviewer";
-          console.log(`[orchestrator] Approval received for gate ${gate} — resuming from ${resumeFrom}`);
+          const resumeFrom = gate === "post_architect" ? "executor" : "reviewer";
+          // Update currentPhase to the last real completed phase so the runner's
+          // DB-derived resumeFrom is correct (not stuck on "waiting_approval").
+          const lastCompletedPhase = gate === "post_architect" ? "architect" : "executor";
+          db.updateWorkflowPhase(workflowId, lastCompletedPhase, {
+            phase: lastCompletedPhase,
+            timestamp: new Date().toISOString(),
+            success: true,
+            summary: `Resumed after gate approval: ${gate}`,
+          });
+          console.log(
+            `[orchestrator] Approval received for gate ${gate} — resuming from ${resumeFrom}`,
+          );
           db.resumeWorkflowRun(workflowId);
           await notify(
-            `**Approval received** — resuming build cycle from **${resumeFrom}** phase.`
+            `**Approval received** — resuming build cycle from **${resumeFrom}** phase.`,
           );
         } else if (pendingApproval?.status === "rejected") {
           const reason = pendingApproval.response || "no reason given";
           db.finishWorkflowRun(workflowId, "failed", `Rejected: ${reason}`);
           await notify(`Build cycle for #${issueNumber} was rejected. Reason: ${reason}`);
-          return { success: false, phases: [{ phase: "rejected", success: false, output: `Rejected: ${reason}` }] };
+          return {
+            success: false,
+            phases: [{ phase: "rejected", success: false, output: `Rejected: ${reason}` }],
+          };
         } else {
-          // Still pending — don't do anything, stay paused
           await notify(`Build cycle for #${issueNumber} is paused, awaiting approval.`);
           return { success: true, phases: [], paused: true };
         }
       } else {
         const completedIdx = phaseIndex(completedPhase);
         if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
-          resumeFrom = PHASE_ORDER[completedIdx + 1];
-          console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase}) — DB run ${workflowId}`);
+          const resumeFrom = PHASE_ORDER[completedIdx + 1];
+          console.log(
+            `[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase}) — DB run ${workflowId}`,
+          );
           await notify(
             `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
-            `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
+              `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`,
           );
         }
       }
     } else {
-      // No active run — create one. (Failed/cancelled runs are not resumed; a new run is created.)
       workflowId = randomUUID();
       db.createWorkflowRun({
         id: workflowId,
@@ -263,51 +166,47 @@ export async function runBuildCycle(
   } else {
     // No DB — fall back to agent-based resume check
     workflowId = randomUUID();
-    const resumeResult = await executeAgent(
-      buildResumeCheckPrompt(request, branch),
-      config, { taskId: `${taskId}-resume-check` }
-    );
+    const resumeTemplate = loadPromptTemplate("prompts/resume-check.md");
+    const resumePrompt = renderTemplate(resumeTemplate, {
+      owner, repo, issueNumber, issueTitle: request.issueTitle,
+      issueBody: request.issueBody, issueLabels: request.issueLabels || [],
+      commentBody: request.commentBody || "", sender: request.sender,
+      branch, taskId, issueDir, bootstrapLabel: BOOTSTRAP_LABEL,
+    });
+    const resumeResult = await executeAgent(resumePrompt, config, {
+      taskId: `${taskId}-resume-check`,
+    });
 
     if (resumeResult.success && resumeResult.output) {
       const output = resumeResult.output;
+      if (output.includes("current_phase: complete")) {
+        await notify(
+          `Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`,
+        );
+        return {
+          success: true,
+          phases: [{ phase: "resume", success: true, output: "Already complete" }],
+        };
+      }
       const phaseMatch = output.match(/current_phase:\s*(\S+)/);
       if (phaseMatch) {
         const completedPhase = phaseMatch[1];
         const completedIdx = phaseIndex(completedPhase);
         if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
-          resumeFrom = PHASE_ORDER[completedIdx + 1];
-          console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase})`);
+          noDbResumeFrom = PHASE_ORDER[completedIdx + 1];
+          console.log(
+            `[orchestrator] No-DB resume: last completed phase "${completedPhase}", resuming from "${noDbResumeFrom}"`,
+          );
           await notify(
-            `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
-            `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
+            `**Resuming build cycle** for #${issueNumber} from **${noDbResumeFrom}** phase.\n` +
+              `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`,
           );
         }
-      }
-      if (output.includes("current_phase: complete")) {
-        await notify(`Build cycle for #${issueNumber} is already complete. See the existing PR on branch \`${branch}\`.`);
-        return { success: true, phases: [{ phase: "resume", success: true, output: "Already complete" }] };
       }
     }
   }
 
-  const shouldRun = (phase: Phase) => phaseIndex(phase) >= phaseIndex(resumeFrom);
-
-  /** Helper to persist a successful phase transition to the workflow run */
-  const persistPhase = (phase: string, summary?: string) => {
-    if (db && workflowId) {
-      const entry: PhaseHistoryEntry = { phase, timestamp: new Date().toISOString(), success: true, summary };
-      db.updateWorkflowPhase(workflowId, phase, entry);
-    }
-  };
-
-  /** Helper to mark the workflow run as failed */
-  const failWorkflow = (errorMsg?: string) => {
-    if (db && workflowId) {
-      db.finishWorkflowRun(workflowId, "failed", errorMsg);
-    }
-  };
-
-  // ── Phase 0: Acknowledge + Context Assembly ────────────────────
+  // ── Build template context ───────────────────────────────────────────────
 
   const contextSnapshot = `
 Task: ${request.commentBody || request.issueBody}
@@ -317,654 +216,38 @@ Requested by: ${request.sender}
 Branch: ${branch}
 `.trim();
 
-  if (shouldRun("phase_0")) {
-    await onStart("phase_0");
-    phases.push({ phase: "phase_0", success: true, output: "Context assembled" });
-    await onEnd("phase_0", phases[phases.length - 1]);
-  }
+  const ctx: TemplateContext = {
+    owner,
+    repo,
+    issueNumber,
+    issueTitle: request.issueTitle,
+    issueBody: request.issueBody,
+    issueLabels: request.issueLabels || [],
+    commentBody: request.commentBody || "",
+    sender: request.sender,
+    branch,
+    taskId,
+    issueDir,
+    bootstrapLabel: BOOTSTRAP_LABEL,
+    contextSnapshot,
+    // models object for template interpolation (e.g. {{models.architect}})
+    models: models as unknown as Record<string, unknown>,
+  };
 
-  // ── Guardrails Check ──────────────────────────────────────────
+  // ── Load and run the workflow ─────────────────────────────────────────────
 
-  if (shouldRun("guardrails")) {
-    await onStart("guardrails");
-    const gr = await runPhase("guardrails", `${taskId}-guardrails`, triggerId,
-      buildGuardrailsPrompt(request, branch), config, db, modelFor("guardrails"));
+  const definition = getWorkflow("build");
 
-    if (gr.skipped) {
-      if (gr.reason === "running") {
-        await notify(`**Guardrails check** is already running in another session — waiting for it to complete.`);
-        return { success: false, phases };
-      }
-      phases.push({ phase: "guardrails", success: true, output: "Already completed" });
-    } else {
-      phases.push({ phase: "guardrails", ...pick(gr.result) });
-      await onEnd("guardrails", phases[phases.length - 1]);
+  const runnerCallbacks: RunnerCallbacks = {
+    onPhaseStart: callbacks?.onPhaseStart,
+    onPhaseEnd: callbacks?.onPhaseEnd,
+    postComment: callbacks?.postComment,
+  };
 
-      const guardrailsOutput = gr.result.output?.toUpperCase() || "";
-      if (guardrailsOutput.includes("BLOCKED")) {
-        if (isBootstrapTask(request)) {
-          await notify(
-            `**Guardrails check: BLOCKED** — but this is a bootstrap task ` +
-            `(label \`${BOOTSTRAP_LABEL}\` or "guardrails:" title prefix detected). ` +
-            `Proceeding with the build cycle so the architect can plan, and the ` +
-            `executor can install, the missing tooling. The guardrails report at ` +
-            `\`.lastlight/issue-${issueNumber}/guardrails-report.md\` lists what's missing.`
-          );
-          // fall through to architect — don't return
-        } else {
-          // Mark the DB record as failed so a re-run on this trigger isn't
-          // skipped by the dedup check in runPhase. The agent SDK call itself
-          // succeeded (it produced the report), but the business outcome was
-          // a block — and the user may have fixed the underlying issue and
-          // expects the next build attempt to actually re-check.
-          db?.markLatestAsFailed(`build:guardrails`, triggerId, "BLOCKED: missing foundational tooling");
-          failWorkflow("guardrails BLOCKED");
-          await notify(
-            `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
-            `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\`. ` +
-            `Once you've added the missing tooling, ask me to build this issue again — the check will re-run against the current repo state.`
-          );
-          return { success: false, phases };
-        }
-      }
-
-      if (!gr.result.success) {
-        if (!isTerminated(gr.result.error)) {
-          await notify(`**Guardrails check failed** — unable to complete.`);
-        }
-        failWorkflow(gr.result.error);
-        return { success: false, phases };
-      }
-
-      persistPhase("guardrails", "READY");
-      await notify(`**Guardrails check: READY** — verified. Starting architect analysis...`);
-    }
-  }
-
-  // ── Phase 1: Architect ─────────────────────────────────────────
-
-  if (shouldRun("architect")) {
-    await onStart("architect");
-    const ar = await runPhase("architect", `${taskId}-architect`, triggerId,
-      buildArchitectPrompt(request, branch, contextSnapshot), config, db, modelFor("architect"));
-
-    if (ar.skipped) {
-      if (ar.reason === "running") {
-        await notify(`**Architect** phase is already running — aborting to avoid duplicate work.`);
-        return { success: false, phases };
-      }
-      phases.push({ phase: "architect", success: true, output: "Already completed" });
-    } else {
-      phases.push({ phase: "architect", ...pick(ar.result) });
-      await onEnd("architect", phases[phases.length - 1]);
-
-      if (!ar.result.success) {
-        if (!isTerminated(ar.result.error)) {
-          await notify(`Architect analysis failed — unable to complete analysis.`);
-        }
-        failWorkflow(ar.result.error);
-        return { success: false, phases };
-      }
-
-      persistPhase("architect");
-
-      // Post-architect approval gate
-      if (approvalConfig?.postArchitect && db && workflowId) {
-        const approvalId = randomUUID();
-        db.createApproval({
-          id: approvalId,
-          workflowRunId: workflowId,
-          gate: "post_architect",
-          summary: `Architect plan ready.\n- Branch: \`${branch}\`\n- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\``,
-          requestedBy: request.sender,
-          createdAt: new Date().toISOString(),
-        });
-        db.updateWorkflowPhase(workflowId, "waiting_approval", {
-          phase: "waiting_approval",
-          timestamp: new Date().toISOString(),
-          success: true,
-          summary: `Waiting for approval: post_architect (${approvalId})`,
-        });
-        db.pauseWorkflowRun(workflowId);
-        await notify(
-          `**Architect analysis complete** — approval required before implementation.\n\n` +
-          `- Branch: \`${branch}\`\n` +
-          `- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\`\n\n` +
-          `**To proceed:** comment \`@last-light approve\`\n` +
-          `**To abort:** comment \`@last-light reject [reason]\``,
-        );
-        return { success: true, phases, paused: true };
-      }
-
-      await notify(
-        `**Architect analysis complete.**\n` +
-        `- Branch: \`${branch}\`\n` +
-        `- Plan: \`.lastlight/issue-${issueNumber}/architect-plan.md\`\n\n` +
-        `Starting implementation...`
-      );
-    }
-  }
-
-  // ── Phase 2: Executor ──────────────────────────────────────────
-
-  if (shouldRun("executor")) {
-    await onStart("executor");
-    await notify(`**Starting executor** — implementing the architect's plan...`);
-    const er = await runPhase("executor", `${taskId}-executor`, triggerId,
-      buildExecutorPrompt(request, branch), config, db, modelFor("executor"));
-
-    if (er.skipped) {
-      if (er.reason === "running") {
-        await notify(`**Executor** phase is already running — aborting to avoid duplicate work.`);
-        return { success: false, phases };
-      }
-      phases.push({ phase: "executor", success: true, output: "Already completed" });
-      await notify(`**Executor** already completed — proceeding to review...`);
-    } else {
-      phases.push({ phase: "executor", ...pick(er.result) });
-      await onEnd("executor", phases[phases.length - 1]);
-
-      if (!er.result.success) {
-        if (!isTerminated(er.result.error)) {
-          await notify(`Executor implementation failed — unable to complete.`);
-        }
-        failWorkflow(er.result.error);
-        return { success: false, phases };
-      }
-
-      persistPhase("executor");
-      await notify(
-        `**Implementation complete.** Running independent review...\n` +
-        `- Branch: \`${branch}\`\n` +
-        `- Summary: \`.lastlight/issue-${issueNumber}/executor-summary.md\``
-      );
-    }
-  }
-
-  // ── Phase 3: Reviewer + Fix Loop ───────────────────────────────
-
-  let approved = false;
-  let fixCycles = 0;
-  const MAX_FIX_CYCLES = 2;
-
-  while (!approved && fixCycles <= MAX_FIX_CYCLES) {
-    const reviewLabel = fixCycles === 0 ? "reviewer" : `reviewer_${fixCycles + 1}`;
-    await onStart(reviewLabel);
-    await notify(`**Starting reviewer** (cycle ${fixCycles + 1}) — independent verification...`);
-
-    const reviewPrompt = fixCycles === 0
-      ? buildReviewerPrompt(request, branch)
-      : buildReReviewPrompt(request, branch, fixCycles);
-    const rr = await runPhase(reviewLabel, `${taskId}-${reviewLabel}`, triggerId,
-      reviewPrompt, config, db, modelFor("reviewer"));
-
-    if (rr.skipped) {
-      if (rr.reason === "running") {
-        await notify(`**Reviewer** is already running — aborting to avoid duplicate work.`);
-        return { success: false, phases };
-      }
-      // Reviewer already done — check if it approved
-      approved = true; // Assume approved if we got past it
-      phases.push({ phase: reviewLabel, success: true, output: "Already completed" });
-      break;
-    }
-
-    phases.push({ phase: reviewLabel, ...pick(rr.result) });
-    await onEnd(reviewLabel, phases[phases.length - 1]);
-
-    // Parse the reviewer verdict.
-    //
-    // The reviewer prompt requires a specific machine-readable marker line
-    // (`VERDICT: APPROVED` or `VERDICT: REQUEST_CHANGES`) on its own line in
-    // the output. We match that line strictly with a multiline regex.
-    //
-    // Past bug: a substring `includes("APPROVED")` check matched on words
-    // like "approval" / "approved" that frequently appear in the bodies of
-    // REQUEST_CHANGES verdicts (when the changes being reviewed touch
-    // approval-related code), causing the orchestrator to skip the fix loop
-    // and ship a broken PR. The new marker leaves no room for ambiguity.
-    //
-    // We layer two safeguards:
-    //   1. The strict marker match (preferred — produced by the new prompt)
-    //   2. A whole-word REQUEST_CHANGES fallback if the marker is missing
-    //      (older runs / drift). REQUEST_CHANGES is the safe default —
-    //      worst case the user gets a fix loop they didn't strictly need.
-    const reviewerOutput = (rr.result.output || "").trim();
-    const verdictMarker = reviewerOutput.match(/^\s*VERDICT:\s*(APPROVED|REQUEST_CHANGES)\s*$/im);
-    let isApproved: boolean;
-    if (verdictMarker) {
-      isApproved = verdictMarker[1].toUpperCase() === "APPROVED";
-    } else {
-      // No marker — fall back to safe-default detection.
-      const upper = reviewerOutput.toUpperCase();
-      const hasRequestChanges = /\bREQUEST_CHANGES\b/.test(upper);
-      isApproved = !hasRequestChanges && /^APPROVED\b/.test(upper);
-      console.warn(`[orchestrator] Reviewer output missing VERDICT: marker — using fallback detection (isApproved=${isApproved})`);
-    }
-
-    if (isApproved) {
-      approved = true;
-      persistPhase(reviewLabel, "APPROVED");
-      await notify(`**Review: APPROVED** — proceeding to PR.`);
-    } else if (fixCycles < MAX_FIX_CYCLES) {
-      fixCycles++;
-      persistPhase(reviewLabel, "REQUEST_CHANGES");
-
-      // Post-reviewer approval gate
-      if (approvalConfig?.postReviewer && db && workflowId) {
-        const approvalId = randomUUID();
-        db.createApproval({
-          id: approvalId,
-          workflowRunId: workflowId,
-          gate: "post_reviewer",
-          summary: `Reviewer requested changes (cycle ${fixCycles}/${MAX_FIX_CYCLES}).\nVerdict: \`.lastlight/issue-${issueNumber}/reviewer-verdict.md\``,
-          requestedBy: request.sender,
-          createdAt: new Date().toISOString(),
-        });
-        db.updateWorkflowPhase(workflowId, "waiting_approval", {
-          phase: "waiting_approval",
-          timestamp: new Date().toISOString(),
-          success: true,
-          summary: `Waiting for approval: post_reviewer (${approvalId})`,
-        });
-        db.pauseWorkflowRun(workflowId);
-        await notify(
-          `**Review: REQUEST_CHANGES** — approval required before fix loop.\n\n` +
-          `- Verdict: \`.lastlight/issue-${issueNumber}/reviewer-verdict.md\`\n\n` +
-          `**To proceed with fixes:** comment \`@last-light approve\`\n` +
-          `**To abort:** comment \`@last-light reject [reason]\``,
-        );
-        return { success: true, phases, paused: true };
-      }
-
-      await notify(`**Review: REQUEST_CHANGES** — fixing issues (cycle ${fixCycles}/${MAX_FIX_CYCLES})...`);
-
-      await onStart(`fix_loop_${fixCycles}`);
-      await notify(`**Starting fix loop** (cycle ${fixCycles}/${MAX_FIX_CYCLES}) — addressing reviewer feedback...`);
-      const fr = await runPhase(`fix_loop_${fixCycles}`, `${taskId}-fix${fixCycles}`, triggerId,
-        buildFixPrompt(request, branch, fixCycles), config, db, modelFor("fix"));
-
-      if (fr.skipped) {
-        if (fr.reason === "running") {
-          await notify(`**Fix loop** is already running — aborting.`);
-          return { success: false, phases };
-        }
-        phases.push({ phase: `fix_loop_${fixCycles}`, success: true, output: "Already completed" });
-      } else {
-        phases.push({ phase: `fix_loop_${fixCycles}`, ...pick(fr.result) });
-        await onEnd(`fix_loop_${fixCycles}`, phases[phases.length - 1]);
-
-        if (!fr.result.success) {
-          if (!isTerminated(fr.result.error)) {
-            await notify(`Fix cycle ${fixCycles} failed. Proceeding to PR with known issues.`);
-          }
-          break;
-        }
-        persistPhase(`fix_loop_${fixCycles}`);
-      }
-    } else {
-      persistPhase(reviewLabel, "REQUEST_CHANGES — max cycles reached");
-      await notify(`**Review: REQUEST_CHANGES** after ${MAX_FIX_CYCLES} fix cycles. Proceeding with remaining issues noted.`);
-      break;
-    }
-  }
-
-  // ── Phase 5: Create PR ─────────────────────────────────────────
-
-  await onStart("pr");
-  await notify(`**Creating PR** — packaging changes for review...`);
-  const prPhase = await runPhase("pr", `${taskId}-pr`, triggerId,
-    buildPrPrompt(request, branch, approved, fixCycles), config, db, modelFor("pr"));
-
-  if (prPhase.skipped) {
-    if (prPhase.reason === "running") {
-      await notify(`**PR creation** is already running — aborting.`);
-      return { success: false, phases };
-    }
-    phases.push({ phase: "pr", success: true, output: "Already completed" });
-  } else {
-    phases.push({ phase: "pr", ...pick(prPhase.result) });
-    await onEnd("pr", phases[phases.length - 1]);
-  }
-
-  const prOutput = !prPhase.skipped ? prPhase.result.output : "";
-  const prMatch = prOutput?.match(/#(\d+)/);
-  const prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
-
-  const prSuccess = prPhase.skipped ? true : prPhase.result.success;
-
-  if (prSuccess) {
-    persistPhase("complete", prNumber ? `PR #${prNumber}` : undefined);
-    if (db && workflowId) {
-      db.finishWorkflowRun(workflowId, "succeeded");
-    }
-  } else {
-    failWorkflow((!prPhase.skipped && prPhase.result.error) || "PR creation failed");
-  }
-
-  if (prNumber) {
-    await notify(`**PR created:** #${prNumber}\n\nBuild cycle complete.`);
-  }
-
-  return { success: prSuccess, phases, prNumber };
+  return runWorkflow(definition, ctx, config, runnerCallbacks, db, models, approvalConfig, workflowId, noDbResumeFrom);
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
-
-function pick(r: ExecutionResult) {
-  return { success: r.success, output: r.output, error: r.error };
-}
-
-function slugify(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
-}
-
-// ── Prompt Builders ─────────────────────────────────────────────────
-
-function buildResumeCheckPrompt(req: BuildRequest, branch: string): string {
-  return `Check if a build cycle already exists for this issue.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. Try: git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-   If the branch doesn't exist, output "current_phase: none" and stop.
-
-2. If the branch exists, check for .lastlight/issue-${req.issueNumber}/status.md
-   If it exists, read it and output its contents.
-   If it doesn't exist, output "current_phase: none"
-
-OUTPUT: The contents of status.md, or "current_phase: none" if no prior work exists.
-Do NOT modify any files. This is a read-only check.`;
-}
-
-function buildGuardrailsPrompt(req: BuildRequest, branch: string): string {
-  return `You are running a PRE-FLIGHT GUARDRAILS CHECK before implementation work begins.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. Try: git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-   If the branch doesn't exist yet: git clone https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo} && git checkout -b ${branch}
-2. Read CLAUDE.md and AGENTS.md if they exist
-
-SKIP CHECK — if .lastlight/issue-${req.issueNumber}/status.md already exists and contains
-guardrails_status: READY, output "READY — guardrails already verified" and stop.
-
-CHECK THESE GUARDRAILS:
-
-1. **Test Framework** — Does the repo have a test runner (vitest, jest, pytest, cargo test, etc.)?
-   Do test files exist? Does the test command actually run?
-
-2. **Linting** — Is a linter configured (eslint, biome, ruff, clippy, etc.)?
-   Does the lint command run?
-
-3. **Type Checking** — Is type checking configured (tsconfig.json + tsc, mypy, cargo check, etc.)?
-   Does the typecheck command run?
-
-4. **CI Pipeline** (informational only) — Does .github/workflows/ exist with test/lint steps?
-
-AFTER CHECKING:
-1. mkdir -p .lastlight/issue-${req.issueNumber}
-2. Write .lastlight/issue-${req.issueNumber}/guardrails-report.md with the status of each check
-3. Write .lastlight/issue-${req.issueNumber}/status.md with current_phase: guardrails AND guardrails_status: READY or BLOCKED
-4. git add .lastlight/ && git commit -m "docs: guardrails check for #${req.issueNumber}"
-5. git push -u origin HEAD
-
-IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests completely broken):
-- Use the MCP tool create_issue to create a guardrails issue in the repo with:
-  - title prefixed exactly with "guardrails:" (e.g. "guardrails: no test framework configured")
-  - labels including ${BOOTSTRAP_LABEL} so subsequent build attempts on this issue
-    can detect that the task IS to set up guardrails (the orchestrator will then
-    skip the BLOCKED gate and let the executor install the missing tooling).
-- Use add_issue_comment on issue #${req.issueNumber} to link the guardrails issue
-- OUTPUT must include: BLOCKED
-
-IF ALL CRITICAL GUARDRAILS ARE PRESENT (tests work, even if linting/types are missing):
-- OUTPUT must include: READY
-
-OUTPUT: Exactly one of READY or BLOCKED, followed by a brief summary of what was found.`;
-}
-
-function buildArchitectPrompt(req: BuildRequest, branch: string, context: string): string {
-  return `You are the ARCHITECT. Analyze the codebase and produce an implementation plan.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-2. Read CLAUDE.md and AGENTS.md if they exist
-3. Read .lastlight/issue-${req.issueNumber}/guardrails-report.md for pre-flight results
-
-CONTEXT:
-${context}
-
-OUTPUT — write the plan to .lastlight/issue-${req.issueNumber}/architect-plan.md:
-- Problem Statement (2-5 sentences with file:line references)
-- Summary of what needs to change
-- Files to modify (with line numbers and what to change)
-- Implementation approach (step-by-step)
-- Risks and edge cases
-- Test strategy
-- Estimated complexity: simple / medium / complex
-
-AFTER WRITING:
-1. mkdir -p .lastlight/issue-${req.issueNumber}
-2. Write architect-plan.md
-3. Write status.md with current_phase: architect
-4. git add .lastlight/ && git commit -m "docs: architect plan for #${req.issueNumber}"
-5. git push -u origin HEAD
-
-OUTPUT: The branch name and a brief summary (3-5 lines).`;
-}
-
-function buildExecutorPrompt(req: BuildRequest, branch: string): string {
-  return `You are the EXECUTOR. Implement precisely what the architect's plan requires.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-2. Read .lastlight/issue-${req.issueNumber}/architect-plan.md
-
-EXECUTION:
-- Follow TDD: write failing test first, then implement, then verify
-- Run tests and verify they pass
-
-BEFORE COMMITTING — ALL GUARDRAILS MUST PASS:
-1. Read .lastlight/issue-${req.issueNumber}/guardrails-report.md to find the exact commands
-2. Run the test command and verify ALL tests pass (zero failures)
-3. Run the lint command (if present) and fix ALL lint errors
-4. Run the typecheck command (if present) and fix ALL type errors
-5. If any guardrail fails, fix the issue and re-run until clean
-DO NOT commit or claim done until tests, lint, and typecheck all pass.
-
-AFTER ALL GUARDRAILS PASS:
-1. Write .lastlight/issue-${req.issueNumber}/executor-summary.md:
-   - What was done, files changed
-   - Test results (paste actual output)
-   - Lint results (paste actual output)
-   - Typecheck results (paste actual output)
-   - Any deviations from the plan, known issues
-2. Update .lastlight/issue-${req.issueNumber}/status.md: current_phase = executor
-3. git add -A && git commit -m "feat: implement #${req.issueNumber}
-
-Tested: {test command} -> {result}
-Scope-risk: {low|medium|high}"
-4. git push origin HEAD
-
-OUTPUT: List of files changed, test/lint/typecheck results, commit hash.`;
-}
-
-function buildReviewerPrompt(req: BuildRequest, branch: string): string {
-  return `You are the CODE REVIEWER. Independent verification — you have NO shared context with the executor.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-
-SCOPE — review ONLY changed files:
-  git log --oneline main..HEAD
-  git diff main...HEAD --name-only
-  git diff main...HEAD
-
-Read .lastlight/issue-${req.issueNumber}/architect-plan.md and executor-summary.md for context.
-
-CHECK:
-1. Does implementation match the plan?
-2. Do tests pass?
-3. Security concerns?
-4. Logic errors or missed edge cases?
-
-DO NOT review unchanged files or flag pre-existing issues.
-
-AFTER REVIEW:
-1. Write .lastlight/issue-${req.issueNumber}/reviewer-verdict.md with the following structure (exact headings):
-
-   # Reviewer Verdict — Issue #${req.issueNumber}
-
-   VERDICT: APPROVED      ← or REQUEST_CHANGES, exactly one of these, on its own line
-
-   ## Summary
-   (1–3 sentences)
-
-   ## Issues
-   ### Critical
-   ### Important
-   ### Suggestions
-   ### Nits
-
-   ## Test Results
-   (paste actual output)
-
-2. Update status.md with reviewer_status: APPROVED or REQUEST_CHANGES (matching the verdict)
-3. git add .lastlight/ && git commit -m "review: verdict for #${req.issueNumber}" && git push origin HEAD
-
-OUTPUT FORMAT — your stdout MUST start with one of these two lines, EXACTLY, on its own line, with no leading whitespace:
-
-   VERDICT: APPROVED
-   VERDICT: REQUEST_CHANGES
-
-The orchestrator parses this marker to decide whether to run the fix loop. Do
-NOT use any other phrasing for the verdict on the first line — words like
-"approved", "approval", "request changes", or "looks good" elsewhere in the
-body are fine, but the first non-empty line MUST be exactly the marker above.
-
-After the marker line, write a 2–5 sentence summary of the most important
-findings.`;
-}
-
-function buildReReviewPrompt(req: BuildRequest, branch: string, fixCycle: number): string {
-  return `You are the CODE REVIEWER — RE-REVIEW after fix cycle ${fixCycle}.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-
-This is a FOLLOW-UP review. You previously requested changes. The executor has attempted to fix them.
-
-SCOPE — review ONLY what changed in the fix cycle:
-1. Read .lastlight/issue-${req.issueNumber}/reviewer-verdict.md — your previous issues
-2. Read the "## Fix Cycle ${fixCycle}" section in .lastlight/issue-${req.issueNumber}/executor-summary.md — what was fixed
-3. Diff only the fix commit(s): git log --oneline -3 and git diff HEAD~1
-
-CHECK:
-1. Were the specific issues you raised actually addressed?
-2. Did the fix introduce any new problems?
-3. Do tests still pass?
-
-DO NOT re-review the entire changeset. Only verify your previous issues were fixed.
-
-AFTER REVIEW:
-1. APPEND to .lastlight/issue-${req.issueNumber}/reviewer-verdict.md under heading "## Re-review after Fix Cycle ${fixCycle}" (preserve the original verdict above). The new section MUST itself contain a "VERDICT: APPROVED" or "VERDICT: REQUEST_CHANGES" line.
-2. Update status.md with reviewer_status: APPROVED or REQUEST_CHANGES
-3. git add .lastlight/ && git commit -m "review: re-review after fix cycle ${fixCycle} for #${req.issueNumber}" && git push origin HEAD
-
-OUTPUT FORMAT — your stdout MUST start with one of these two lines, EXACTLY, on its own line, with no leading whitespace:
-
-   VERDICT: APPROVED
-   VERDICT: REQUEST_CHANGES
-
-The orchestrator parses this marker to decide whether to run another fix
-cycle. Do NOT use any other phrasing for the verdict on the first line.
-
-After the marker line, write a 2–5 sentence summary of which previous issues
-were addressed and any remaining concerns.`;
-}
-
-function buildFixPrompt(req: BuildRequest, branch: string, cycle: number): string {
-  return `You are the EXECUTOR (fix cycle ${cycle}). Fix ONLY the issues reported by the reviewer.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone --branch ${branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-2. Read .lastlight/issue-${req.issueNumber}/reviewer-verdict.md — fix ONLY these issues
-3. Read .lastlight/issue-${req.issueNumber}/guardrails-report.md for the test/lint/typecheck commands
-
-BEFORE COMMITTING — ALL GUARDRAILS MUST PASS:
-1. Run the test command and verify ALL tests pass (zero failures)
-2. Run the lint command (if present) and fix ALL lint errors
-3. Run the typecheck command (if present) and fix ALL type errors
-DO NOT commit until tests, lint, and typecheck all pass.
-
-AFTER ALL GUARDRAILS PASS:
-1. APPEND to .lastlight/issue-${req.issueNumber}/executor-summary.md under heading "## Fix Cycle ${cycle}" (what was fixed, test/lint/typecheck results)
-2. Update status.md: current_phase = fix_loop_${cycle}
-3. git add -A && git commit -m "fix: address review feedback for #${req.issueNumber} (cycle ${cycle})" && git push origin HEAD
-
-OUTPUT: What was fixed, test/lint/typecheck results.`;
-}
-
-function buildPrPrompt(req: BuildRequest, branch: string, approved: boolean, fixCycles: number): string {
-  const note = approved
-    ? ""
-    : `\n\nNote: There are unresolved reviewer issues after ${fixCycles} fix cycles. See reviewer-verdict.md on the branch.`;
-
-  // Build absolute GitHub URLs to every artifact the build cycle produces.
-  // Relative markdown links (e.g. .lastlight/issue-3/architect-plan.md) do
-  // not resolve in PR descriptions — they must be full https URLs that
-  // include the branch ref.
-  const branchUrl = (file: string) =>
-    `https://github.com/${req.owner}/${req.repo}/blob/${encodeURIComponent(branch)}/.lastlight/issue-${req.issueNumber}/${file}`;
-
-  // Each entry: filename on the branch + label that shows in the PR body.
-  // Conditionally included files (e.g. reviewer-verdict only when reviewer ran)
-  // are listed; the agent is instructed to skip any that don't exist on disk.
-  const docs = [
-    { file: "guardrails-report.md", label: "Guardrails report" },
-    { file: "architect-plan.md", label: "Architect plan" },
-    { file: "executor-summary.md", label: "Executor summary" },
-    { file: "reviewer-verdict.md", label: "Reviewer verdict" },
-    { file: "status.md", label: "Status" },
-  ];
-  const docList = docs
-    .map((d) => `  - [${d.label}](${branchUrl(d.file)})`)
-    .join("\n");
-
-  return `Create a pull request for the work on branch ${branch}.
-
-Use the MCP tool create_pull_request with the following:
-- owner: ${req.owner}
-- repo: ${req.repo}
-- head: ${branch}
-- base: main
-- title: A concise title describing the change (reference #${req.issueNumber})
-- body: A markdown body that includes EXACTLY these sections in order:
-
-  Closes #${req.issueNumber}
-
-  ## Summary
-  (3-6 bullet points describing what changed)
-
-  ## Planning and execution docs
-${docList}
-
-  Before adding each link above, run \`ls -1 .lastlight/issue-${req.issueNumber}/\`
-  on the branch and OMIT any line whose file doesn't exist on disk. Use the
-  exact full https URLs above as written — do NOT shorten to relative paths,
-  they will not render in the PR description.
-
-  ## Test results
-  (paste the actual test/lint/typecheck output from executor-summary.md)${note}
-
-Then use add_issue_comment on issue #${req.issueNumber} to post the PR link.
-
-Update status.md: current_phase = complete, add pr_number.
-git add .lastlight/ && git commit -m "status: PR created for #${req.issueNumber}" && git push origin HEAD
-
-OUTPUT: The PR number and URL.`;
-}
-
-// ── PR Fix ─────────────────────────────────────────────────────────
+// ── PR Fix ────────────────────────────────────────────────────────────────────
 
 export interface PrFixRequest {
   owner: string;
@@ -995,14 +278,42 @@ export async function runPrFix(
   const { owner, repo, prNumber, branch } = request;
   const taskId = `${repo}-pr${prNumber}-fix`;
 
-  const prFixConfig = models ? { ...config, model: resolveModel(models, "pr-fix") } : config;
+  const prFixModel = models ? resolveModel(models, "pr-fix") : undefined;
+  const prFixConfig = prFixModel ? { ...config, model: prFixModel } : config;
 
   await notify(`On it — fixing PR #${prNumber}...`);
 
-  const result = await executeAgent(
-    buildPrFixPrompt(request),
-    prFixConfig, { taskId }
-  );
+  // Build the CI section
+  const ciSection =
+    request.failedChecks && !request.failedChecks.includes("No failed checks")
+      ? `CI FAILURES (from GitHub Actions — fix these first):\n${request.failedChecks}`
+      : "";
+
+  const issueDir = `.lastlight/pr-${prNumber}`;
+  const ctx: TemplateContext = {
+    owner,
+    repo,
+    issueNumber: prNumber,
+    issueTitle: request.prTitle,
+    issueBody: request.prBody,
+    issueLabels: [],
+    commentBody: request.commentBody,
+    sender: request.sender,
+    branch,
+    taskId,
+    issueDir,
+    bootstrapLabel: BOOTSTRAP_LABEL,
+    prNumber,
+    prTitle: request.prTitle,
+    prBody: request.prBody,
+    failedChecks: request.failedChecks,
+    ciSection,
+  };
+
+  const template = loadPromptTemplate("prompts/pr-fix.md");
+  const prompt = renderTemplate(template, ctx);
+
+  const result = await executeAgent(prompt, prFixConfig, { taskId });
 
   if (result.success) {
     await notify(`**Fix pushed** to \`${branch}\`. CI should re-run automatically.`);
@@ -1013,35 +324,4 @@ export async function runPrFix(
   }
 
   return { success: result.success, output: result.output };
-}
-
-function buildPrFixPrompt(req: PrFixRequest): string {
-  const ciSection = req.failedChecks && !req.failedChecks.includes("No failed checks")
-    ? `\nCI FAILURES (from GitHub Actions — fix these first):\n${req.failedChecks}\n`
-    : "";
-
-  return `You are fixing a PR based on a maintainer's request.
-
-SETUP (git is pre-configured, you are in a sandbox workspace):
-1. git clone --branch ${req.branch} https://github.com/${req.owner}/${req.repo}.git && cd ${req.repo}
-2. Read CLAUDE.md and AGENTS.md if they exist
-
-CONTEXT:
-- PR #${req.prNumber}: ${req.prTitle}
-- Maintainer request: ${req.commentBody}
-${ciSection}
-INSTRUCTIONS:
-1. Understand what the maintainer is asking for${ciSection ? "\n2. The CI failures above are the primary issue — focus on fixing those" : ""}
-${ciSection ? "3" : "2"}. Read the relevant code and understand the failure
-${ciSection ? "4" : "3"}. Make the fix — keep changes minimal and focused
-${ciSection ? "5" : "4"}. Run tests, lint, and typecheck to verify everything passes
-${ciSection ? "6" : "5"}. DO NOT commit until all checks pass
-
-AFTER FIXING:
-1. git add -A && git commit -m "fix: address feedback on PR #${req.prNumber}
-
-${req.commentBody.slice(0, 100)}"
-2. git push origin HEAD
-
-OUTPUT: Brief summary of what was fixed and test results.`;
 }

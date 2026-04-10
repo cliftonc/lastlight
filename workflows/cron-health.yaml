@@ -1,0 +1,6 @@
+type: cron
+name: weekly-health-report
+schedule: "0 9 * * 1"
+skill: repo-health
+context:
+  mode: report

@@ -18,7 +18,6 @@
     "dev:dashboard": "npm run dev -w dashboard",
     "cli": "tsx src/cli.ts",
     "build:issue": "tsx src/cli.ts",
-    "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -28,7 +27,9 @@
     "better-sqlite3": "^11.0.0",
     "croner": "^9.0.0",
     "hono": "^4.0.0",
-    "octokit": "^5.0.5"
+    "octokit": "^5.0.5",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
