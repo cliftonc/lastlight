@@ -730,3 +730,128 @@ describe("runWorkflow — generic loop node", () => {
     expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── DAG workflow tests ────────────────────────────────────────────────────────
+
+const PARALLEL_WORKFLOW: BuildWorkflowDefinition = {
+  type: "build",
+  name: "parallel-test",
+  phases: [
+    { name: "phase_0", type: "context" },
+    { name: "architect", type: "agent", prompt: "prompts/architect.md", depends_on: ["phase_0"] },
+    { name: "executor_a", type: "agent", prompt: "prompts/executor_a.md", depends_on: ["architect"] },
+    { name: "executor_b", type: "agent", prompt: "prompts/executor_b.md", depends_on: ["architect"] },
+    { name: "merge", type: "agent", prompt: "prompts/merge.md", depends_on: ["executor_a", "executor_b"] },
+  ],
+};
+
+describe("runWorkflow — DAG parallel execution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("routes to DAG execution when any phase has depends_on", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult());
+
+    const result = await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {});
+
+    expect(result.success).toBe(true);
+    // architect + executor_a + executor_b + merge = 4 agent calls
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(4);
+  });
+
+  it("runs executor_a and executor_b concurrently (both called)", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult("done"));
+
+    const started: string[] = [];
+    const result = await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {
+      onPhaseStart: async (p) => { started.push(p); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(started).toContain("executor_a");
+    expect(started).toContain("executor_b");
+    expect(started).toContain("merge");
+  });
+
+  it("skips downstream nodes when upstream fails (all_success rule)", async () => {
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("architect done")) // architect
+      .mockResolvedValueOnce(makeFailResult("executor_a exploded")) // executor_a
+      .mockResolvedValue(makeSuccessResult("done")); // executor_b (and any others)
+
+    const result = await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {});
+
+    // merge depends on both executor_a AND executor_b — executor_a failed, so merge is skipped
+    const mergePhase = result.phases.find((p) => p.phase === "merge");
+    // merge should be skipped (not executed by agent), indicated by success=true with skip output
+    expect(mergePhase).toBeDefined();
+    expect(mergePhase?.output).toContain("Skipped");
+    // total agent calls: architect + executor_a + executor_b = 3 (merge agent not called)
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns overall success=false if any phase failed", async () => {
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("architect done"))
+      .mockResolvedValueOnce(makeFailResult("exploded"))
+      .mockResolvedValue(makeSuccessResult("done"));
+
+    const result = await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {});
+    expect(result.success).toBe(false);
+  });
+
+  it("all_done trigger rule: downstream runs even when upstream failed", async () => {
+    const workflow: BuildWorkflowDefinition = {
+      type: "build",
+      name: "all-done-test",
+      phases: [
+        { name: "step_a", type: "agent", prompt: "prompts/a.md", depends_on: [] },
+        {
+          name: "cleanup",
+          type: "agent",
+          prompt: "prompts/cleanup.md",
+          depends_on: ["step_a"],
+          trigger_rule: "all_done",
+        },
+      ],
+    };
+
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeFailResult("step_a failed"))
+      .mockResolvedValueOnce(makeSuccessResult("cleanup done"));
+
+    const result = await runWorkflow(workflow, BASE_CTX, {} as never, {});
+
+    const phaseNames = result.phases.map((p) => p.phase);
+    expect(phaseNames).toContain("cleanup");
+  });
+
+  it("sequential path is unchanged when no phase has depends_on", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult());
+
+    const result = await runWorkflow(SIMPLE_WORKFLOW, BASE_CTX, {} as never, {});
+    expect(result.success).toBe(true);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // architect + executor
+  });
+
+  it("unexpected throw in executeAgent marks phase failed and overall success=false", async () => {
+    // architect succeeds, executor_a throws (unexpected exception, not a normal fail result)
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("architect done")) // architect
+      .mockRejectedValueOnce(new Error("OOM: process killed"))   // executor_a throws
+      .mockResolvedValue(makeSuccessResult("done"));              // executor_b and any others
+
+    const result = await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {});
+
+    // Overall workflow must report failure — not silently succeed
+    expect(result.success).toBe(false);
+    // The failed phase must appear in phases[] with success=false
+    const failedPhase = result.phases.find((p) => p.phase === "executor_a");
+    expect(failedPhase).toBeDefined();
+    expect(failedPhase?.success).toBe(false);
+    // merge depends on both executor_a and executor_b — executor_a failed, so merge is skipped
+    const mergePhase = result.phases.find((p) => p.phase === "merge");
+    expect(mergePhase?.output).toContain("Skipped");
+  });
+});

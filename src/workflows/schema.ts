@@ -69,6 +69,12 @@ const PhaseDefinitionSchema = z.object({
       set_phase: z.string().optional(),
     })
     .optional(),
+  /** DAG: list of phase names this phase depends on */
+  depends_on: z.array(z.string()).optional(),
+  /** DAG: trigger rule for this phase — when to run based on dependency outcomes */
+  trigger_rule: z.enum(["all_success", "one_success", "none_failed_min_one_success", "all_done"]).optional(),
+  /** DAG: variable name to store the output of this phase for use in downstream phases */
+  output_var: z.string().optional(),
 });
 
 export type PhaseDefinition = z.infer<typeof PhaseDefinitionSchema>;
