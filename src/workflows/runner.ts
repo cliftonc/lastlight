@@ -909,6 +909,7 @@ async function runDagWorkflow(
 
     // Dispatch all ready nodes concurrently
     const nodePromises = ready.map(async (node) => {
+      try {
       const phase = phaseMap.get(node.name)!;
       await onStart(node.name);
 
@@ -916,7 +917,7 @@ async function runDagWorkflow(
       if (phase.type === "context" || !phase.type) {
         const r: PhaseResult = { phase: node.name, success: true, output: "Context assembled" };
         await onEnd(node.name, r);
-        return { node, result: r, paused: false, alreadyPushed: true };
+        return { node, result: r, paused: false, alreadyPushed: false };
       }
 
       // Phase with no prompt — skip
@@ -1042,6 +1043,11 @@ async function runDagWorkflow(
       const { result, paused } = await executeSinglePhase(phase, node.name);
       await onEnd(node.name, result);
       return { node, result, paused: paused ?? false, alreadyPushed: false };
+      } catch (err) {
+        console.error(`[dag] Phase "${node.name}" threw unexpectedly:`, err);
+        const result: PhaseResult = { phase: node.name, success: false, error: String(err), output: "" };
+        return { node, result, paused: false, alreadyPushed: false };
+      }
     });
 
     const settled = await Promise.allSettled(nodePromises);
@@ -1061,7 +1067,7 @@ async function runDagWorkflow(
 
       if (paused) {
         anyPaused = true;
-        node.status = "succeeded"; // treat paused node as succeeded for DAG purposes
+        node.status = "succeeded"; // treat paused as succeeded so downstream trigger rules fire correctly — the workflow will resume from this node's successors after approval
         continue;
       }
 

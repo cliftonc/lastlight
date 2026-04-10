@@ -834,4 +834,24 @@ describe("runWorkflow — DAG parallel execution", () => {
     expect(result.success).toBe(true);
     expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // architect + executor
   });
+
+  it("unexpected throw in executeAgent marks phase failed and overall success=false", async () => {
+    // architect succeeds, executor_a throws (unexpected exception, not a normal fail result)
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("architect done")) // architect
+      .mockRejectedValueOnce(new Error("OOM: process killed"))   // executor_a throws
+      .mockResolvedValue(makeSuccessResult("done"));              // executor_b and any others
+
+    const result = await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {});
+
+    // Overall workflow must report failure — not silently succeed
+    expect(result.success).toBe(false);
+    // The failed phase must appear in phases[] with success=false
+    const failedPhase = result.phases.find((p) => p.phase === "executor_a");
+    expect(failedPhase).toBeDefined();
+    expect(failedPhase?.success).toBe(false);
+    // merge depends on both executor_a and executor_b — executor_a failed, so merge is skipped
+    const mergePhase = result.phases.find((p) => p.phase === "merge");
+    expect(mergePhase?.output).toContain("Skipped");
+  });
 });

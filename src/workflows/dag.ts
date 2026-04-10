@@ -37,6 +37,9 @@ export function buildDag(phases: PhaseDefinition[]): DagNode[] {
   const WHITE = 0, GRAY = 1, BLACK = 2;
   const color = new Map<string, number>(nodes.map((n) => [n.name, WHITE]));
 
+  // NOTE: DFS follows depends_on edges (child → parent), the reverse of conventional
+  // execution-order direction. Cycle detection still works: a GRAY ancestor reachable
+  // from a descendant via depends_on edges indicates a cycle in this representation.
   function dfs(name: string, path: string[]): void {
     color.set(name, GRAY);
     for (const dep of nodeMap.get(name)!.depends_on) {
