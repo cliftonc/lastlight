@@ -19,10 +19,18 @@ vi.mock("./loader.js", () => ({
   loadPromptTemplate: vi.fn((path: string) => `TEMPLATE:${path}`),
 }));
 
+// Mock child_process for until_bash tests
+vi.mock("child_process", () => ({
+  execSync: vi.fn(),
+}));
+
+import { execSync } from "child_process";
 import { executeAgent } from "../engine/executor.js";
+import { loadPromptTemplate } from "./loader.js";
 import { runWorkflow } from "./runner.js";
 
 const mockExecuteAgent = vi.mocked(executeAgent);
+const mockLoadPromptTemplate = vi.mocked(loadPromptTemplate);
 
 const BASE_CTX: TemplateContext = {
   owner: "acme",
@@ -452,5 +460,273 @@ describe("runWorkflow — callbacks", () => {
     });
 
     expect(comments.some((c) => c.includes("failed"))).toBe(true);
+  });
+});
+
+const mockExecSync = vi.mocked(execSync);
+
+const WORKFLOW_WITH_GENERIC_LOOP: BuildWorkflowDefinition = {
+  type: "build",
+  name: "loop-test",
+  phases: [
+    { name: "phase_0", type: "context" },
+    {
+      name: "implement",
+      type: "agent",
+      prompt: "prompts/implement.md",
+      generic_loop: {
+        max_iterations: 5,
+        until_bash: "npm test",
+        interactive: false,
+        fresh_context: false,
+      },
+    },
+  ],
+};
+
+describe("runWorkflow — generic loop node", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("completes on first iteration when until_bash exits 0", async () => {
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("tests pass"));
+    mockExecSync.mockReturnValueOnce(Buffer.from("")); // exit 0
+
+    const started: string[] = [];
+    const result = await runWorkflow(WORKFLOW_WITH_GENERIC_LOOP, BASE_CTX, {} as never, {
+      onPhaseStart: async (p) => { started.push(p); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+    expect(started).toContain("implement_iter_1");
+    expect(started).not.toContain("implement_iter_2");
+  });
+
+  it("iterates when until_bash exits non-zero then completes on exit 0", async () => {
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("attempt 1"))
+      .mockResolvedValueOnce(makeSuccessResult("attempt 2"));
+    mockExecSync
+      .mockImplementationOnce(() => { throw new Error("exit 1"); }) // iteration 1 fails
+      .mockReturnValueOnce(Buffer.from("")); // iteration 2 passes
+
+    const started: string[] = [];
+    const result = await runWorkflow(WORKFLOW_WITH_GENERIC_LOOP, BASE_CTX, {} as never, {
+      onPhaseStart: async (p) => { started.push(p); },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
+    expect(started).toContain("implement_iter_1");
+    expect(started).toContain("implement_iter_2");
+    expect(started).not.toContain("implement_iter_3");
+  });
+
+  it("stops at max_iterations when condition is never met", async () => {
+    // Always fail the bash check
+    mockExecSync.mockImplementation(() => { throw new Error("exit 1"); });
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult("still failing"));
+
+    const comments: string[] = [];
+    const result = await runWorkflow(WORKFLOW_WITH_GENERIC_LOOP, BASE_CTX, {} as never, {
+      postComment: async (msg) => { comments.push(msg); },
+    });
+
+    expect(result.success).toBe(true); // workflow itself doesn't fail — just loop exhausted
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(5); // max_iterations = 5
+    expect(comments.some((c) => c.includes("max iterations"))).toBe(true);
+  });
+
+  it("completes immediately when until expression is true on first output", async () => {
+    const workflow: BuildWorkflowDefinition = {
+      type: "build",
+      name: "expr-loop",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "check",
+          type: "agent",
+          prompt: "prompts/check.md",
+          generic_loop: {
+            max_iterations: 3,
+            until: "output.contains('PASS')",
+            interactive: false,
+            fresh_context: false,
+          },
+        },
+      ],
+    };
+
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("All tests PASS"));
+
+    const result = await runWorkflow(workflow, BASE_CTX, {} as never, {});
+
+    expect(result.success).toBe(true);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("iterates when until expression is false then stops when true", async () => {
+    const workflow: BuildWorkflowDefinition = {
+      type: "build",
+      name: "expr-loop-2",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "refine",
+          type: "agent",
+          prompt: "prompts/refine.md",
+          generic_loop: {
+            max_iterations: 4,
+            until: "output.contains('DONE')",
+            interactive: false,
+            fresh_context: false,
+          },
+        },
+      ],
+    };
+
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("still working"))
+      .mockResolvedValueOnce(makeSuccessResult("DONE"));
+
+    const result = await runWorkflow(workflow, BASE_CTX, {} as never, {});
+
+    expect(result.success).toBe(true);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it("fresh_context: true does not pass previousOutput on subsequent iterations", async () => {
+    const workflow: BuildWorkflowDefinition = {
+      type: "build",
+      name: "fresh-ctx",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "task",
+          type: "agent",
+          prompt: "prompts/task.md",
+          generic_loop: {
+            max_iterations: 3,
+            until_bash: "npm test",
+            interactive: false,
+            fresh_context: true,
+          },
+        },
+      ],
+    };
+
+    const capturedPrompts: string[] = [];
+    mockExecuteAgent.mockImplementation(async (prompt: string) => {
+      capturedPrompts.push(prompt);
+      return makeSuccessResult("iteration output");
+    });
+    mockExecSync
+      .mockImplementationOnce(() => { throw new Error("exit 1"); })
+      .mockReturnValueOnce(Buffer.from(""));
+
+    await runWorkflow(workflow, BASE_CTX, {} as never, {});
+
+    // Both prompts should NOT contain the first iteration's output
+    // (fresh_context resets previousOutput each time)
+    expect(capturedPrompts[1]).not.toContain("iteration output");
+  });
+
+  it("fresh_context: false passes previousOutput to subsequent iterations", async () => {
+    const workflow: BuildWorkflowDefinition = {
+      type: "build",
+      name: "accum-ctx",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "build",
+          type: "agent",
+          prompt: "prompts/build.md",
+          generic_loop: {
+            max_iterations: 3,
+            until_bash: "npm test",
+            interactive: false,
+            fresh_context: false,
+          },
+        },
+      ],
+    };
+
+    // Make the loader return a template that uses {{previousOutput}} so we can
+    // verify the context variable is passed through to the rendered prompt
+    mockLoadPromptTemplate.mockImplementation(() => "Previous: {{previousOutput}}");
+
+    const capturedPrompts: string[] = [];
+    mockExecuteAgent.mockImplementation(async (prompt: string) => {
+      capturedPrompts.push(prompt);
+      return makeSuccessResult("iteration output ABC");
+    });
+    mockExecSync
+      .mockImplementationOnce(() => { throw new Error("exit 1"); })
+      .mockReturnValueOnce(Buffer.from(""));
+
+    await runWorkflow(workflow, BASE_CTX, {} as never, {});
+
+    // Second prompt should include the previous iteration's output
+    expect(capturedPrompts[1]).toContain("iteration output ABC");
+  });
+
+  it("interactive mode pauses workflow after first iteration", async () => {
+    const workflow: BuildWorkflowDefinition = {
+      type: "build",
+      name: "interactive-loop",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "explore",
+          type: "agent",
+          prompt: "prompts/explore.md",
+          generic_loop: {
+            max_iterations: 3,
+            until: "output.contains('FINAL')",
+            interactive: true,
+            gate_message: "Review iteration output before continuing",
+            fresh_context: false,
+          },
+        },
+      ],
+    };
+
+    // First iteration does not satisfy the until condition
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("progress so far"));
+
+    const db = makeMockDb();
+    const comments: string[] = [];
+
+    const result = await runWorkflow(
+      workflow,
+      BASE_CTX,
+      {} as never,
+      { postComment: async (msg) => { comments.push(msg); } },
+      db,
+      undefined,
+      undefined,
+      "wf-loop-1",
+    );
+
+    expect(result.paused).toBe(true);
+    expect(result.success).toBe(true);
+    expect(db.createApproval).toHaveBeenCalled();
+    expect(db.pauseWorkflowRun).toHaveBeenCalled();
+    expect(comments.some((c) => c.includes("approval required"))).toBe(true);
+  });
+
+  it("fails workflow if an iteration agent call fails", async () => {
+    mockExecSync.mockImplementation(() => { throw new Error("exit 1"); });
+    mockExecuteAgent.mockResolvedValueOnce(makeFailResult("oom killed"));
+
+    const comments: string[] = [];
+    const result = await runWorkflow(WORKFLOW_WITH_GENERIC_LOOP, BASE_CTX, {} as never, {
+      postComment: async (msg) => { comments.push(msg); },
+    });
+
+    expect(result.success).toBe(false);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
   });
 });

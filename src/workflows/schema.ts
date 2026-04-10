@@ -27,6 +27,24 @@ const PhaseLoopSchema = z.object({
   approval_gate: z.string().optional(),
 });
 
+const GenericLoopSchema = z
+  .object({
+    max_iterations: z.number().int().positive(),
+    /** Expression to evaluate for completion: "output.contains('PASS')" or "verdict == 'APPROVED'" */
+    until: z.string().optional(),
+    /** Shell command: exit 0 = loop complete, non-zero = continue */
+    until_bash: z.string().optional(),
+    /** Pause for human approval between iterations */
+    interactive: z.boolean().default(false),
+    /** Message shown at the interactive gate */
+    gate_message: z.string().optional(),
+    /** Reset agent context each iteration (don't pass previousOutput) */
+    fresh_context: z.boolean().default(false),
+  })
+  .refine((v) => v.until !== undefined || v.until_bash !== undefined, {
+    message: "generic_loop requires at least one of: until, until_bash",
+  });
+
 // ── Phase definition ──────────────────────────────────────────────────
 
 const PhaseDefinitionSchema = z.object({
@@ -41,6 +59,8 @@ const PhaseDefinitionSchema = z.object({
   approval_gate: z.string().optional(),
   /** Loop configuration for reviewer-style looping phases */
   loop: PhaseLoopSchema.optional(),
+  /** Generic loop configuration — expression/bash-based completion conditions */
+  generic_loop: GenericLoopSchema.optional(),
   /** Rules applied to agent output */
   on_output: PhaseOnOutputSchema.optional(),
   /** Actions taken on successful completion */
@@ -53,6 +73,7 @@ const PhaseDefinitionSchema = z.object({
 
 export type PhaseDefinition = z.infer<typeof PhaseDefinitionSchema>;
 export type PhaseLoop = z.infer<typeof PhaseLoopSchema>;
+export type GenericLoop = z.infer<typeof GenericLoopSchema>;
 export type OutputRule = z.infer<typeof OutputRuleSchema>;
 
 // ── Build workflow ────────────────────────────────────────────────────

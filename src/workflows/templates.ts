@@ -44,6 +44,11 @@ export interface TemplateContext {
   // Optional: context snapshot (for architect prompt)
   contextSnapshot?: string;
 
+  // Optional: available during generic loop iterations
+  iteration?: number;
+  maxIterations?: number;
+  previousOutput?: string;
+
   // Arbitrary extra context
   [key: string]: unknown;
 }
