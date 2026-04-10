@@ -81,3 +81,9 @@ There is no test covering the scenario where `executeAgent` throws (as opposed t
    Start at  14:06:49
    Duration  2.14s (transform 416ms, setup 0ms, import 671ms, tests 243ms, environment 1ms)
 ```
+
+## Re-review after Fix Cycle 1
+
+VERDICT: APPROVED
+
+All five issues from the initial review are addressed. The important bug (rejected promise leaving a node stuck in `"running"` with silent downstream abandonment) is fixed: the entire `nodePromise` lambda body is wrapped in a `try/catch` that catches unexpected throws, constructs a `PhaseResult` with `success: false`, and returns it so the settled loop correctly sets `node.status = "failed"`, pushes the error result to `phases[]`, and triggers `db.updateNodeStatus`. The context-phase `alreadyPushed` fix is correct — changing to `false` lets the settled loop push context results to `phases[]`, matching sequential-path behavior. The new test (`"unexpected throw in executeAgent marks phase failed and overall success=false"`) exercises the throw path end-to-end and asserts all three required properties. Both nit comments were added. All 202 tests pass; `tsc --noEmit` is clean. One minor gap: `onEnd` is not called in the catch block, so callers using `onPhaseEnd` won't receive notification for unexpected-throw failures — but this is a notification gap only (data correctness is unaffected), was not in the original review, and does not warrant blocking merge.
