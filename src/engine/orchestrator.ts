@@ -706,19 +706,52 @@ function buildPrPrompt(req: BuildRequest, branch: string, approved: boolean, fix
     ? ""
     : `\n\nNote: There are unresolved reviewer issues after ${fixCycles} fix cycles. See reviewer-verdict.md on the branch.`;
 
+  // Build absolute GitHub URLs to every artifact the build cycle produces.
+  // Relative markdown links (e.g. .lastlight/issue-3/architect-plan.md) do
+  // not resolve in PR descriptions — they must be full https URLs that
+  // include the branch ref.
+  const branchUrl = (file: string) =>
+    `https://github.com/${req.owner}/${req.repo}/blob/${encodeURIComponent(branch)}/.lastlight/issue-${req.issueNumber}/${file}`;
+
+  // Each entry: filename on the branch + label that shows in the PR body.
+  // Conditionally included files (e.g. reviewer-verdict only when reviewer ran)
+  // are listed; the agent is instructed to skip any that don't exist on disk.
+  const docs = [
+    { file: "guardrails-report.md", label: "Guardrails report" },
+    { file: "architect-plan.md", label: "Architect plan" },
+    { file: "executor-summary.md", label: "Executor summary" },
+    { file: "reviewer-verdict.md", label: "Reviewer verdict" },
+    { file: "status.md", label: "Status" },
+  ];
+  const docList = docs
+    .map((d) => `  - [${d.label}](${branchUrl(d.file)})`)
+    .join("\n");
+
   return `Create a pull request for the work on branch ${branch}.
 
-Use the MCP tool create_pull_request:
+Use the MCP tool create_pull_request with the following:
 - owner: ${req.owner}
 - repo: ${req.repo}
 - head: ${branch}
 - base: main
 - title: A concise title describing the change (reference #${req.issueNumber})
-- body: Include:
-  - Closes #${req.issueNumber}
-  - Summary of changes
-  - Link to architect-plan.md and executor-summary.md on the branch
-  - Test results${note}
+- body: A markdown body that includes EXACTLY these sections in order:
+
+  Closes #${req.issueNumber}
+
+  ## Summary
+  (3-6 bullet points describing what changed)
+
+  ## Planning and execution docs
+${docList}
+
+  Before adding each link above, run \`ls -1 .lastlight/issue-${req.issueNumber}/\`
+  on the branch and OMIT any line whose file doesn't exist on disk. Use the
+  exact full https URLs above as written — do NOT shorten to relative paths,
+  they will not render in the PR description.
+
+  ## Test results
+  (paste the actual test/lint/typecheck output from executor-summary.md)${note}
 
 Then use add_issue_comment on issue #${req.issueNumber} to post the PR link.
 
