@@ -161,6 +161,9 @@ async function main() {
       sessionsDir: resolve(process.env.CLAUDE_HOME_DIR || "./data/claude-home"),
       adminPassword: process.env.ADMIN_PASSWORD ?? "",
       adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
+      adminNotifier: slackConnector
+        ? (msg: string) => slackConnector!.sendToDeliveryChannel(msg)
+        : undefined,
     });
     console.log(`[admin] Dashboard mounted at /admin`);
   }
