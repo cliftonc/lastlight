@@ -54,13 +54,15 @@ export async function checkApiUsage(
 
     let stdout = "";
     try {
+      // NOTE: do NOT pass --bare here. --bare disables OAuth credential
+      // reading and requires ANTHROPIC_API_KEY, which we don't have on this
+      // host (we authenticate via `claude /login` to a Claude subscription).
       const result = await exec("claude", [
         "--print", "reply with just: ok",
         "--output-format", "stream-json",
         "--verbose",
         "--max-turns", "1",
         "--model", process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
-        "--bare",
       ], {
         timeout: 30_000,
         env: { ...process.env, HOME: process.env.HOME || "/home/lastlight" },
