@@ -84,3 +84,9 @@ When the loop exhausts `max_iterations` without the condition being met (line 54
 ```
 
 TypeScript: `npx tsc --noEmit` — 0 errors.
+
+## Re-review after Fix Cycle 1
+
+VERDICT: APPROVED
+
+Both Important issues are resolved. The `execSync` call at `src/workflows/runner.ts:501` now passes `cwd: config.sandboxDir ?? config.cwd`, matching the architect's spec. The `!=` evaluator at `src/workflows/loop-eval.ts:42` now returns `false` for absent context variables via the `if (!(key in ctx)) return false` guard, consistent with the `==` evaluator. A new test covering the absent-variable `!=` case was added (`src/workflows/loop-eval.test.ts`), bringing the total to 167 passing tests. The two open suggestions (OR/AND semantics documentation, `persistPhase` on exhaustion path) were not addressed, but both were non-blocking and remain acceptable as follow-up work.
