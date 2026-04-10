@@ -204,13 +204,25 @@ async function main() {
   // API endpoint for build cycle triggers (issue URL)
   githubConnector?.honoApp.post("/api/build", async (c) => {
     const body = await c.req.json();
-    const { owner, repo, issueNumber, issueTitle, issueBody, sender } = body;
+    const { owner, repo, issueNumber, issueTitle, issueBody, issueLabels, sender } = body;
 
     if (!owner || !repo || !issueNumber) {
       return c.json({ error: "Missing owner, repo, or issueNumber" }, 400);
     }
 
     console.log(`[api] CLI build triggered: ${owner}/${repo}#${issueNumber}`);
+
+    // If labels weren't supplied, fetch them so the orchestrator can detect
+    // bootstrap tasks (lastlight:bootstrap label) and skip the BLOCKED gate.
+    let resolvedLabels: string[] | undefined = issueLabels;
+    if (!resolvedLabels && github) {
+      try {
+        const issue = await github.getIssue(owner, repo, issueNumber);
+        resolvedLabels = (issue.labels || []).map((l: any) =>
+          typeof l === "string" ? l : l.name,
+        ).filter(Boolean);
+      } catch { /* non-fatal */ }
+    }
 
     // Run build cycle asynchronously
     runBuildCycle(
@@ -220,6 +232,7 @@ async function main() {
           issueNumber,
           issueTitle: issueTitle || `Issue #${issueNumber}`,
           issueBody: issueBody || "",
+          issueLabels: resolvedLabels,
           sender: sender || "cli",
         },
         {
@@ -409,11 +422,17 @@ async function main() {
       // Fetch full issue details if we don't have them
       let issueTitle = (context.title as string) || "";
       let issueBody = (context.body as string) || "";
-      if (github && (!issueTitle || !issueBody)) {
+      let issueLabels: string[] = (context.labels as string[]) || [];
+      if (github && (!issueTitle || !issueBody || issueLabels.length === 0)) {
         try {
           const issue = await github.getIssue(owner, repo, issueNumber);
           issueTitle = issueTitle || issue.title;
           issueBody = issueBody || issue.body || "";
+          if (issueLabels.length === 0) {
+            issueLabels = (issue.labels || []).map((l: any) =>
+              typeof l === "string" ? l : l.name,
+            ).filter(Boolean);
+          }
         } catch (err: any) {
           console.warn(`[event] Could not fetch issue: ${err.message}`);
         }
@@ -441,6 +460,7 @@ async function main() {
           issueNumber,
           issueTitle: issueTitle || `Issue #${issueNumber}`,
           issueBody,
+          issueLabels,
           commentBody: context.commentBody as string,
           sender: (context.sender as string) || "unknown",
         },

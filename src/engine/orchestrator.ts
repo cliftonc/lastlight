@@ -16,8 +16,29 @@ export interface BuildRequest {
   issueNumber: number;
   issueTitle: string;
   issueBody: string;
+  /** Labels currently on the issue — used to detect bootstrap tasks. */
+  issueLabels?: string[];
   commentBody?: string;
   sender: string;
+}
+
+/** Label applied to issues that exist solely to set up missing guardrails. */
+export const BOOTSTRAP_LABEL = "lastlight:bootstrap";
+
+/**
+ * A "bootstrap" task is one whose explicit purpose is to add the missing
+ * foundational tooling that the guardrails check looks for (test framework,
+ * linter, type checker, etc.). For these issues we still RUN the guardrails
+ * check (so the agent has an up-to-date report) but we don't BLOCK on it —
+ * otherwise the chicken-and-egg makes the issue impossible to build.
+ *
+ * Detection: explicit label, or a recognisable title prefix the bot itself
+ * applies when it creates the blocker issue.
+ */
+function isBootstrapTask(req: BuildRequest): boolean {
+  if (req.issueLabels?.includes(BOOTSTRAP_LABEL)) return true;
+  const title = (req.issueTitle || "").toLowerCase();
+  return title.startsWith("guardrails:") || title.startsWith("[guardrails]");
 }
 
 interface PhaseResult {
@@ -284,12 +305,30 @@ Branch: ${branch}
 
       const guardrailsOutput = gr.result.output?.toUpperCase() || "";
       if (guardrailsOutput.includes("BLOCKED")) {
-        await notify(
-          `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
-          `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\``
-        );
-        failWorkflow("guardrails BLOCKED");
-        return { success: false, phases };
+        if (isBootstrapTask(request)) {
+          await notify(
+            `**Guardrails check: BLOCKED** — but this is a bootstrap task ` +
+            `(label \`${BOOTSTRAP_LABEL}\` or "guardrails:" title prefix detected). ` +
+            `Proceeding with the build cycle so the architect can plan, and the ` +
+            `executor can install, the missing tooling. The guardrails report at ` +
+            `\`.lastlight/issue-${issueNumber}/guardrails-report.md\` lists what's missing.`
+          );
+          // fall through to architect — don't return
+        } else {
+          // Mark the DB record as failed so a re-run on this trigger isn't
+          // skipped by the dedup check in runPhase. The agent SDK call itself
+          // succeeded (it produced the report), but the business outcome was
+          // a block — and the user may have fixed the underlying issue and
+          // expects the next build attempt to actually re-check.
+          db?.markLatestAsFailed(`build:guardrails`, triggerId, "BLOCKED: missing foundational tooling");
+          failWorkflow("guardrails BLOCKED");
+          await notify(
+            `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
+            `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\`. ` +
+            `Once you've added the missing tooling, ask me to build this issue again — the check will re-run against the current repo state.`
+          );
+          return { success: false, phases };
+        }
       }
 
       if (!gr.result.success) {
@@ -546,7 +585,11 @@ AFTER CHECKING:
 5. git push -u origin HEAD
 
 IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests completely broken):
-- Use the MCP tool create_issue to create a guardrails issue in the repo
+- Use the MCP tool create_issue to create a guardrails issue in the repo with:
+  - title prefixed exactly with "guardrails:" (e.g. "guardrails: no test framework configured")
+  - labels including ${BOOTSTRAP_LABEL} so subsequent build attempts on this issue
+    can detect that the task IS to set up guardrails (the orchestrator will then
+    skip the BLOCKED gate and let the executor install the missing tooling).
 - Use add_issue_comment on issue #${req.issueNumber} to link the guardrails issue
 - OUTPUT must include: BLOCKED
 
@@ -706,19 +749,52 @@ function buildPrPrompt(req: BuildRequest, branch: string, approved: boolean, fix
     ? ""
     : `\n\nNote: There are unresolved reviewer issues after ${fixCycles} fix cycles. See reviewer-verdict.md on the branch.`;
 
+  // Build absolute GitHub URLs to every artifact the build cycle produces.
+  // Relative markdown links (e.g. .lastlight/issue-3/architect-plan.md) do
+  // not resolve in PR descriptions — they must be full https URLs that
+  // include the branch ref.
+  const branchUrl = (file: string) =>
+    `https://github.com/${req.owner}/${req.repo}/blob/${encodeURIComponent(branch)}/.lastlight/issue-${req.issueNumber}/${file}`;
+
+  // Each entry: filename on the branch + label that shows in the PR body.
+  // Conditionally included files (e.g. reviewer-verdict only when reviewer ran)
+  // are listed; the agent is instructed to skip any that don't exist on disk.
+  const docs = [
+    { file: "guardrails-report.md", label: "Guardrails report" },
+    { file: "architect-plan.md", label: "Architect plan" },
+    { file: "executor-summary.md", label: "Executor summary" },
+    { file: "reviewer-verdict.md", label: "Reviewer verdict" },
+    { file: "status.md", label: "Status" },
+  ];
+  const docList = docs
+    .map((d) => `  - [${d.label}](${branchUrl(d.file)})`)
+    .join("\n");
+
   return `Create a pull request for the work on branch ${branch}.
 
-Use the MCP tool create_pull_request:
+Use the MCP tool create_pull_request with the following:
 - owner: ${req.owner}
 - repo: ${req.repo}
 - head: ${branch}
 - base: main
 - title: A concise title describing the change (reference #${req.issueNumber})
-- body: Include:
-  - Closes #${req.issueNumber}
-  - Summary of changes
-  - Link to architect-plan.md and executor-summary.md on the branch
-  - Test results${note}
+- body: A markdown body that includes EXACTLY these sections in order:
+
+  Closes #${req.issueNumber}
+
+  ## Summary
+  (3-6 bullet points describing what changed)
+
+  ## Planning and execution docs
+${docList}
+
+  Before adding each link above, run \`ls -1 .lastlight/issue-${req.issueNumber}/\`
+  on the branch and OMIT any line whose file doesn't exist on disk. Use the
+  exact full https URLs above as written — do NOT shorten to relative paths,
+  they will not render in the PR description.
+
+  ## Test results
+  (paste the actual test/lint/typecheck output from executor-summary.md)${note}
 
 Then use add_issue_comment on issue #${req.issueNumber} to post the PR link.
 

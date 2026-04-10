@@ -17,7 +17,9 @@
     "dev:server": "tsx watch src/index.ts",
     "dev:dashboard": "npm run dev -w dashboard",
     "cli": "tsx src/cli.ts",
-    "build:issue": "tsx src/cli.ts"
+    "build:issue": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",

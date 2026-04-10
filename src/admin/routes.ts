@@ -288,7 +288,8 @@ export function createAdminRoutes(
 
   // Workflow runs
   app.get("/workflow-runs", (c) => {
-    const limit = Number(c.req.query("limit") ?? 20);
+    const rawLimit = c.req.query("limit");
+    const limit = Math.min(Math.max(parseInt(rawLimit ?? "20", 10) || 20, 1), 100);
     const runs = db.recentWorkflowRuns(limit);
     return c.json({ workflowRuns: runs });
   });
