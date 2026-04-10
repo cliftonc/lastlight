@@ -446,8 +446,37 @@ Branch: ${branch}
     phases.push({ phase: reviewLabel, ...pick(rr.result) });
     await onEnd(reviewLabel, phases[phases.length - 1]);
 
-    const verdict = rr.result.output?.toUpperCase() || "";
-    if (verdict.includes("APPROVED")) {
+    // Parse the reviewer verdict.
+    //
+    // The reviewer prompt requires a specific machine-readable marker line
+    // (`VERDICT: APPROVED` or `VERDICT: REQUEST_CHANGES`) on its own line in
+    // the output. We match that line strictly with a multiline regex.
+    //
+    // Past bug: a substring `includes("APPROVED")` check matched on words
+    // like "approval" / "approved" that frequently appear in the bodies of
+    // REQUEST_CHANGES verdicts (when the changes being reviewed touch
+    // approval-related code), causing the orchestrator to skip the fix loop
+    // and ship a broken PR. The new marker leaves no room for ambiguity.
+    //
+    // We layer two safeguards:
+    //   1. The strict marker match (preferred — produced by the new prompt)
+    //   2. A whole-word REQUEST_CHANGES fallback if the marker is missing
+    //      (older runs / drift). REQUEST_CHANGES is the safe default —
+    //      worst case the user gets a fix loop they didn't strictly need.
+    const reviewerOutput = (rr.result.output || "").trim();
+    const verdictMarker = reviewerOutput.match(/^\s*VERDICT:\s*(APPROVED|REQUEST_CHANGES)\s*$/im);
+    let isApproved: boolean;
+    if (verdictMarker) {
+      isApproved = verdictMarker[1].toUpperCase() === "APPROVED";
+    } else {
+      // No marker — fall back to safe-default detection.
+      const upper = reviewerOutput.toUpperCase();
+      const hasRequestChanges = /\bREQUEST_CHANGES\b/.test(upper);
+      isApproved = !hasRequestChanges && /^APPROVED\b/.test(upper);
+      console.warn(`[orchestrator] Reviewer output missing VERDICT: marker — using fallback detection (isApproved=${isApproved})`);
+    }
+
+    if (isApproved) {
       approved = true;
       persistPhase(reviewLabel, "APPROVED");
       await notify(`**Review: APPROVED** — proceeding to PR.`);
@@ -687,11 +716,39 @@ CHECK:
 DO NOT review unchanged files or flag pre-existing issues.
 
 AFTER REVIEW:
-1. Write .lastlight/issue-${req.issueNumber}/reviewer-verdict.md (verdict, issues with file:line, test results, suggestions)
-2. Update status.md
+1. Write .lastlight/issue-${req.issueNumber}/reviewer-verdict.md with the following structure (exact headings):
+
+   # Reviewer Verdict — Issue #${req.issueNumber}
+
+   VERDICT: APPROVED      ← or REQUEST_CHANGES, exactly one of these, on its own line
+
+   ## Summary
+   (1–3 sentences)
+
+   ## Issues
+   ### Critical
+   ### Important
+   ### Suggestions
+   ### Nits
+
+   ## Test Results
+   (paste actual output)
+
+2. Update status.md with reviewer_status: APPROVED or REQUEST_CHANGES (matching the verdict)
 3. git add .lastlight/ && git commit -m "review: verdict for #${req.issueNumber}" && git push origin HEAD
 
-OUTPUT: Exactly one of APPROVED or REQUEST_CHANGES, followed by a brief summary.`;
+OUTPUT FORMAT — your stdout MUST start with one of these two lines, EXACTLY, on its own line, with no leading whitespace:
+
+   VERDICT: APPROVED
+   VERDICT: REQUEST_CHANGES
+
+The orchestrator parses this marker to decide whether to run the fix loop. Do
+NOT use any other phrasing for the verdict on the first line — words like
+"approved", "approval", "request changes", or "looks good" elsewhere in the
+body are fine, but the first non-empty line MUST be exactly the marker above.
+
+After the marker line, write a 2–5 sentence summary of the most important
+findings.`;
 }
 
 function buildReReviewPrompt(req: BuildRequest, branch: string, fixCycle: number): string {
@@ -715,11 +772,20 @@ CHECK:
 DO NOT re-review the entire changeset. Only verify your previous issues were fixed.
 
 AFTER REVIEW:
-1. APPEND to .lastlight/issue-${req.issueNumber}/reviewer-verdict.md under heading "## Re-review after Fix Cycle ${fixCycle}" (preserve the original verdict above)
-2. Update status.md
+1. APPEND to .lastlight/issue-${req.issueNumber}/reviewer-verdict.md under heading "## Re-review after Fix Cycle ${fixCycle}" (preserve the original verdict above). The new section MUST itself contain a "VERDICT: APPROVED" or "VERDICT: REQUEST_CHANGES" line.
+2. Update status.md with reviewer_status: APPROVED or REQUEST_CHANGES
 3. git add .lastlight/ && git commit -m "review: re-review after fix cycle ${fixCycle} for #${req.issueNumber}" && git push origin HEAD
 
-OUTPUT: Exactly one of APPROVED or REQUEST_CHANGES, followed by a brief summary.`;
+OUTPUT FORMAT — your stdout MUST start with one of these two lines, EXACTLY, on its own line, with no leading whitespace:
+
+   VERDICT: APPROVED
+   VERDICT: REQUEST_CHANGES
+
+The orchestrator parses this marker to decide whether to run another fix
+cycle. Do NOT use any other phrasing for the verdict on the first line.
+
+After the marker line, write a 2–5 sentence summary of which previous issues
+were addressed and any remaining concerns.`;
 }
 
 function buildFixPrompt(req: BuildRequest, branch: string, cycle: number): string {
