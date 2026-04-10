@@ -45,6 +45,10 @@ describe("evalUntilExpression — inequality (!=)", () => {
   it("returns false when context variable equals the value", () => {
     expect(evalUntilExpression("verdict != 'FAILED'", { output: "", verdict: "FAILED" })).toBe(false);
   });
+
+  it("returns false when variable is absent from context", () => {
+    expect(evalUntilExpression("missing != 'value'", { output: "" })).toBe(false);
+  });
 });
 
 describe("evalUntilExpression — invalid / unrecognised expressions", () => {

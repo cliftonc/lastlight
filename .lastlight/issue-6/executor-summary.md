@@ -49,3 +49,37 @@ $ npx tsc --noEmit
 ## Known Issues
 
 None.
+
+## Fix Cycle 1
+
+### Issues Fixed
+
+**1. `until_bash` missing `cwd` (`src/workflows/runner.ts:503`)** — Added `cwd: config.sandboxDir ?? config.cwd` to the `execSync` call so the bash condition runs in the sandbox repo directory, not the server's working directory.
+
+**2. `!=` evaluator returns `true` for absent context variables (`src/workflows/loop-eval.ts:42`)** — Added `if (!(key in ctx)) return false;` guard before the inequality check, matching the safe-default behaviour of the `==` evaluator.
+
+**3. Added missing test for absent-variable `!=` edge case (`src/workflows/loop-eval.test.ts`)** — New test: `returns false when variable is absent from context` in the `!=` describe block.
+
+### Test Results
+
+```
+ RUN  v4.1.4 /home/agent/workspace/lastlight
+
+ Test Files  9 passed (9)
+      Tests  167 passed (167)
+   Start at  10:47:09
+   Duration  1.72s (transform 288ms, setup 0ms, import 497ms, tests 194ms, environment 1ms)
+```
+
+167 tests pass (1 new test added for the absent-variable `!=` case).
+
+### Lint Results
+
+No linter configured.
+
+### Typecheck Results
+
+```
+$ npx tsc --noEmit
+(no output — 0 errors)
+```

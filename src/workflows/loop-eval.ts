@@ -39,6 +39,7 @@ export function evalUntilExpression(expr: string, ctx: LoopEvalContext): boolean
   const neqMatch = trimmed.match(/^(\w+)\s*!=\s*['"](.+)['"]$/);
   if (neqMatch) {
     const [, key, value] = neqMatch;
+    if (!(key in ctx)) return false; // absent variable — safe default
     return ctx[key] !== value;
   }
 

@@ -500,7 +500,7 @@ export async function runWorkflow(
         // Evaluate until_bash
         if (!conditionMet && loop.until_bash) {
           try {
-            execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe" });
+            execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe", cwd: config.sandboxDir ?? config.cwd });
             conditionMet = true; // exit 0
           } catch {
             conditionMet = false; // non-zero exit
