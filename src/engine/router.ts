@@ -1,10 +1,21 @@
 import type { EventEnvelope } from "../connectors/types.js";
 import { classifyComment } from "./classifier.js";
+import { isManagedRepo, MANAGED_REPOS } from "../managed-repos.js";
 
 /** Skill name that should handle this event */
 export type RoutingResult =
   | { action: "skill"; skill: string; context: Record<string, unknown> }
+  | { action: "reply"; message: string }
   | { action: "ignore"; reason: string };
+
+/** Friendly reply when a Slack/CLI command targets an unmanaged repo. */
+function unmanagedRepoReply(repo: string): string {
+  return (
+    `❌ I'm not configured to work on \`${repo}\`.\n` +
+    `Managed repos: ${MANAGED_REPOS.map((r) => `\`${r}\``).join(", ")}.\n` +
+    `Ask cliftonc to add it.`
+  );
+}
 
 /** Author associations that can trigger builds via @mention */
 const MAINTAINER_ROLES = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
@@ -142,6 +153,9 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
       if (buildMatch) {
         const repo = buildMatch[1];
         const issueNumber = buildMatch[2] ? parseInt(buildMatch[2], 10) : undefined;
+        if (!isManagedRepo(repo)) {
+          return { action: "reply", message: unmanagedRepoReply(repo) };
+        }
         return {
           action: "skill",
           skill: "github-orchestrator",
@@ -158,11 +172,15 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
       // Command: /triage owner/repo — trigger triage
       const triageMatch = text.match(/^\/triage\s+(.+)$/i);
       if (triageMatch) {
+        const repo = triageMatch[1];
+        if (!isManagedRepo(repo)) {
+          return { action: "reply", message: unmanagedRepoReply(repo) };
+        }
         return {
           action: "skill",
           skill: "issue-triage",
           context: {
-            repo: triageMatch[1],
+            repo,
             sender: envelope.sender,
             source: envelope.source,
           },
@@ -172,11 +190,15 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
       // Command: /review owner/repo — trigger PR review
       const reviewMatch = text.match(/^\/review\s+(.+)$/i);
       if (reviewMatch) {
+        const repo = reviewMatch[1];
+        if (!isManagedRepo(repo)) {
+          return { action: "reply", message: unmanagedRepoReply(repo) };
+        }
         return {
           action: "skill",
           skill: "pr-review",
           context: {
-            repo: reviewMatch[1],
+            repo,
             sender: envelope.sender,
             source: envelope.source,
           },

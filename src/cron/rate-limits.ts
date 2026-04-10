@@ -1,13 +1,40 @@
 import type { StateDb } from "../state/db.js";
 
+/** Component name used for the host claude CLI auth state in system_status. */
+export const HOST_CLAUDE_AUTH_COMPONENT = "host-claude-auth";
+
+/**
+ * Optional notifier — called once when the auth state transitions to degraded.
+ * Pass a SlackConnector's `sendToDeliveryChannel` (or any other channel).
+ */
+export type AdminNotifier = (text: string) => Promise<void>;
+
 /**
  * Check Claude usage limits by making a minimal Agent SDK call
  * and parsing the stream-json output for rate_limit_event and usage data.
  *
  * Works with Claude subscriptions (no API key needed).
+ *
+ * Behavior:
+ * - If the host claude CLI returns "Not logged in" / authentication_failed,
+ *   marks `system_status.host-claude-auth` as `degraded`, notifies the admin
+ *   on the first transition, and halts subsequent runs until cleared.
+ * - The capacity check creates a JSONL session file as a side effect — we
+ *   delete it after parsing so it doesn't pollute the dashboard Sessions list.
  */
-export async function checkApiUsage(db: StateDb): Promise<void> {
+export async function checkApiUsage(db: StateDb, notifyAdmin?: AdminNotifier): Promise<void> {
+  // Halt early if we're already in a degraded state — operator must clear it
+  // (e.g. after `claude /login` + recheck) before this cron resumes.
+  const existing = db.getSystemStatus(HOST_CLAUDE_AUTH_COMPONENT);
+  if (existing?.state === "degraded") {
+    console.log(`[usage] Skipping capacity check — host claude auth is degraded since ${existing.since}. Run claude /login on the host and trigger a recheck to resume.`);
+    return;
+  }
+
   const now = new Date().toISOString();
+  let capacityCheckSessionId = "";
+  let authFailed = false;
+  let authFailureReason = "";
 
   // ── Capacity & rate limit check via claude CLI ──
   try {
@@ -15,23 +42,47 @@ export async function checkApiUsage(db: StateDb): Promise<void> {
     const { promisify } = await import("util");
     const exec = promisify(execFile);
 
-    const { stdout } = await exec("claude", [
-      "--print", "reply with just: ok",
-      "--output-format", "stream-json",
-      "--verbose",
-      "--max-turns", "1",
-      "--model", process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
-      "--bare",
-    ], {
-      timeout: 30_000,
-      env: { ...process.env, HOME: process.env.HOME || "/home/lastlight" },
-    });
+    let stdout = "";
+    try {
+      const result = await exec("claude", [
+        "--print", "reply with just: ok",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-turns", "1",
+        "--model", process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
+        "--bare",
+      ], {
+        timeout: 30_000,
+        env: { ...process.env, HOME: process.env.HOME || "/home/lastlight" },
+      });
+      stdout = result.stdout;
+    } catch (execErr: any) {
+      // Non-zero exit (e.g. auth_failed) — claude still emits stream-json on stdout
+      stdout = execErr.stdout?.toString() || "";
+      if (!stdout) {
+        // No output at all — propagate the underlying failure
+        throw execErr;
+      }
+    }
 
     // Parse each JSON line from the stream output
     for (const line of stdout.split("\n")) {
       if (!line.startsWith("{")) continue;
       try {
         const msg = JSON.parse(line);
+
+        // Capture session id so we can delete the JSONL file afterwards
+        if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
+          capacityCheckSessionId = msg.session_id;
+        }
+
+        // Detect "Not logged in" — claude emits a synthetic assistant message
+        // with error: "authentication_failed" when the host CLI has no creds.
+        if (msg.type === "assistant" && msg.error === "authentication_failed") {
+          authFailed = true;
+          const text = msg.message?.content?.[0]?.text || "Not logged in";
+          authFailureReason = text;
+        }
 
         // Rate limit info from subscription
         if (msg.type === "rate_limit_event" && msg.rate_limit_info) {
@@ -67,10 +118,70 @@ export async function checkApiUsage(db: StateDb): Promise<void> {
       } catch { /* skip unparseable lines */ }
     }
   } catch (err: any) {
-    const isRateLimit = /rate.?limit|too many|capacity|throttl/i.test(err.message);
+    // The capacity check is best-effort — log and continue. Cleanup + status
+    // handling below should still run regardless of the failure mode.
     db.updateRateLimit("subscription:status", 0, now);
     console.warn(`[usage] Capacity check failed: ${err.message}`);
-    if (!isRateLimit) throw err;
+  }
+
+  // If the call surfaced an auth failure, mark the component degraded and
+  // notify the admin once on transition. Subsequent runs early-return above.
+  if (authFailed) {
+    const transitioned = db.setSystemStatus(
+      HOST_CLAUDE_AUTH_COMPONENT,
+      "degraded",
+      authFailureReason || "Host claude CLI is not logged in",
+    );
+    if (transitioned) {
+      console.error(`[usage] Host claude auth is now DEGRADED: ${authFailureReason}`);
+      if (notifyAdmin) {
+        const msg =
+          `:rotating_light: *Last Light: host claude CLI auth degraded*\n` +
+          `Reason: ${authFailureReason}\n` +
+          `Action: run \`docker exec -it --user lastlight lastlight-agent-1 claude /login\` and then trigger a recheck.\n` +
+          `The capacity-check cron is now halted to prevent log spam.`;
+        try {
+          await notifyAdmin(msg);
+        } catch (notifyErr: any) {
+          console.error(`[usage] Failed to notify admin: ${notifyErr.message}`);
+        }
+      }
+    }
+  } else {
+    // Successful run — clear any prior degraded state
+    const existing = db.getSystemStatus(HOST_CLAUDE_AUTH_COMPONENT);
+    if (existing && existing.state !== "ok") {
+      db.setSystemStatus(HOST_CLAUDE_AUTH_COMPONENT, "ok");
+      console.log(`[usage] Host claude auth recovered — state cleared`);
+      if (notifyAdmin) {
+        try {
+          await notifyAdmin(`:white_check_mark: Last Light: host claude CLI auth recovered. Capacity-check cron resuming normal operation.`);
+        } catch { /* non-fatal */ }
+      }
+    } else if (!existing) {
+      // First-ever successful run — initialize the state
+      db.setSystemStatus(HOST_CLAUDE_AUTH_COMPONENT, "ok");
+    }
+  }
+
+  // Run JSONL cleanup regardless of outcome (try/finally semantics).
+  {
+    // Delete the session JSONL file the capacity check created so it doesn't
+    // pollute the dashboard Sessions list. Best-effort — ignore failures.
+    if (capacityCheckSessionId) {
+      try {
+        const { unlink } = await import("fs/promises");
+        const { join } = await import("path");
+        const home = process.env.HOME || "/home/lastlight";
+        // claude encodes the project's cwd as the directory name, replacing
+        // path separators with dashes. e.g. /app -> -app
+        const projectDir = process.cwd().replace(/\//g, "-");
+        const sessionFile = join(home, ".claude", "projects", projectDir, `${capacityCheckSessionId}.jsonl`);
+        await unlink(sessionFile);
+      } catch {
+        /* file may not exist or claude may not have written it — ignore */
+      }
+    }
   }
 
   // ── Usage stats from our own execution records ──

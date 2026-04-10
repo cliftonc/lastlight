@@ -210,12 +210,19 @@ export class SessionReader {
     this.claudeHomeDir = claudeHomeDir;
   }
 
-  /** Find all project directories under claude-home/projects/ */
+  /** Find all project directories under claude-home/projects/.
+   *
+   *  Only sandbox sessions are surfaced — i.e. project dirs derived from a
+   *  sandbox workspace cwd (e.g. /home/agent/workspace -> -home-agent-workspace).
+   *  Host-process sessions (cwd /app -> -app) are excluded so the dashboard
+   *  isn't polluted by capacity-check stubs or other in-process work.
+   */
   private projectDirs(): string[] {
     const projectsDir = path.join(this.claudeHomeDir, "projects");
     try {
       return fs
         .readdirSync(projectsDir)
+        .filter((name) => name !== "-app")
         .map((d) => path.join(projectsDir, d))
         .filter((p) => fs.statSync(p).isDirectory());
     } catch {

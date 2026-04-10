@@ -224,6 +224,29 @@ export function createAdminRoutes(
     return c.json({ limits: db.getRateLimits() });
   });
 
+  // Component health states (e.g. host-claude-auth degraded after auth failure)
+  app.get("/system-status", (c) => {
+    return c.json({ statuses: db.listSystemStatus() });
+  });
+
+  // Manually trigger a recheck of the host claude CLI auth.
+  // Calls checkApiUsage which clears the degraded state on success.
+  app.post("/system-status/host-claude-auth/recheck", async (c) => {
+    try {
+      const { checkApiUsage } = await import("../cron/rate-limits.js");
+      // Clear existing degraded state so the cron actually runs the check
+      const existing = db.getSystemStatus("host-claude-auth");
+      if (existing?.state === "degraded") {
+        db.setSystemStatus("host-claude-auth", "rechecking", existing.reason || undefined);
+      }
+      await checkApiUsage(db);
+      const status = db.getSystemStatus("host-claude-auth");
+      return c.json({ status });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
   // Running Docker containers
   app.get("/containers", async (c) => {
     const containers = await listRunningContainers();

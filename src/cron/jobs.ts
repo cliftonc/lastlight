@@ -1,7 +1,5 @@
 import type { CronJob } from "./scheduler.js";
-
-/** Managed repositories — these get periodic triage and review */
-const MANAGED_REPOS = ["cliftonc/drizzle-cube", "cliftonc/drizby"];
+import { MANAGED_REPOS } from "../managed-repos.js";
 
 /**
  * Get cron jobs based on configuration.

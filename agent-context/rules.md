@@ -19,6 +19,7 @@ At the start of any task involving git operations:
 
 - cliftonc/drizzle-cube
 - cliftonc/drizby
+- cliftonc/lastlight
 
 **After cloning, always read the repo's own docs first:**
 1. Check for `CLAUDE.md`, `AGENTS.md`, or `CONTRIBUTING.md` in the repo root

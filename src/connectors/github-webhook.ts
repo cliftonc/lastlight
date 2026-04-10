@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { createHmac, timingSafeEqual } from "crypto";
 import type { Connector, EventEnvelope, EventType } from "./types.js";
+import { isManagedRepo } from "../managed-repos.js";
 
 export interface GitHubWebhookConfig {
   port: number;
@@ -93,6 +94,15 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
         senderLogin.endsWith("[bot]")
       ) {
         return c.json({ filtered: true, reason: "bot sender" }, 200);
+      }
+
+      // Filter out repos not in the managed allowlist. The GitHub App may be
+      // installed on additional repos but we only operate on those we explicitly
+      // manage. See src/managed-repos.ts.
+      const repoFullName = payload.repository?.full_name;
+      if (!isManagedRepo(repoFullName)) {
+        console.log(`[github] Filtered webhook for unmanaged repo: ${repoFullName}`);
+        return c.json({ filtered: true, reason: `repo not managed: ${repoFullName}` }, 200);
       }
 
       // Normalize to EventEnvelope

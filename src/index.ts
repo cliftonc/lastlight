@@ -258,6 +258,11 @@ async function main() {
       return;
     }
 
+    if (route.action === "reply") {
+      await envelope.reply(route.message);
+      return;
+    }
+
     const { skill, context } = route;
 
     // Chat messages: handle directly (no sandbox, low latency)
@@ -513,12 +518,17 @@ async function main() {
     console.log("[cron] Webhooks enabled — skipping issue/PR polling crons");
   }
 
-  // API usage/capacity checker — runs every 5 minutes, no sandbox needed
+  // API usage/capacity checker — runs every 30 minutes, no sandbox needed.
+  // Passes a Slack notifier so the cron can alert the admin if the host
+  // claude CLI auth degrades (it then halts itself until cleared).
   const { checkApiUsage } = await import("./cron/rate-limits.js");
+  const adminNotifier = slackConnector
+    ? (msg: string) => slackConnector!.sendToDeliveryChannel(msg)
+    : undefined;
   cron.registerDirect({
     name: "check-api-usage",
-    schedule: "*/5 * * * *",
-    handler: () => checkApiUsage(db),
+    schedule: "*/30 * * * *",
+    handler: () => checkApiUsage(db, adminNotifier),
   });
 
   // Start everything

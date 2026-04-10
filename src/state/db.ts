@@ -55,6 +55,14 @@ export class StateDb {
         updated_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS system_status (
+        component TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        reason TEXT,
+        since TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_executions_trigger ON executions(trigger_type, trigger_id);
       CREATE INDEX IF NOT EXISTS idx_executions_skill ON executions(skill, started_at);
     `);
@@ -182,6 +190,51 @@ export class StateDb {
       SELECT resource, remaining, reset_at, updated_at FROM rate_limits
       ORDER BY resource
     `).all() as Array<{ resource: string; remaining: number; reset_at: string; updated_at: string }>;
+  }
+
+  // ── System status (component health tracking) ──
+
+  /**
+   * Get the current state of a system component.
+   * Returns null if the component has never reported.
+   */
+  getSystemStatus(component: string): { state: string; reason: string | null; since: string; updated_at: string } | null {
+    const row = this.db.prepare(`
+      SELECT state, reason, since, updated_at FROM system_status WHERE component = ?
+    `).get(component) as { state: string; reason: string | null; since: string; updated_at: string } | undefined;
+    return row || null;
+  }
+
+  /**
+   * Set the state of a system component. If the new state differs from the
+   * current state, updates `since` to now (transition timestamp). Returns
+   * true on transition (state changed), false on refresh (state unchanged).
+   */
+  setSystemStatus(component: string, state: string, reason?: string): boolean {
+    const now = new Date().toISOString();
+    const existing = this.getSystemStatus(component);
+    const transitioned = !existing || existing.state !== state;
+    const since = transitioned ? now : existing!.since;
+
+    this.db.prepare(`
+      INSERT INTO system_status (component, state, reason, since, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(component) DO UPDATE SET
+        state = excluded.state,
+        reason = excluded.reason,
+        since = excluded.since,
+        updated_at = excluded.updated_at
+    `).run(component, state, reason || null, since, now);
+
+    return transitioned;
+  }
+
+  /** List all known component statuses. */
+  listSystemStatus(): Array<{ component: string; state: string; reason: string | null; since: string; updated_at: string }> {
+    return this.db.prepare(`
+      SELECT component, state, reason, since, updated_at FROM system_status
+      ORDER BY component
+    `).all() as Array<{ component: string; state: string; reason: string | null; since: string; updated_at: string }>;
   }
 
   /** Get all executions with pagination */
