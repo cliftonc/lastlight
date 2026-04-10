@@ -60,6 +60,8 @@ export interface LastLightConfig {
   mcpConfigPath: string;
   /** SQLite database path */
   dbPath: string;
+  /** Directory containing YAML workflow definitions (default: ./workflows) */
+  workflowDir: string;
   /** Directory for all persistent state (sessions, logs, db) — mount this as a Docker volume */
   stateDir: string;
   /** Directory for agent sandboxes (cloned repos per task) */
@@ -124,6 +126,7 @@ export function loadConfig(): LastLightConfig {
     stateDir,
     sandboxDir: join(stateDir, "sandboxes"),
     dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db"),
+    workflowDir: resolve(process.env.WORKFLOW_DIR || "./workflows"),
     model: process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
     models: parseModelConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),

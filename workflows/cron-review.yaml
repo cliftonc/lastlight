@@ -1,0 +1,8 @@
+type: cron
+name: check-prs-awaiting-review
+schedule: "*/30 * * * *"
+skill: pr-review
+context:
+  mode: scan
+condition:
+  unless: webhooksEnabled

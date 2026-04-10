@@ -1,0 +1,45 @@
+type: build
+name: build
+description: "Architect -> Executor -> Reviewer build cycle"
+trigger: build
+
+phases:
+  - name: phase_0
+    type: context
+
+  - name: guardrails
+    prompt: prompts/guardrails.md
+    model: "{{models.guardrails}}"
+    on_output:
+      contains_BLOCKED:
+        action: fail
+        message: "Guardrails check: BLOCKED"
+        unless_label: "lastlight:bootstrap"
+      contains_READY:
+        action: continue
+
+  - name: architect
+    prompt: prompts/architect.md
+    model: "{{models.architect}}"
+    approval_gate: post_architect
+
+  - name: executor
+    prompt: prompts/executor.md
+    model: "{{models.executor}}"
+
+  - name: reviewer
+    prompt: prompts/reviewer.md
+    model: "{{models.reviewer}}"
+    loop:
+      max_cycles: 2
+      on_request_changes:
+        fix_prompt: prompts/fix.md
+        fix_model: "{{models.fix}}"
+        re_review_prompt: prompts/re-reviewer.md
+      approval_gate: post_reviewer
+
+  - name: pr
+    prompt: prompts/pr.md
+    model: "{{models.pr}}"
+    on_success:
+      set_phase: complete

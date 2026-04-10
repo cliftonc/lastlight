@@ -13,6 +13,7 @@ sessions/
 logs/
 memories/
 *.db
+:memory:
 *.db-shm
 *.db-wal
 *.pid

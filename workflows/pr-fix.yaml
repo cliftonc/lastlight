@@ -1,0 +1,9 @@
+type: build
+name: pr-fix
+description: "Lightweight PR fix — no architect/reviewer, just fix and push"
+trigger: pr-fix
+
+phases:
+  - name: fix
+    prompt: prompts/pr-fix.md
+    model: "{{models.pr-fix}}"
