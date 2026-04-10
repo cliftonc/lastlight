@@ -9,3 +9,5 @@ executor_summary: executor-summary.md
 reviewer_verdict: APPROVED
 reviewer_completed_at: 2026-04-10
 reviewer_report: reviewer-verdict.md
+pr_number: 12
+pr_url: https://github.com/cliftonc/lastlight/pull/12
