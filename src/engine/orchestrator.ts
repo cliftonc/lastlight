@@ -192,15 +192,47 @@ export async function runBuildCycle(
     // Parse current_phase from output
     const phaseMatch = output.match(/current_phase:\s*(\S+)/);
     if (phaseMatch) {
-      const completedPhase = phaseMatch[1];
-      const completedIdx = phaseIndex(completedPhase);
-      if (completedIdx >= 0 && completedIdx < PHASE_ORDER.length - 1) {
-        resumeFrom = PHASE_ORDER[completedIdx + 1];
-        console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${completedPhase})`);
-        await notify(
-          `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
-          `Previous progress found on branch \`${branch}\` (last completed: \`${completedPhase}\`).`
-        );
+      const lastPhase = phaseMatch[1];
+      const lastIdx = phaseIndex(lastPhase);
+
+      // Check the per-phase status field — current_phase only tells us which
+      // phase ran most recently, not whether it succeeded. A phase that ended
+      // in BLOCKED or FAILED must be re-run, not skipped past.
+      // Pattern: `${phase}_status: <STATE>` where <STATE> is one of
+      // READY/APPROVED (success), BLOCKED/FAILED/REQUEST_CHANGES (failure).
+      const statusRe = new RegExp(`${lastPhase}_status:\\s*(\\S+)`, "i");
+      const statusMatch = output.match(statusRe);
+      const phaseFailed = statusMatch
+        ? /^(BLOCKED|FAILED|REQUEST_CHANGES|ERROR)$/i.test(statusMatch[1])
+        : false;
+
+      if (lastIdx >= 0) {
+        if (phaseFailed) {
+          // Resume FROM the failed phase so it gets re-run with current code state.
+          // Also mark the previous DB execution as failed in case the prior
+          // orchestrator crashed before recording the business failure — this
+          // ensures runPhase's dedup won't short-circuit the re-run.
+          resumeFrom = lastPhase as Phase;
+          db?.markLatestAsFailed(
+            `build:${lastPhase}`,
+            `${owner}/${repo}#${issueNumber}`,
+            `${statusMatch![1]}: re-running on resume`,
+          );
+          console.log(`[orchestrator] Re-running ${lastPhase} (previous result: ${statusMatch![1]})`);
+          await notify(
+            `**Re-running ${lastPhase}** for #${issueNumber} — previous attempt on branch ` +
+            `\`${branch}\` ended with \`${statusMatch![1]}\`. Re-checking against the current ` +
+            `state of the repo.`
+          );
+        } else if (lastIdx < PHASE_ORDER.length - 1) {
+          // Phase succeeded — advance to the next one
+          resumeFrom = PHASE_ORDER[lastIdx + 1];
+          console.log(`[orchestrator] Resuming from ${resumeFrom} (last completed: ${lastPhase})`);
+          await notify(
+            `**Resuming build cycle** for #${issueNumber} from **${resumeFrom}** phase.\n` +
+            `Previous progress found on branch \`${branch}\` (last completed: \`${lastPhase}\`).`
+          );
+        }
       }
     }
 
@@ -261,9 +293,16 @@ Branch: ${branch}
           );
           // fall through to architect — don't return
         } else {
+          // Mark the DB record as failed so a re-run on this trigger isn't
+          // skipped by the dedup check in runPhase. The agent SDK call itself
+          // succeeded (it produced the report), but the business outcome was
+          // a block — and the user may have fixed the underlying issue and
+          // expects the next build attempt to actually re-check.
+          db?.markLatestAsFailed(`build:guardrails`, triggerId, "BLOCKED: missing foundational tooling");
           await notify(
             `**Guardrails check: BLOCKED** — missing foundational tooling.\n\n` +
-            `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\``
+            `See the guardrails report on branch \`${branch}\` at \`.lastlight/issue-${issueNumber}/guardrails-report.md\`. ` +
+            `Once you've added the missing tooling, ask me to build this issue again — the check will re-run against the current repo state.`
           );
           return { success: false, phases };
         }

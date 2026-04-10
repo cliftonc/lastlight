@@ -148,6 +148,27 @@ export class StateDb {
     return result.changes;
   }
 
+  /**
+   * Mark the most recent execution for a skill/trigger as failed.
+   * Used when the agent SDK reported success but the orchestrator decided
+   * the business outcome was a failure (e.g. guardrails BLOCKED, reviewer
+   * REQUEST_CHANGES). Without this, runPhase would skip the phase on the
+   * next run because the DB still says success=1.
+   */
+  markLatestAsFailed(skill: string, triggerId: string, reason: string): number {
+    const result = this.db.prepare(`
+      UPDATE executions
+      SET success = 0, error = ?
+      WHERE id = (
+        SELECT id FROM executions
+        WHERE skill = ? AND trigger_id = ?
+        ORDER BY started_at DESC
+        LIMIT 1
+      )
+    `).run(reason, skill, triggerId);
+    return result.changes;
+  }
+
   /** Get recent executions for a skill */
   recentExecutions(skill: string, limit = 10): ExecutionRecord[] {
     return this.db.prepare(`
