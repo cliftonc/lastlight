@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { execSync } from "child_process";
 import type { ExecutorConfig, ExecutionResult } from "../engine/executor.js";
 import { executeAgent } from "../engine/executor.js";
 import type { StateDb } from "../state/db.js";
@@ -9,6 +10,7 @@ import { listRunningContainers } from "../admin/docker.js";
 import type { BuildWorkflowDefinition } from "./schema.js";
 import { loadPromptTemplate } from "./loader.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
+import { evalUntilExpression } from "./loop-eval.js";
 
 export interface ApprovalGateConfig {
   postArchitect: boolean;
@@ -131,6 +133,8 @@ type KnownPhase = (typeof PHASE_ORDER)[number];
 
 function phaseIndex(phase: string): number {
   if (phase.startsWith("fix_loop")) return PHASE_ORDER.indexOf("executor");
+  // Generic loop iteration phases (e.g. "implement_iter_1") map to executor position
+  if (phase.includes("_iter_")) return PHASE_ORDER.indexOf("executor");
   const idx = PHASE_ORDER.indexOf(phase as KnownPhase);
   return idx === -1 ? -1 : idx;
 }
@@ -408,6 +412,149 @@ export async function runWorkflow(
       // Update context for the PR phase with fix cycle information
       (ctx as Record<string, unknown>)["_approved"] = approved;
       (ctx as Record<string, unknown>)["_fixCycles"] = fixCycles;
+      continue;
+    }
+
+    // ── Generic loop phase ────────────────────────────────────────────────
+    if (phase.generic_loop) {
+      const loop = phase.generic_loop;
+      const MAX_ITER = loop.max_iterations;
+      const MAX_PREV_OUTPUT_BYTES = 10 * 1024; // cap accumulated output at 10KB
+
+      if (!shouldRun(phaseName)) {
+        phases.push({ phase: phaseName, success: true, output: "Already completed" });
+        continue;
+      }
+
+      let iteration = 0;
+      let complete = false;
+      let previousOutput = "";
+
+      while (!complete && iteration < MAX_ITER) {
+        iteration++;
+        const iterLabel = `${phaseName}_iter_${iteration}`;
+
+        await onStart(iterLabel);
+
+        // Build prompt with loop context vars
+        const iterCtx: Partial<TemplateContext> = {
+          iteration,
+          maxIterations: MAX_ITER,
+          previousOutput: loop.fresh_context ? "" : previousOutput,
+        };
+        const prompt = renderPrompt(phase.prompt!, iterCtx);
+
+        const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
+        const model = modelRaw || modelFor(phaseName);
+
+        const ir = await runPhase(
+          iterLabel,
+          `${taskId}-${iterLabel}`,
+          triggerId,
+          prompt,
+          config,
+          db,
+          model,
+        );
+
+        if (ir.skipped) {
+          if (ir.reason === "running") {
+            await notify(`**${phaseName}** iteration ${iteration} is already running — aborting.`);
+            return { success: false, phases };
+          }
+          // Already done — treat as complete
+          phases.push({ phase: iterLabel, success: true, output: "Already completed" });
+          complete = true;
+          break;
+        }
+
+        phases.push({ phase: iterLabel, ...pickResult(ir.result) });
+        await onEnd(iterLabel, phases[phases.length - 1]);
+
+        if (!ir.result.success) {
+          if (!isTerminated(ir.result.error)) {
+            await notify(`**${phaseName}** iteration ${iteration} failed.`);
+          }
+          failWorkflow(ir.result.error);
+          return { success: false, phases };
+        }
+
+        const iterOutput = ir.result.output || "";
+
+        // Accumulate previousOutput (cap at MAX_PREV_OUTPUT_BYTES)
+        if (!loop.fresh_context) {
+          const combined = previousOutput ? `${previousOutput}\n${iterOutput}` : iterOutput;
+          previousOutput = combined.length > MAX_PREV_OUTPUT_BYTES
+            ? combined.slice(-MAX_PREV_OUTPUT_BYTES)
+            : combined;
+        }
+
+        // Evaluate until expression
+        let conditionMet = false;
+        if (loop.until) {
+          conditionMet = evalUntilExpression(loop.until, { output: iterOutput, ...Object.fromEntries(
+            Object.entries(ctx).filter(([, v]) => typeof v === "string").map(([k, v]) => [k, v as string])
+          )});
+        }
+
+        // Evaluate until_bash
+        if (!conditionMet && loop.until_bash) {
+          try {
+            execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe", cwd: config.sandboxDir ?? config.cwd });
+            conditionMet = true; // exit 0
+          } catch {
+            conditionMet = false; // non-zero exit
+          }
+        }
+
+        if (conditionMet) {
+          complete = true;
+          persistPhase(iterLabel, `iteration ${iteration} — condition met`);
+          break;
+        }
+
+        // Interactive gate between iterations
+        if (loop.interactive && !complete && db && workflowId) {
+          const gateMsg = loop.gate_message
+            ? loop.gate_message
+            : `Loop iteration ${iteration}/${MAX_ITER} complete. Approve to continue.`;
+          const approvalId = randomUUID();
+          db.createApproval({
+            id: approvalId,
+            workflowRunId: workflowId,
+            gate: `${phaseName}_iter_${iteration}`,
+            summary: gateMsg,
+            requestedBy: ctx.sender,
+            createdAt: new Date().toISOString(),
+          });
+          db.updateWorkflowPhase(workflowId, "waiting_approval", {
+            phase: "waiting_approval",
+            timestamp: new Date().toISOString(),
+            success: true,
+            summary: `Waiting for approval: ${phaseName}_iter_${iteration} (${approvalId})`,
+          });
+          db.pauseWorkflowRun(workflowId);
+          await notify(
+            `**${phaseName} iteration ${iteration}/${MAX_ITER} complete** — approval required to continue.\n\n` +
+              `${gateMsg}\n\n` +
+              `**To continue:** comment \`@last-light approve\`\n` +
+              `**To abort:** comment \`@last-light reject [reason]\``,
+          );
+          return { success: true, phases, paused: true };
+        }
+
+        persistPhase(iterLabel);
+      }
+
+      if (!complete) {
+        await notify(
+          `**${phaseName}** reached max iterations (${MAX_ITER}) without satisfying the completion condition.`,
+        );
+      }
+
+      // Expose loop outcome in context
+      (ctx as Record<string, unknown>)[`_${phaseName}_loopCompleted`] = complete;
+      (ctx as Record<string, unknown>)[`_${phaseName}_iterations`] = iteration;
       continue;
     }
 

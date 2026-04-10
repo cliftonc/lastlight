@@ -1,0 +1,17 @@
+type: build
+name: tdd-cycle
+description: "Test-driven development loop — write a failing test, then implement until it passes"
+phases:
+  - name: phase_0
+    type: context
+  - name: write-test
+    type: agent
+    prompt: prompts/write-test.md
+  - name: implement
+    type: agent
+    prompt: prompts/implement.md
+    generic_loop:
+      max_iterations: 5
+      until_bash: "npm test"
+      interactive: false
+      fresh_context: false
