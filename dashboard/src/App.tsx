@@ -41,7 +41,7 @@ function isNoOpSession(s: {
   return s.tool_call_count === 0 && s.conversation_message_count <= 2;
 }
 
-function Dashboard() {
+function Dashboard({ onLogout }: { onLogout: () => void }) {
   // ── Filters & navigation, all persisted to the URL ─────────────────────
   const [tab, setTab] = useUrlState<Tab>(
     "tab",
@@ -251,6 +251,7 @@ function Dashboard() {
           if (tab === "home" && q.length > 0) setTab("workflows");
         }}
         streamStatus={status}
+        onLogout={onLogout}
       />
       <div className="flex border-b border-base-300 bg-base-200/60 px-4 gap-1">
         <button
@@ -390,5 +391,12 @@ export default function App() {
   if (authState === "required") {
     return <Login onAuthed={() => setAuthState("ok")} slackOAuth={slackOAuth} />;
   }
-  return <Dashboard />;
+  return (
+    <Dashboard
+      onLogout={() => {
+        auth.clear();
+        setAuthState("required");
+      }}
+    />
+  );
 }

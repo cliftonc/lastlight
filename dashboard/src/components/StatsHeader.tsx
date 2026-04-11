@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Clock, Radio } from "lucide-react";
+import { Clock, LogOut, Radio } from "lucide-react";
 import type { StreamStatus } from "../hooks/useSessionStream";
 
 interface Props {
@@ -11,6 +11,8 @@ interface Props {
   streamStatus: StreamStatus;
   /** Hide the live-count button (e.g. on the workflows tab where live filter doesn't apply). */
   hideLive?: boolean;
+  /** Optional logout handler. If omitted (e.g. when auth is disabled), the button is hidden. */
+  onLogout?: () => void;
 }
 
 const STATUS_LABEL: Record<StreamStatus, { text: string; color: string }> = {
@@ -35,6 +37,7 @@ export function StatsHeader({
   onQueryChange,
   streamStatus,
   hideLive,
+  onLogout,
 }: Props) {
   const statusInfo = STATUS_LABEL[streamStatus];
 
@@ -113,6 +116,17 @@ export function StatsHeader({
       </div>
 
       <div className="flex-1" />
+
+      {onLogout && (
+        <button
+          onClick={onLogout}
+          className="btn btn-ghost btn-xs h-7 min-h-0 px-2 text-base-content/50 hover:text-base-content"
+          title="Log out"
+          aria-label="Log out"
+        >
+          <LogOut size={14} />
+        </button>
+      )}
     </header>
   );
 }
