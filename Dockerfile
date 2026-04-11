@@ -52,6 +52,7 @@ RUN chmod +x /app/deploy/entrypoint.sh
 # Frequently changing content — copied last for best cache hits, owned by lastlight
 COPY --chown=lastlight:lastlight skills/ skills/
 COPY --chown=lastlight:lastlight agent-context/ agent-context/
+COPY --chown=lastlight:lastlight workflows/ workflows/
 COPY --chown=lastlight:lastlight CLAUDE.md ./
 
 # Let lastlight user write to /app (for mcp-config.json at startup)
