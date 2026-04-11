@@ -27,10 +27,15 @@ done
 mkdir -p "$STATE_DIR"/{sessions,logs,sandboxes,secrets,claude-home}
 chown -R lastlight:lastlight "$STATE_DIR"
 
-# Copy PEM to the data volume so sandbox containers can access it via shared volume
+# Copy PEM to the data volume so sandbox containers can access it via shared volume.
+# Owner is `lastlight` so the host harness (which exec's via gosu lastlight below)
+# can read it for the in-process MCP github server. Sandbox-entrypoint runs as
+# root before switching to `agent`, so it can still read this 600 file and
+# materialize an agent-readable copy when ALLOW_APP_PEM=1.
 for pem in "$SECRETS"/*.pem; do
   if [ -f "$pem" ]; then
     cp "$pem" "$STATE_DIR/secrets/app.pem"
+    chown lastlight:lastlight "$STATE_DIR/secrets/app.pem"
     chmod 600 "$STATE_DIR/secrets/app.pem"
     echo "Copied PEM to data volume for sandbox access"
     break
