@@ -28,7 +28,8 @@ WHAT YOU CANNOT DO:
 STYLE:
 - Reach for tools immediately. Don't pre-explain what you're about to do.
 - Keep replies concise — this is chat, not a document.
-- Treat conversation history as background context, not a queue of actions.
+- The conversation history is loaded automatically by the SDK — don't
+  re-summarize it; just respond to the latest message.
 
 Useful commands you can suggest:
 \`/build owner/repo#N\`, \`/triage owner/repo\`, \`/review owner/repo\`, \`/status\`
@@ -62,32 +63,57 @@ const ALLOWED_MCP_TOOLS = [
 ];
 
 /**
+ * Result of a single chat turn — mirrors the metric shape used by the
+ * sandbox executor so the chat dispatch path can persist a DB execution
+ * row with full token / cost / duration accounting.
+ */
+export interface ChatResult {
+  text: string;
+  /**
+   * Agent SDK session id captured from the result. On the first turn of a
+   * Slack thread this is a brand new id; on subsequent turns it should be
+   * the SAME id we passed in via `resume`. Persist this back onto the
+   * messaging session so the next turn can resume into the same jsonl.
+   */
+  agentSessionId?: string;
+  success: boolean;
+  /** Wall-clock duration of the chat call (ms). */
+  durationMs: number;
+  /** Time the SDK spent in API calls (ms), if reported. */
+  apiDurationMs?: number;
+  turns?: number;
+  costUsd?: number;
+  inputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  outputTokens?: number;
+  /** SDK result subtype — "success", "error", "max_turns", etc. */
+  stopReason?: string;
+  /** Error message if the call threw or returned a non-success result. */
+  error?: string;
+}
+
+/**
  * Handle a conversational chat message.
  * Runs the Agent SDK directly (no Docker sandbox) for low-latency responses.
  * Strictly read-only except for issue creation.
+ *
+ * Conversation continuity is provided by the SDK's `resume` option: the
+ * caller passes the agent session id from the previous turn (stored on the
+ * messaging-session row), and the SDK appends to the same jsonl. The first
+ * turn passes `undefined` and we capture the new session id from the result.
  */
 export async function handleChatMessage(
   message: string,
-  sessionId: string,
+  _messagingSessionId: string,
   sender: string,
-  sessionManager: SessionManager,
-  config: ExecutorConfig
-): Promise<string> {
+  _sessionManager: SessionManager,
+  config: ExecutorConfig,
+  resumeAgentSessionId?: string,
+): Promise<ChatResult> {
   const startTime = Date.now();
 
   try {
-    // Load conversation history for context
-    const history = sessionManager.getHistory(sessionId, 20);
-    const historyText = history
-      .map((m) => `[${m.role}]: ${m.content}`)
-      .join("\n\n");
-
-    // Build prompt with history — clearly delineate history from current message
-    const prompt = historyText
-      ? `<conversation_history>\n${historyText}\n</conversation_history>\n\nRespond to this message: ${message}`
-      : message;
-
-    // Load agent context (soul, rules, etc.)
     const systemPrompt = loadAgentContext() + CHAT_SYSTEM_SUFFIX;
 
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
@@ -101,6 +127,10 @@ export async function handleChatMessage(
     };
 
     if (config.model) options.model = config.model;
+    // Resume the existing Agent SDK session if we have one for this thread.
+    // The SDK appends to the same jsonl and reuses its prompt cache, so we
+    // don't need to inject conversation history into the prompt manually.
+    if (resumeAgentSessionId) options.resume = resumeAgentSessionId;
 
     // Add MCP servers so the agent can query GitHub (read-only + issue creation)
     if (config.mcpConfigPath) {
@@ -113,21 +143,69 @@ export async function handleChatMessage(
     }
 
     let output = "";
+    let agentSessionId: string | undefined;
+    let turns: number | undefined;
+    let stopReason: string | undefined;
+    let costUsd: number | undefined;
+    let apiDurationMs: number | undefined;
+    let inputTokens: number | undefined;
+    let cacheCreationInputTokens: number | undefined;
+    let cacheReadInputTokens: number | undefined;
+    let outputTokens: number | undefined;
 
-    for await (const msg of query({ prompt, options })) {
-      const m = msg as any;
+    for await (const msg of query({ prompt: message, options })) {
+      const m = msg as Record<string, unknown>;
+      if (m.type === "system" && m.subtype === "init" && typeof m.session_id === "string") {
+        agentSessionId = m.session_id;
+      }
       if (m.type === "result") {
-        output = m.result || "";
+        output = (m.result as string) || "";
+        if (typeof m.session_id === "string") agentSessionId = m.session_id;
+        if (typeof m.num_turns === "number") turns = m.num_turns;
+        if (typeof m.subtype === "string") stopReason = m.subtype;
+        if (typeof m.total_cost_usd === "number") costUsd = m.total_cost_usd;
+        if (typeof m.duration_api_ms === "number") apiDurationMs = m.duration_api_ms;
+        const u = m.usage as Record<string, unknown> | undefined;
+        if (u) {
+          if (typeof u.input_tokens === "number") inputTokens = u.input_tokens;
+          if (typeof u.cache_creation_input_tokens === "number") cacheCreationInputTokens = u.cache_creation_input_tokens;
+          if (typeof u.cache_read_input_tokens === "number") cacheReadInputTokens = u.cache_read_input_tokens;
+          if (typeof u.output_tokens === "number") outputTokens = u.output_tokens;
+        }
       }
     }
 
     const durationMs = Date.now() - startTime;
-    console.log(`[chat] Response for ${sender} in ${durationMs}ms`);
+    const success = stopReason === "success";
+    const costStr = costUsd !== undefined ? `, $${costUsd.toFixed(4)}` : "";
+    console.log(
+      `[chat] ${sender} → ${stopReason ?? "?"} (${turns ?? "?"} turns, ${Math.round(durationMs / 1000)}s${costStr})${agentSessionId ? ` [session ${agentSessionId.slice(0, 8)}…]${resumeAgentSessionId ? " resumed" : " new"}` : ""}`,
+    );
 
-    return output || "I wasn't able to generate a response. Please try again.";
-  } catch (err: any) {
-    console.error(`[chat] Error handling message from ${sender}:`, err.message);
-    return "Sorry, I encountered an error processing your message. Please try again.";
+    return {
+      text: output || (success ? "I wasn't able to generate a response. Please try again." : `Sorry — chat failed (${stopReason ?? "unknown"}).`),
+      agentSessionId,
+      success,
+      durationMs,
+      apiDurationMs,
+      turns,
+      costUsd,
+      inputTokens,
+      cacheCreationInputTokens,
+      cacheReadInputTokens,
+      outputTokens,
+      stopReason,
+      error: success ? undefined : (output || stopReason || "unknown chat error"),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[chat] Error handling message from ${sender}:`, message);
+    return {
+      text: "Sorry, I encountered an error processing your message. Please try again.",
+      success: false,
+      durationMs: Date.now() - startTime,
+      error: message,
+    };
   }
 }
 

@@ -349,19 +349,73 @@ async function main() {
 
     // Chat messages: handle directly (no sandbox, low latency)
     if (skill === "chat") {
-      const sessionId = context.sessionId as string;
+      const messagingSessionId = context.sessionId as string;
       const message = context.message as string;
       const sender = context.sender as string;
 
+      // Look up the existing Agent SDK session id for this Slack thread.
+      // First message has none → fresh session; subsequent messages resume.
+      const messagingSession = sessionManager.getSession(messagingSessionId);
+      const resumeAgentSessionId = messagingSession?.agentSessionId ?? undefined;
+
+      // Record an executions row so chat usage shows up in dashboard stats
+      // alongside sandbox runs. triggerId is the messaging-session id, so a
+      // whole Slack thread groups together with `GROUP BY trigger_id`.
+      const executionId = randomUUID();
+      db.recordStart({
+        id: executionId,
+        triggerType: "chat",
+        triggerId: messagingSessionId,
+        skill: "chat",
+        startedAt: new Date().toISOString(),
+      });
+
       try {
-        const response = await handleChatMessage(message, sessionId, sender, sessionManager, {
-          mcpConfigPath,
-          model: resolveModel(config.models, "chat"),
-          maxTurns: 10,
+        const result = await handleChatMessage(
+          message,
+          messagingSessionId,
+          sender,
+          sessionManager,
+          {
+            mcpConfigPath,
+            model: resolveModel(config.models, "chat"),
+            maxTurns: 10,
+          },
+          resumeAgentSessionId,
+        );
+
+        // Persist the Agent SDK session id on the first turn so the next
+        // turn in this thread can resume into the same jsonl. We always
+        // overwrite — if the SDK rotated the id (e.g. resume failed and it
+        // started a fresh session) we want the latest one.
+        if (result.agentSessionId && result.agentSessionId !== resumeAgentSessionId) {
+          sessionManager.setAgentSessionId(messagingSessionId, result.agentSessionId);
+        }
+
+        db.recordFinish(executionId, {
+          success: result.success,
+          error: result.error,
+          turns: result.turns,
+          durationMs: result.durationMs,
+          sessionId: result.agentSessionId,
+          costUsd: result.costUsd,
+          inputTokens: result.inputTokens,
+          cacheCreationInputTokens: result.cacheCreationInputTokens,
+          cacheReadInputTokens: result.cacheReadInputTokens,
+          outputTokens: result.outputTokens,
+          apiDurationMs: result.apiDurationMs,
+          stopReason: result.stopReason,
         });
-        await envelope.reply(response);
+
+        await envelope.reply(result.text);
       } catch (err) {
-        console.error(`[event] Chat error:`, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[event] Chat error:`, msg);
+        db.recordFinish(executionId, {
+          success: false,
+          error: msg,
+          durationMs: 0,
+        });
         await envelope.reply("Sorry, I encountered an error. Please try again.");
       }
       return;

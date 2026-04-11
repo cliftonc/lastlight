@@ -49,6 +49,12 @@ export class SessionManager {
     `);
   }
 
+  /** Look up an existing session by id (used to read its agent_session_id). */
+  getSession(id: string): ConversationSession | null {
+    const row = this.db.prepare(`SELECT * FROM messaging_sessions WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToSession(row) : null;
+  }
+
   /** Get an existing active session or create a new one */
   getOrCreateSession(key: ConversationKey): ConversationSession {
     const now = new Date().toISOString();
@@ -90,6 +96,18 @@ export class SessionManager {
       messageCount: 0,
       active: true,
     };
+  }
+
+  /**
+   * Persist the Agent SDK session id captured from the first chat reply in
+   * a thread. Subsequent replies in the same thread pass this id back to
+   * the SDK as `resume`, so the whole Slack thread maps to one continuous
+   * Agent SDK session jsonl instead of a fresh file per message.
+   */
+  setAgentSessionId(id: string, agentSessionId: string | null): void {
+    this.db.prepare(`
+      UPDATE messaging_sessions SET agent_session_id = ? WHERE id = ?
+    `).run(agentSessionId, id);
   }
 
   /** Update last activity timestamp and increment message count */
