@@ -85,12 +85,20 @@ Both server scripts call `scripts/dev-local.sh`, which:
 The CLI talks to the running server — it does not execute agents directly. Start the server first, then in another terminal:
 
 ```bash
-npx tsx src/cli.ts https://github.com/owner/repo/issues/42   # build cycle
-npx tsx src/cli.ts owner/repo#42                               # shorthand
-npx tsx src/cli.ts triage owner/repo                           # triage scan
-npx tsx src/cli.ts review owner/repo                           # PR review scan
-npx tsx src/cli.ts health owner/repo                           # health report
+# Cheap, safe defaults — single agent invocation
+npx tsx src/cli.ts owner/repo#42                                # triage that one issue
+npx tsx src/cli.ts https://github.com/owner/repo/issues/42      # same, full URL form
+npx tsx src/cli.ts https://github.com/owner/repo/pull/99        # review that one PR
+npx tsx src/cli.ts triage owner/repo                            # scan repo for new issues to triage
+npx tsx src/cli.ts review owner/repo                            # scan repo for PRs to review
+npx tsx src/cli.ts health owner/repo                            # weekly health report
+
+# Expensive, opt-in — full Architect → Executor → Reviewer → PR cycle
+npx tsx src/cli.ts build owner/repo#42
+npx tsx src/cli.ts build https://github.com/owner/repo/issues/42
 ```
+
+The default for a single-issue/PR shorthand is the **cheap** action (triage or review). Build cycles require the explicit `build` subcommand to opt in.
 
 ### Authentication
 

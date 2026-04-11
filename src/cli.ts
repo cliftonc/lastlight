@@ -4,11 +4,17 @@
  * Last Light CLI — thin client that triggers the server.
  *
  * Usage:
- *   npx tsx src/cli.ts https://github.com/owner/repo/issues/42
- *   npx tsx src/cli.ts owner/repo#42
- *   npx tsx src/cli.ts triage owner/repo
- *   npx tsx src/cli.ts review owner/repo
- *   npx tsx src/cli.ts health owner/repo
+ *   npx tsx src/cli.ts <github-url>            Triage that issue (default — cheap)
+ *   npx tsx src/cli.ts <owner/repo#number>     Same, shorthand
+ *   npx tsx src/cli.ts triage <owner/repo>     Scan repo for issues to triage
+ *   npx tsx src/cli.ts review <owner/repo>     Scan repo for PRs to review
+ *   npx tsx src/cli.ts health <owner/repo>     Generate weekly health report
+ *   npx tsx src/cli.ts build <github-url>      Run FULL build cycle (architect/executor/reviewer/PR)
+ *   npx tsx src/cli.ts build <owner/repo#N>    Same, shorthand
+ *
+ * The default action for a single-issue reference is now TRIAGE, not build.
+ * Build cycles are expensive (multiple agent phases, may create PRs) so they
+ * require an explicit `build` subcommand to opt in.
  *
  * The CLI does NOT run agents directly — it POSTs to the running server.
  * Start the server first: npm run dev
@@ -24,11 +30,16 @@ if (args.length === 0) {
 Last Light CLI
 
 Usage:
-  tsx src/cli.ts <github-url>          Trigger build cycle for an issue/PR
+  tsx src/cli.ts <github-url>          Triage that one issue (default — cheap)
   tsx src/cli.ts <owner/repo#number>   Same, shorthand
-  tsx src/cli.ts triage <owner/repo>   Run issue triage
-  tsx src/cli.ts review <owner/repo>   Run PR review scan
-  tsx src/cli.ts health <owner/repo>   Run health report
+  tsx src/cli.ts triage <owner/repo>   Scan repo for issues to triage
+  tsx src/cli.ts review <owner/repo>   Scan repo for PRs to review
+  tsx src/cli.ts health <owner/repo>   Generate weekly health report
+  tsx src/cli.ts build <github-url>    Run FULL build cycle (architect/executor/reviewer/PR)
+  tsx src/cli.ts build <owner/repo#N>  Same, shorthand
+
+The default for a single issue reference is now TRIAGE, not build.
+Build cycles are expensive — opt in explicitly with the \`build\` subcommand.
 
 The server must be running (npm run dev). Set LASTLIGHT_URL to override.
 `);
@@ -80,12 +91,50 @@ async function main() {
 
   const firstArg = args[0];
 
-  // ── Skill commands: triage, review, health ──────────────────────
+  // ── Explicit `build` subcommand: trigger the full build cycle ──────────
+  // This is the only path that hits /api/build and runs architect → executor →
+  // reviewer → PR. Build cycles are expensive and may create PRs, so opt-in.
+
+  if (firstArg === "build") {
+    const target = args[1];
+    if (!target) {
+      console.error(`Usage: tsx src/cli.ts build <github-url> | <owner/repo#N>`);
+      process.exit(1);
+    }
+    const parsed = parseGitHubRef(target);
+    if (!parsed) {
+      console.error(`Could not parse GitHub reference: ${target}`);
+      console.error(`Expected: https://github.com/owner/repo/issues/N or owner/repo#N`);
+      process.exit(1);
+    }
+    const { owner, repo, number } = parsed;
+    console.log(`Triggering BUILD cycle for ${owner}/${repo}#${number}...`);
+    const res = await fetch(`${SERVER_URL}/api/build`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ owner, repo, issueNumber: number }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      console.log(`Accepted: ${JSON.stringify(data)}`);
+      console.log(`Check server logs for progress.`);
+    } else {
+      console.error(`Failed: ${JSON.stringify(data)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // ── Skill commands: triage, review, health ─────────────────────────────
+  // `triage` and `review` accept either:
+  //   - <owner/repo>   → repo-wide scan (existing behavior)
+  //   - <owner/repo#N> → single-issue / single-PR action
+  // `health` only takes a repo (it's always a repo-level report).
 
   if (["triage", "review", "health"].includes(firstArg)) {
-    const repoArg = args[1];
-    if (!repoArg) {
-      console.error(`Usage: tsx src/cli.ts ${firstArg} <owner/repo>`);
+    const target = args[1];
+    if (!target) {
+      console.error(`Usage: tsx src/cli.ts ${firstArg} <owner/repo>${firstArg !== "health" ? " | <owner/repo#N>" : ""}`);
       process.exit(1);
     }
 
@@ -94,16 +143,29 @@ async function main() {
       review: "pr-review",
       health: "repo-health",
     };
+    const skill = skillMap[firstArg];
 
-    console.log(`Triggering ${firstArg} on ${repoArg}...`);
+    // Detect single-issue/PR form (allowed for triage and review only)
+    const parsed = firstArg !== "health" ? parseGitHubRef(target) : null;
+
+    let context: Record<string, unknown>;
+    if (parsed) {
+      const { owner, repo, number } = parsed;
+      context = {
+        repo: `${owner}/${repo}`,
+        issueNumber: number,
+        sender: "cli",
+      };
+      console.log(`Triggering ${firstArg} on ${owner}/${repo}#${number}...`);
+    } else {
+      context = { repos: [target], mode: "scan" };
+      console.log(`Triggering ${firstArg} scan on ${target}...`);
+    }
 
     const res = await fetch(`${SERVER_URL}/api/run`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({
-        skill: skillMap[firstArg],
-        context: { repos: [repoArg], mode: "scan" },
-      }),
+      body: JSON.stringify({ skill, context }),
     });
 
     const data = await res.json();
@@ -117,25 +179,37 @@ async function main() {
     return;
   }
 
-  // ── GitHub URL or shorthand: trigger build cycle ───────────────
+  // ── Default: shorthand <github-url> or <owner/repo#N> → triage that issue
+  //
+  // This is intentionally cheap. To run a full build cycle, use `build <ref>`.
 
   const parsed = parseGitHubRef(firstArg);
   if (!parsed) {
     console.error(`Could not parse GitHub reference: ${firstArg}`);
     console.error(`Expected: https://github.com/owner/repo/issues/N or owner/repo#N`);
+    console.error(``);
+    console.error(`To trigger a full build cycle, use: tsx src/cli.ts build ${firstArg}`);
     process.exit(1);
   }
 
-  const { owner, repo, number } = parsed;
-  console.log(`Triggering build cycle for ${owner}/${repo}#${number}...`);
+  const { owner, repo, number, type } = parsed;
+  const isPr = type === "pr";
+  const skill = isPr ? "pr-review" : "issue-triage";
+  const action = isPr ? "PR review" : "issue triage";
 
-  const res = await fetch(`${SERVER_URL}/api/build`, {
+  console.log(`Triggering ${action} for ${owner}/${repo}#${number}...`);
+  console.log(`(For a full build cycle: tsx src/cli.ts build ${owner}/${repo}#${number})`);
+
+  const res = await fetch(`${SERVER_URL}/api/run`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({
-      owner,
-      repo,
-      issueNumber: number,
+      skill,
+      context: {
+        repo: `${owner}/${repo}`,
+        ...(isPr ? { prNumber: number } : { issueNumber: number }),
+        sender: "cli",
+      },
     }),
   });
 
