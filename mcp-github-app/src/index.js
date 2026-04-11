@@ -23,16 +23,22 @@ if (!staticToken && !hasAppCreds) {
   process.exit(1);
 }
 
-const auth = staticToken
-  ? {
+// Prefer GitHub App credentials when both are present. Static-token mode is
+// the fallback for low-trust sandboxes that intentionally clear the App env
+// vars (see executor.ts: GITHUB_APP_ID="" + ALLOW_APP_PEM=0). This ordering
+// stops a stale host-side GITHUB_TOKEN PAT from silently downgrading the
+// agent's auth — which surfaced as a 403 "Resource not accessible by
+// personal access token" when the chat skill tried to create an issue.
+const auth = hasAppCreds
+  ? new GitHubAppAuth({ appId, privateKeyPath, installationId })
+  : {
       async getToken() {
         return staticToken;
       },
       get expiresAt() {
         return null;
       },
-    }
-  : new GitHubAppAuth({ appId, privateKeyPath, installationId });
+    };
 const gh = new GitHubClient(auth);
 
 // ── MCP Server ──────────────────────────────────────────────────────
