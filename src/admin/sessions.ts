@@ -214,7 +214,22 @@ export function unwrapLine(raw: Record<string, unknown>): JsonlMessage[] {
  */
 export type SessionReaderScope = "sandbox" | "chat";
 
-export class SessionReader {
+/**
+ * Interface implemented by every dashboard session source. Both the
+ * jsonl-scanning SessionReader (sandbox runs) and the DB-backed
+ * ChatSessionReader (Slack chat threads) implement this so that
+ * `mountSessionRoutes` can wire either one to a route prefix without
+ * caring where the data lives.
+ */
+export interface SessionSource {
+  listSessionIds(): string[];
+  exists(sessionId: string): boolean;
+  getSessionMeta(sessionId: string): Promise<SessionMeta | null>;
+  read(sessionId: string): Promise<Array<{ index: number; msg: JsonlMessage }>>;
+  getFilePath(sessionId: string): string | null;
+}
+
+export class SessionReader implements SessionSource {
   private claudeHomeDir: string;
   private scope: SessionReaderScope;
   private metaCache = new Map<string, { meta: SessionMeta; cachedAt: number }>();

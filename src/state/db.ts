@@ -283,6 +283,117 @@ export class StateDb {
     );
   }
 
+  /**
+   * List chat threads aggregated from the executions table.
+   *
+   * Each row collapses every execution sharing a `trigger_id` (the messaging
+   * session id) into one summary so the dashboard's chat-sessions tab can
+   * show one card per Slack thread, not one per turn. Joined with
+   * `messaging_sessions` for the agent SDK session id (used to resolve to
+   * the on-disk jsonl when streaming messages) and with `messaging_messages`
+   * for the most recent assistant text (preview snippet).
+   */
+  listChatThreads(limit: number): {
+    triggerId: string;
+    agentSessionId: string | null;
+    firstStartedAt: string;
+    lastActivityAt: string;
+    turnCount: number;
+    totalCost: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    lastAssistantContent: string | null;
+  }[] {
+    const rows = this.db.prepare(`
+      SELECT
+        e.trigger_id              AS triggerId,
+        ms.agent_session_id       AS agentSessionId,
+        MIN(e.started_at)         AS firstStartedAt,
+        MAX(COALESCE(e.finished_at, e.started_at)) AS lastActivityAt,
+        COUNT(*)                  AS turnCount,
+        SUM(COALESCE(e.cost_usd, 0))           AS totalCost,
+        SUM(COALESCE(e.input_tokens, 0))       AS inputTokens,
+        SUM(COALESCE(e.output_tokens, 0))      AS outputTokens,
+        SUM(COALESCE(e.cache_read_input_tokens, 0)) AS cacheReadTokens,
+        (
+          SELECT mm.content
+          FROM messaging_messages mm
+          WHERE mm.session_id = e.trigger_id AND mm.role = 'assistant'
+          ORDER BY mm.timestamp DESC
+          LIMIT 1
+        ) AS lastAssistantContent
+      FROM executions e
+      LEFT JOIN messaging_sessions ms ON ms.id = e.trigger_id
+      WHERE e.skill = 'chat'
+      GROUP BY e.trigger_id
+      ORDER BY lastActivityAt DESC
+      LIMIT ?
+    `).all(limit) as Array<{
+      triggerId: string;
+      agentSessionId: string | null;
+      firstStartedAt: string;
+      lastActivityAt: string;
+      turnCount: number;
+      totalCost: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      lastAssistantContent: string | null;
+    }>;
+    return rows;
+  }
+
+  /** Look up a single chat thread by its messaging session id (= trigger_id). */
+  getChatThread(triggerId: string): {
+    triggerId: string;
+    agentSessionId: string | null;
+    firstStartedAt: string;
+    lastActivityAt: string;
+    turnCount: number;
+    totalCost: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    lastAssistantContent: string | null;
+  } | null {
+    const row = this.db.prepare(`
+      SELECT
+        e.trigger_id              AS triggerId,
+        ms.agent_session_id       AS agentSessionId,
+        MIN(e.started_at)         AS firstStartedAt,
+        MAX(COALESCE(e.finished_at, e.started_at)) AS lastActivityAt,
+        COUNT(*)                  AS turnCount,
+        SUM(COALESCE(e.cost_usd, 0))           AS totalCost,
+        SUM(COALESCE(e.input_tokens, 0))       AS inputTokens,
+        SUM(COALESCE(e.output_tokens, 0))      AS outputTokens,
+        SUM(COALESCE(e.cache_read_input_tokens, 0)) AS cacheReadTokens,
+        (
+          SELECT mm.content
+          FROM messaging_messages mm
+          WHERE mm.session_id = e.trigger_id AND mm.role = 'assistant'
+          ORDER BY mm.timestamp DESC
+          LIMIT 1
+        ) AS lastAssistantContent
+      FROM executions e
+      LEFT JOIN messaging_sessions ms ON ms.id = e.trigger_id
+      WHERE e.skill = 'chat' AND e.trigger_id = ?
+      GROUP BY e.trigger_id
+    `).get(triggerId) as {
+      triggerId: string;
+      agentSessionId: string | null;
+      firstStartedAt: string;
+      lastActivityAt: string;
+      turnCount: number;
+      totalCost: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      lastAssistantContent: string | null;
+    } | undefined;
+    return row ?? null;
+  }
+
   /** Check if a skill is currently running for a given trigger */
   isRunning(skill: string, triggerId: string): boolean {
     const row = this.db.prepare(`

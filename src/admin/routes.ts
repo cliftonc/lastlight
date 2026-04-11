@@ -4,7 +4,7 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { streamSSE } from "hono/streaming";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { Slack } from "arctic";
-import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
+import { unwrapLine, type SessionSource, type SessionMeta } from "./sessions.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
 import { listRunningContainers, killContainer, getContainerStats } from "./docker.js";
@@ -44,12 +44,12 @@ function isSessionLive(meta: SessionMeta, liveTaskIds: Set<string | null>): bool
 }
 
 /**
- * Mount the read/list/stream endpoints for a SessionReader under a given
+ * Mount the read/list/stream endpoints for a SessionSource under a given
  * route prefix on `app`. The same handler shape is reused for the workflow
  * "Sessions" tab (sandbox-scoped reader at `/sessions`) and the chat tab
  * (in-process Agent SDK runs at `/chat-sessions`).
  */
-function mountSessionRoutes(app: Hono, sessions: SessionReader, prefix: string): void {
+function mountSessionRoutes(app: Hono, sessions: SessionSource, prefix: string): void {
   // Session list — enriched with live container status
   app.get(`${prefix}`, async (c) => {
     const limit = Number(c.req.query("limit") ?? 200);
@@ -194,8 +194,8 @@ function mountSessionRoutes(app: Hono, sessions: SessionReader, prefix: string):
 
 export function createAdminRoutes(
   db: StateDb,
-  sessions: SessionReader,
-  chatSessions: SessionReader,
+  sessions: SessionSource,
+  chatSessions: SessionSource,
   config: AdminConfig,
 ): Hono {
   const app = new Hono();
