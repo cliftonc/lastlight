@@ -53,11 +53,25 @@ export class DockerSandbox {
     const containerName = `lastlight-sandbox-${opts.taskId}-${randomUUID().slice(0, 8)}`;
     const worktreePath = resolve(opts.worktreePath);
 
-    // The shared data volume — contains claude auth, session logs, sandboxes
-    const volumeName = process.env.SANDBOX_DATA_VOLUME || "lastlight_agent-data";
+    // Shared data — mounted at /data inside the sandbox. Contains claude auth,
+    // session logs, etc. (see deploy/sandbox-entrypoint.sh for the layout it
+    // expects).
+    //
+    // SANDBOX_DATA_VOLUME accepts either:
+    //   - a Docker named volume name (e.g. "lastlight_agent-data") — used in
+    //     production where the harness runs in the same compose stack
+    //   - a host filesystem path (relative or absolute, starting with `/`,
+    //     `.`, or `~`) — used in local dev so the host can inspect/edit the
+    //     same dir without copying things in and out of a named volume
+    //
+    // Default is the production named volume, so existing behavior is preserved.
+    const dataVolumeRaw = process.env.SANDBOX_DATA_VOLUME || "lastlight_agent-data";
+    const dataMount = isPathLike(dataVolumeRaw)
+      ? resolveHostPath(dataVolumeRaw)  // bind mount → absolute host path
+      : dataVolumeRaw;                  // named volume → pass through
 
     const volumes = [
-      `${volumeName}:/data`,                   // shared state (claude-home, sessions)
+      `${dataMount}:/data`,                    // shared state (claude-home, sessions)
       `${worktreePath}:${WORKSPACE_DIR}`,      // task worktree
     ];
 
@@ -211,4 +225,29 @@ function execCmd(cmd: string, args: string[], opts?: { timeout?: number }): stri
 
 function execSafe(cmd: string, args: string[]): void {
   try { execFileSync(cmd, args, { stdio: "ignore" }); } catch { /* ignore */ }
+}
+
+/**
+ * A SANDBOX_DATA_VOLUME value is a host filesystem path (rather than a Docker
+ * named volume) when it begins with `/`, `./`, `../`, or `~`. Named volumes
+ * cannot contain those characters, so this disambiguation is unambiguous.
+ */
+function isPathLike(value: string): boolean {
+  return value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("~");
+}
+
+/**
+ * Resolve a path-like SANDBOX_DATA_VOLUME value to an absolute host path
+ * suitable for `docker run -v <host>:/data`. Expands `~` and resolves
+ * relative paths against the harness cwd.
+ */
+function resolveHostPath(value: string): string {
+  let p = value;
+  if (p.startsWith("~")) {
+    p = (process.env.HOME || "") + p.slice(1);
+  }
+  return resolve(p);
 }

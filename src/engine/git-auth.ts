@@ -4,6 +4,17 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 
 /**
+ * When true, all `git config --global` writes are skipped. The harness still
+ * mints installation tokens and passes them to sandboxes via the GIT_TOKEN env
+ * var, but the host's `~/.gitconfig` is left untouched. Set
+ * `LASTLIGHT_LOCAL_DEV=1` when running the harness on your dev machine so it
+ * doesn't overwrite your personal git identity or credential helper.
+ */
+function isLocalDev(): boolean {
+  return process.env.LASTLIGHT_LOCAL_DEV === "1";
+}
+
+/**
  * Configure git globally so that git clone/push/pull work with the
  * GitHub App credentials. Called once before spawning agents.
  *
@@ -12,6 +23,11 @@ import { resolve } from "path";
  * - Bot identity (user.name, user.email) for commits
  *
  * Works in Docker, local dev, CI — no path assumptions.
+ *
+ * In local dev mode (LASTLIGHT_LOCAL_DEV=1) the global git config is NOT
+ * modified — the host's identity and credential helper are left alone. The
+ * token is still returned and propagates to sandboxes via env, where the
+ * sandbox-entrypoint.sh sets up its own per-container credential helper.
  */
 export async function configureGitAuth(config: {
   appId: string;
@@ -20,6 +36,12 @@ export async function configureGitAuth(config: {
   botName?: string;
 }): Promise<{ token: string; expiresAt: string }> {
   const token = await getInstallationToken(config);
+
+  if (isLocalDev()) {
+    console.log(`[git-auth] LOCAL DEV MODE — skipping global git config writes. ` +
+      `Token is still passed to sandboxes via GIT_TOKEN env (expires: ${token.expiresAt}).`);
+    return token;
+  }
 
   // Set up credential helper — git will call this for any github.com URL
   const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token.token}"; }; f`;
@@ -38,6 +60,10 @@ export async function configureGitAuth(config: {
 /**
  * Refresh the git credential helper with a fresh token.
  * Call this if a push/pull fails with auth errors.
+ *
+ * In local dev mode the global git config is left alone — the fresh token is
+ * returned to the caller (executor.ts) which forwards it to the sandbox via
+ * env so the in-container credential helper picks it up.
  */
 export async function refreshGitAuth(config: {
   appId: string;
@@ -45,6 +71,10 @@ export async function refreshGitAuth(config: {
   installationId: string;
 }): Promise<{ token: string; expiresAt: string }> {
   const token = await getInstallationToken(config);
+
+  if (isLocalDev()) {
+    return token;
+  }
 
   const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token.token}"; }; f`;
   exec(`git config --global credential.helper '${credHelper}'`);

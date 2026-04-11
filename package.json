@@ -16,6 +16,7 @@
     "dev": "concurrently -n server,dash -c blue,magenta \"tsx watch src/index.ts\" \"npm run dev -w dashboard\"",
     "dev:server": "tsx watch src/index.ts",
     "dev:dashboard": "npm run dev -w dashboard",
+    "dev:local": "bash scripts/dev-local.sh",
     "cli": "tsx src/cli.ts",
     "build:issue": "tsx src/cli.ts",
     "test:watch": "vitest"
