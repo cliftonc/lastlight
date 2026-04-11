@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
-import { listRunningContainers, killContainer } from "./docker.js";
+import { listRunningContainers, killContainer, getContainerStats } from "./docker.js";
 import { authMiddleware, createToken, verifyToken } from "./auth.js";
 
 export interface AdminConfig {
@@ -266,6 +266,12 @@ export function createAdminRoutes(
   app.get("/containers", async (c) => {
     const containers = await listRunningContainers();
     return c.json({ containers });
+  });
+
+  // CPU/memory stats for the agent and any sandbox containers
+  app.get("/containers/stats", async (c) => {
+    const stats = await getContainerStats();
+    return c.json({ stats });
   });
 
   // Kill a sandbox container and mark related DB executions as failed

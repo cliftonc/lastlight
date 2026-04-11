@@ -226,7 +226,13 @@ function Dashboard() {
         onTimeRangeChange={(r) => setTimeRange(r as TimeRange)}
         liveCount={headerLiveCount}
         query={query}
-        onQueryChange={setQuery}
+        onQueryChange={(q) => {
+          setQuery(q);
+          // Searching from the home page is meaningless — Home has no
+          // searchable list. Hop the user to Workflows so the query has
+          // somewhere to apply.
+          if (tab === "home" && q.length > 0) setTab("workflows");
+        }}
         streamStatus={status}
       />
       <div className="flex border-b border-base-300 bg-base-200/60 px-4 gap-1">

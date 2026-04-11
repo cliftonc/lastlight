@@ -125,6 +125,14 @@ export interface ContainerInfo {
   image: string;
 }
 
+export interface ContainerStats {
+  name: string;
+  cpuPercent: number;
+  memUsageBytes: number;
+  memLimitBytes: number;
+  memPercent: number;
+}
+
 export interface Stats {
   total_executions: number;
   today_count: number;
@@ -225,6 +233,7 @@ export const api = {
     return req<{ executions: Execution[] }>(`/executions${qss ? `?${qss}` : ""}`);
   },
   containers: () => req<{ containers: ContainerInfo[] }>("/containers"),
+  containerStats: () => req<{ stats: ContainerStats[] }>("/containers/stats"),
   killContainer: (name: string) =>
     req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
   rateLimits: () => req<{ limits: RateLimit[] }>("/rate-limits"),

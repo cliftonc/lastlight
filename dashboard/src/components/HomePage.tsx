@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import {
   ResponsiveContainer,
-  LineChart,
+  BarChart,
+  Bar,
+  ComposedChart,
   Line,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import { api, type WorkflowRun } from "../api";
+import { api, type WorkflowRun, type ContainerStats } from "../api";
 import { useStatsSeries } from "../hooks/useDailyStats";
 import clsx from "clsx";
 
@@ -48,6 +50,22 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GiB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(0)} MiB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KiB`;
+  return `${n} B`;
+}
+
+function shortContainerName(name: string): string {
+  // `lastlight-sandbox-{taskId}-{uuid}` → `sandbox-{taskId}`
+  const sandbox = name.match(/^lastlight-sandbox-(.+?)-[a-f0-9]{8}$/);
+  if (sandbox) return `sandbox-${sandbox[1]}`;
+  // `lastlight-agent-1` → `agent`
+  if (name.startsWith("lastlight-agent")) return "agent";
+  return name.replace(/^lastlight-/, "");
 }
 
 function StatusBadge({ status }: { status: WorkflowRun["status"] }) {
@@ -91,6 +109,82 @@ function useLiveActivity() {
   return { workflowCount, liveWorkflows, containerCount };
 }
 
+function useContainerStats() {
+  const [stats, setStats] = useState<ContainerStats[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await api.containerStats();
+        if (!cancelled) setStats(res.stats);
+      } catch {
+        /* ignore */
+      }
+    };
+    load();
+    // `docker stats --no-stream` is ~1s; poll every 10s to keep load low.
+    const t = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  return stats;
+}
+
+function ResourceUsageSection({ stats }: { stats: ContainerStats[] }) {
+  return (
+    <div className="card bg-base-200 shadow-sm">
+      <div className="card-body p-4">
+        <h2 className="card-title text-sm font-semibold text-base-content/70 uppercase tracking-wide mb-3">
+          Resource Usage
+        </h2>
+        {stats.length === 0 ? (
+          <p className="text-xs text-base-content/40 text-center py-4">No container stats</p>
+        ) : (
+          <div className="space-y-2">
+            {stats.map((s) => (
+              <div key={s.name} className="bg-base-100 rounded p-2">
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="font-mono text-base-content/80 truncate">
+                    {shortContainerName(s.name)}
+                  </span>
+                  <span className="text-base-content/40 font-mono shrink-0 ml-2">
+                    {formatBytes(s.memUsageBytes)} / {formatBytes(s.memLimitBytes)}
+                  </span>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <div className="flex-1">
+                    <div className="flex justify-between text-2xs text-base-content/50 mb-0.5">
+                      <span>CPU</span>
+                      <span className="font-mono">{s.cpuPercent.toFixed(1)}%</span>
+                    </div>
+                    <progress
+                      className="progress progress-primary h-1.5 w-full"
+                      value={Math.min(s.cpuPercent, 100)}
+                      max={100}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex justify-between text-2xs text-base-content/50 mb-0.5">
+                      <span>MEM</span>
+                      <span className="font-mono">{s.memPercent.toFixed(1)}%</span>
+                    </div>
+                    <progress
+                      className="progress progress-secondary h-1.5 w-full"
+                      value={Math.min(s.memPercent, 100)}
+                      max={100}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function useRecentWorkflows() {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
 
@@ -116,10 +210,12 @@ function LiveActivitySection({
   workflowCount,
   liveWorkflows,
   containerCount,
+  onSelect,
 }: {
   workflowCount: number;
   liveWorkflows: WorkflowRun[];
   containerCount: number;
+  onSelect: (id: string) => void;
 }) {
   return (
     <div className="card bg-base-200 shadow-sm">
@@ -142,18 +238,25 @@ function LiveActivitySection({
         ) : (
           <div className="space-y-1">
             {liveWorkflows.map((run) => (
-              <div
+              <button
                 key={run.id}
-                className="flex items-center gap-2 px-3 py-2 bg-base-100 rounded text-xs"
+                onClick={() => onSelect(run.id)}
+                className="flex items-center gap-2 px-3 py-2 bg-base-100 rounded text-xs w-full text-left hover:bg-base-300/60 transition-colors"
               >
                 <StatusBadge status={run.status} />
-                <span className="font-mono text-base-content/70 truncate flex-1">
-                  {run.repo ? `${run.repo}` : run.workflowName}
-                  {run.issueNumber ? `#${run.issueNumber}` : ""}
+                <span className="font-mono text-base-content/90 shrink-0">
+                  {run.workflowName}
                 </span>
+                {(run.repo || run.issueNumber) && (
+                  <span className="font-mono text-base-content/50 truncate flex-1">
+                    {run.repo ?? ""}
+                    {run.issueNumber ? `#${run.issueNumber}` : ""}
+                  </span>
+                )}
+                {!run.repo && !run.issueNumber && <span className="flex-1" />}
                 <span className="text-base-content/50 shrink-0">{run.currentPhase}</span>
                 <span className="text-base-content/40 shrink-0">{timeAgo(run.startedAt)}</span>
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -307,16 +410,20 @@ function StatsChartsSection() {
             <div>
               <p className="text-xs text-base-content/50 mb-1 font-medium">Executions per {granularity}</p>
               <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
+                <BarChart data={chartData} margin={{ top: 2, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} />
-                  <YAxis tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} allowDecimals={false} />
+                  <YAxis width={48} tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} allowDecimals={false} />
+                  {/* Spacer right-axis so this chart's plot area matches the
+                      Token chart, which has a real right axis. */}
+                  <YAxis yAxisId="spacer" orientation="right" width={48} tick={false} axisLine={false} tickLine={false} />
                   <Tooltip
                     contentStyle={{ fontSize: 11, background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}` }}
+                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
-                  <Line type="monotone" dataKey="successes" stroke={CHART.success} strokeWidth={2} dot={false} name="success" />
-                  <Line type="monotone" dataKey="failures" stroke={CHART.error} strokeWidth={2} dot={false} name="failure" />
-                </LineChart>
+                  <Bar dataKey="successes" stackId="e" fill={CHART.success} name="success" />
+                  <Bar dataKey="failures" stackId="e" fill={CHART.error} name="failure" />
+                </BarChart>
               </ResponsiveContainer>
             </div>
 
@@ -324,11 +431,12 @@ function StatsChartsSection() {
             <div>
               <p className="text-xs text-base-content/50 mb-1 font-medium">Token usage per {granularity}</p>
               <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={chartData} margin={{ top: 2, right: -10, left: -20, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 2, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} />
                   <YAxis
                     yAxisId="io"
+                    width={48}
                     tick={{ fontSize: 10, fill: CHART.axis }}
                     stroke={CHART.axis}
                     tickFormatter={formatTokens}
@@ -336,6 +444,7 @@ function StatsChartsSection() {
                   <YAxis
                     yAxisId="cache"
                     orientation="right"
+                    width={48}
                     tick={{ fontSize: 10, fill: CHART.axis }}
                     stroke={CHART.axis}
                     tickFormatter={formatTokens}
@@ -343,11 +452,12 @@ function StatsChartsSection() {
                   <Tooltip
                     contentStyle={{ fontSize: 11, background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}` }}
                     formatter={(v: number) => formatTokens(v)}
+                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
-                  <Line yAxisId="io" type="monotone" dataKey="inputTokens" stroke={CHART.primary} strokeWidth={2} dot={false} name="input" />
-                  <Line yAxisId="io" type="monotone" dataKey="outputTokens" stroke={CHART.secondary} strokeWidth={2} dot={false} name="output" />
+                  <Bar yAxisId="io" dataKey="inputTokens" stackId="t" fill={CHART.primary} name="input" />
+                  <Bar yAxisId="io" dataKey="outputTokens" stackId="t" fill={CHART.secondary} name="output" />
                   <Line yAxisId="cache" type="monotone" dataKey="cacheTokens" stroke={CHART.accent} strokeWidth={2} strokeDasharray="4 2" dot={false} name="cache" />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
 
@@ -355,16 +465,18 @@ function StatsChartsSection() {
             <div>
               <p className="text-xs text-base-content/50 mb-1 font-medium">Cost per {granularity} (USD)</p>
               <ResponsiveContainer width="100%" height={100}>
-                <LineChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
+                <BarChart data={chartData} margin={{ top: 2, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} />
-                  <YAxis tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} tickFormatter={(v) => `$${v.toFixed(2)}`} />
+                  <YAxis width={48} tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} tickFormatter={(v) => `$${v.toFixed(2)}`} />
+                  <YAxis yAxisId="spacer" orientation="right" width={48} tick={false} axisLine={false} tickLine={false} />
                   <Tooltip
                     contentStyle={{ fontSize: 11, background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}` }}
                     formatter={(v: number) => formatCost(v)}
+                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
-                  <Line type="monotone" dataKey="cost" stroke={CHART.info} strokeWidth={2} dot={false} name="cost" />
-                </LineChart>
+                  <Bar dataKey="cost" fill={CHART.info} name="cost" />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -377,6 +489,7 @@ function StatsChartsSection() {
 export function HomePage({ onSelectWorkflow }: { onSelectWorkflow: (id: string) => void }) {
   const { workflowCount, liveWorkflows, containerCount } = useLiveActivity();
   const recentRuns = useRecentWorkflows();
+  const containerStats = useContainerStats();
 
   return (
     <div className="flex-1 overflow-auto p-4">
@@ -386,7 +499,9 @@ export function HomePage({ onSelectWorkflow }: { onSelectWorkflow: (id: string) 
             workflowCount={workflowCount}
             liveWorkflows={liveWorkflows}
             containerCount={containerCount}
+            onSelect={onSelectWorkflow}
           />
+          <ResourceUsageSection stats={containerStats} />
           <RecentWorkflowsSection runs={recentRuns} onSelect={onSelectWorkflow} />
         </div>
         <div className="lg:col-span-3">
