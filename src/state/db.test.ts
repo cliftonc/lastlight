@@ -373,6 +373,127 @@ describe("workflow_approvals CRUD", () => {
   });
 });
 
+describe("dailyStats", () => {
+  // The shared db path resolves to a file (path.resolve(':memory:')), so rows
+  // accumulate across tests. Wipe executions before each test in this suite.
+  beforeEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (db as any).db.exec("DELETE FROM executions");
+  });
+
+  function insertExecution(opts: {
+    id: string;
+    startedAt: string;
+    success?: boolean;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    costUsd?: number;
+  }) {
+    db.recordStart({
+      id: opts.id,
+      triggerType: "webhook",
+      triggerId: "owner/repo#1",
+      skill: "build",
+      repo: "owner/repo",
+      issueNumber: 1,
+      startedAt: opts.startedAt,
+    });
+    if (opts.success !== undefined) {
+      db.recordFinish(opts.id, {
+        success: opts.success,
+        inputTokens: opts.inputTokens,
+        outputTokens: opts.outputTokens,
+        cacheReadInputTokens: opts.cacheReadTokens,
+        costUsd: opts.costUsd,
+      });
+    }
+  }
+
+  it("returns empty array when no executions exist", () => {
+    const rows = db.dailyStats(30);
+    expect(rows).toEqual([]);
+  });
+
+  it("aggregates executions by date", () => {
+    const day1 = "2026-04-09T10:00:00.000Z";
+    const day2 = "2026-04-10T10:00:00.000Z";
+    insertExecution({ id: randomUUID(), startedAt: day1, success: true });
+    insertExecution({ id: randomUUID(), startedAt: day1, success: false });
+    insertExecution({ id: randomUUID(), startedAt: day2, success: true });
+
+    const rows = db.dailyStats(30);
+    expect(rows).toHaveLength(2);
+
+    const d1 = rows.find((r) => r.date === "2026-04-09");
+    const d2 = rows.find((r) => r.date === "2026-04-10");
+    expect(d1).toBeDefined();
+    expect(d1!.executions).toBe(2);
+    expect(d1!.successes).toBe(1);
+    expect(d1!.failures).toBe(1);
+    expect(d2).toBeDefined();
+    expect(d2!.executions).toBe(1);
+    expect(d2!.successes).toBe(1);
+    expect(d2!.failures).toBe(0);
+  });
+
+  it("sums token and cost data correctly", () => {
+    const day = "2026-04-10T12:00:00.000Z";
+    insertExecution({ id: randomUUID(), startedAt: day, success: true, inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, costUsd: 0.01 });
+    insertExecution({ id: randomUUID(), startedAt: day, success: true, inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, costUsd: 0.02 });
+
+    const rows = db.dailyStats(30);
+    const d = rows.find((r) => r.date === "2026-04-10");
+    expect(d).toBeDefined();
+    expect(d!.inputTokens).toBe(300);
+    expect(d!.outputTokens).toBe(130);
+    expect(d!.cacheReadTokens).toBe(20);
+    expect(d!.totalTokens).toBe(450);
+    expect(d!.costUsd).toBeCloseTo(0.03);
+  });
+
+  it("handles NULL token/cost columns gracefully", () => {
+    const day = "2026-04-10T08:00:00.000Z";
+    // recordStart only — no recordFinish, so tokens/cost are NULL
+    db.recordStart({ id: randomUUID(), triggerType: "webhook", triggerId: "t1", skill: "build", repo: "r", issueNumber: 1, startedAt: day });
+
+    const rows = db.dailyStats(30);
+    const d = rows.find((r) => r.date === "2026-04-10");
+    expect(d).toBeDefined();
+    expect(d!.totalTokens).toBe(0);
+    expect(d!.costUsd).toBe(0);
+  });
+
+  it("respects the days limit and excludes older executions", () => {
+    // Very old execution — 60 days ago
+    const old = new Date();
+    old.setDate(old.getDate() - 60);
+    insertExecution({ id: randomUUID(), startedAt: old.toISOString(), success: true });
+
+    // Recent execution — today
+    insertExecution({ id: randomUUID(), startedAt: new Date().toISOString(), success: true });
+
+    const rows = db.dailyStats(30);
+    // Only today's row should appear
+    expect(rows).toHaveLength(1);
+  });
+
+  it("orders results by date ascending", () => {
+    const d1 = "2026-04-08T10:00:00.000Z";
+    const d2 = "2026-04-09T10:00:00.000Z";
+    const d3 = "2026-04-10T10:00:00.000Z";
+    insertExecution({ id: randomUUID(), startedAt: d3, success: true });
+    insertExecution({ id: randomUUID(), startedAt: d1, success: true });
+    insertExecution({ id: randomUUID(), startedAt: d2, success: true });
+
+    const rows = db.dailyStats(30);
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    const dates = rows.map((r) => r.date);
+    const sorted = [...dates].sort();
+    expect(dates).toEqual(sorted);
+  });
+});
+
 describe("context JSON round-trip", () => {
   it("stores and retrieves complex context objects", () => {
     const id = randomUUID();

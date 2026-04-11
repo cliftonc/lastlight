@@ -133,6 +133,18 @@ export interface Stats {
   running: number;
 }
 
+export interface DailyStat {
+  date: string;
+  executions: number;
+  successes: number;
+  failures: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  costUsd: number;
+}
+
 export interface Health {
   status: string;
   stateDir: string;
@@ -202,6 +214,7 @@ export const api = {
       `/sessions/${id}/messages?since=${since}`,
     ),
   stats: () => req<Stats>("/stats"),
+  dailyStats: (days = 30) => req<{ daily: DailyStat[] }>(`/stats/daily?days=${days}`),
   executions: (opts: { limit?: number; offset?: number } = {}) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set("limit", String(opts.limit));

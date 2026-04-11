@@ -223,6 +223,13 @@ export function createAdminRoutes(
     return c.json(stats);
   });
 
+  // Daily aggregated stats (last N days)
+  app.get("/stats/daily", (c) => {
+    const daysParam = c.req.query("days");
+    const days = Math.min(Math.max(1, parseInt(daysParam ?? "30", 10) || 30), 90);
+    return c.json({ daily: db.dailyStats(days) });
+  });
+
   // API rate limits
   app.get("/rate-limits", (c) => {
     return c.json({ limits: db.getRateLimits() });

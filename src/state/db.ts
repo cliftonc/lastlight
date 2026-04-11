@@ -597,6 +597,53 @@ export class StateDb {
     return { total_executions: total, today_count: todayCount, by_skill, by_trigger, running };
   }
 
+  /** Daily aggregated stats for the last N days */
+  dailyStats(days: number): {
+    date: string;
+    executions: number;
+    successes: number;
+    failures: number;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    costUsd: number;
+  }[] {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    cutoff.setHours(0, 0, 0, 0);
+    const cutoffIso = cutoff.toISOString();
+
+    const rows = this.db.prepare(`
+      SELECT
+        date(started_at) AS date,
+        COUNT(*) AS executions,
+        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
+        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures,
+        COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) + COALESCE(SUM(cache_read_input_tokens), 0) AS totalTokens,
+        COALESCE(SUM(input_tokens), 0) AS inputTokens,
+        COALESCE(SUM(output_tokens), 0) AS outputTokens,
+        COALESCE(SUM(cache_read_input_tokens), 0) AS cacheReadTokens,
+        COALESCE(SUM(cost_usd), 0) AS costUsd
+      FROM executions
+      WHERE started_at >= ?
+      GROUP BY date(started_at)
+      ORDER BY date
+    `).all(cutoffIso) as {
+      date: string;
+      executions: number;
+      successes: number;
+      failures: number;
+      totalTokens: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      costUsd: number;
+    }[];
+
+    return rows;
+  }
+
   // ── Workflow Runs ──────────────────────────────────────────────
 
   /** Create a new workflow run record */
