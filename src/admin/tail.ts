@@ -65,8 +65,23 @@ export async function tailJsonl(
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
+  // Two things kick `tick()`: an fs.watch callback and a setInterval. They
+  // can fire near-simultaneously when a chat turn writes a burst of lines,
+  // and without serialisation BOTH would `stat()` the same size, see the
+  // same `offset`, and emit the same delta twice — which is exactly the
+  // duplicated-message bug we hit on the live chat-session stream.
+  let tickInFlight = false;
+  let tickQueued = false;
   const tick = async (): Promise<void> => {
     if (stopped) return;
+    if (tickInFlight) {
+      // Coalesce: remember that another tick is wanted, but don't start it
+      // until the current one finishes. The running tick reads everything
+      // up to the current end of file, so a single follow-up is sufficient.
+      tickQueued = true;
+      return;
+    }
+    tickInFlight = true;
     try {
       const stat = await fsp.stat(filePath);
       if (stat.size < offset) {
@@ -103,6 +118,13 @@ export async function tailJsonl(
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
         console.error(`[tail] ${filePath}: ${(err as Error).message}`);
+      }
+    } finally {
+      tickInFlight = false;
+      if (tickQueued) {
+        tickQueued = false;
+        // Run the coalesced follow-up next-tick to avoid recursion blowup.
+        setImmediate(() => { void tick(); });
       }
     }
   };
