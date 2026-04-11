@@ -37,6 +37,9 @@ interrupt_debug.log
 # Build output
 dist/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Dependencies
 node_modules/
 
