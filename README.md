@@ -75,12 +75,10 @@ npm run dev:dashboard  # dashboard only
 
 Both server scripts call `scripts/dev-local.sh`, which:
 - Verifies Docker is running and the sandbox image exists
-- Verifies you have a host `~/.claude/.credentials.json` (run `claude login` first if not)
-- Seeds `./data/sandbox-claude-home/` from your host credentials on first run
+- Locates your host claude credentials — `~/.claude/.credentials.json` on Linux, or the macOS keychain entry `Claude Code-credentials` on macOS. Run `claude login` first if neither is present.
+- Re-seeds `./data/sandbox-claude-home/.credentials.json` from the host credentials on every start, so a fresh `claude login` is picked up automatically without wiping anything.
 - Sets `LASTLIGHT_LOCAL_DEV=1`, `SANDBOX_DATA_VOLUME=./data/sandbox-claude-home`, `STATE_DIR=./data`, `CLAUDE_HOME_DIR=./data/sandbox-claude-home`, and `ENABLE_DIRECT_FALLBACK=false`
 - Starts the harness with `tsx watch src/index.ts`
-
-To wipe and re-seed (e.g. after rotating your host login): `rm -rf data/sandbox-claude-home/` and rerun.
 
 #### Triggering work via the CLI
 
