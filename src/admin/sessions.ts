@@ -361,8 +361,14 @@ export class SessionReader {
           if (msg.timestamp) {
             const ts = new Date(msg.timestamp as string).getTime() / 1000;
             if (!Number.isNaN(ts)) {
-              if (startedAt === null) startedAt = ts;
-              lastMessageAt = ts;
+              // True min/max across the main session AND every agent sub-
+              // session file. The previous "first / last seen" logic broke
+              // when multiple files were scanned in non-chronological
+              // readdir order — `lastMessageAt` ended up being the final
+              // timestamp of whichever file was scanned last, which could
+              // easily be older than the real most recent message.
+              if (startedAt === null || ts < startedAt) startedAt = ts;
+              if (lastMessageAt === null || ts > lastMessageAt) lastMessageAt = ts;
             }
           }
 
