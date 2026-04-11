@@ -17,8 +17,6 @@ import {
   stringSerializer,
   nullableStringParser,
   nullableStringSerializer,
-  boolParser,
-  boolSerializer,
 } from "./hooks/useUrlState";
 
 type AuthState = "checking" | "required" | "ok";
@@ -33,13 +31,6 @@ const SESSION_SOURCE_PATHS: Record<"sessions" | "chat-sessions", string> = {
   "chat-sessions": "/admin/api/chat-sessions",
 };
 const TIME_RANGES = ["hour", "day", "week", "all", "live"] as const;
-
-function isNoOpSession(s: {
-  tool_call_count: number;
-  conversation_message_count: number;
-}): boolean {
-  return s.tool_call_count === 0 && s.conversation_message_count <= 2;
-}
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   // ── Filters & navigation, all persisted to the URL ─────────────────────
@@ -67,12 +58,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     null,
     nullableStringParser,
     nullableStringSerializer,
-  );
-  const [hideNoOp, setHideNoOp] = useUrlState<boolean>(
-    "noop",
-    true,
-    boolParser(true),
-    boolSerializer(true),
   );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -134,7 +119,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     }
 
     if (sourceFilter) out = out.filter((s) => (s.sessionType || "agent") === sourceFilter);
-    if (hideNoOp) out = out.filter((s) => !isNoOpSession(s));
     if (debouncedQuery) {
       const q = debouncedQuery.toLowerCase();
       out = out.filter((s) => {
@@ -149,7 +133,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       });
     }
     return out;
-  }, [sessions, sourceFilter, hideNoOp, debouncedQuery, timeRange]);
+  }, [sessions, sourceFilter, debouncedQuery, timeRange]);
 
   useEffect(() => {
     if (selectedId && !filteredSessions.some((s) => s.id === selectedId)) {
@@ -299,8 +283,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             totalCount={sessions.length}
             sourceFilter={sourceFilter}
             onFilterChange={setSourceFilter}
-            hideNoOp={hideNoOp}
-            onHideNoOpChange={setHideNoOp}
           />
           <div className="flex flex-1 overflow-hidden">
             <SessionList

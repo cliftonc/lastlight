@@ -8,8 +8,6 @@ interface Props {
   totalCount: number;
   sourceFilter: string | null;
   onFilterChange: (src: string | null) => void;
-  hideNoOp: boolean;
-  onHideNoOpChange: (v: boolean) => void;
 }
 
 /**
@@ -23,8 +21,6 @@ export function SessionFilters({
   totalCount,
   sourceFilter,
   onFilterChange,
-  hideNoOp,
-  onHideNoOpChange,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-4 py-2 border-b border-base-300 bg-base-200/40 shrink-0">
@@ -57,16 +53,6 @@ export function SessionFilters({
           );
         })}
       </div>
-
-      <label className="flex items-center gap-1.5 cursor-pointer text-2xs text-base-content/60 shrink-0">
-        <input
-          type="checkbox"
-          className="checkbox checkbox-xs"
-          checked={hideNoOp}
-          onChange={(e) => onHideNoOpChange(e.target.checked)}
-        />
-        hide no-op
-      </label>
     </div>
   );
 }
