@@ -32,6 +32,28 @@ export class GitHubClient {
     });
   }
 
+  /**
+   * Add an emoji reaction to a specific issue comment. Used as an immediate
+   * (silent) acknowledgment that the agent has accepted a request, before
+   * any actual work — and any chatty bot comments — start.
+   *
+   * Reaction `content` values: "+1" | "-1" | "laugh" | "confused" | "heart"
+   * | "hooray" | "rocket" | "eyes".
+   */
+  async reactToComment(
+    owner: string,
+    repo: string,
+    commentId: number,
+    content: "rocket" | "+1" | "eyes" | "hooray" = "rocket",
+  ): Promise<void> {
+    await this.octokit.rest.reactions.createForIssueComment({
+      owner,
+      repo,
+      comment_id: commentId,
+      content,
+    });
+  }
+
   async getIssue(owner: string, repo: string, issueNumber: number) {
     const { data } = await this.octokit.rest.issues.get({
       owner,

@@ -560,6 +560,19 @@ async function main() {
 
       if (envelope.type === "message") {
         await envelope.reply(`Starting build cycle for ${repoStr}#${issueNumber}...`);
+      } else if (github) {
+        // GitHub-triggered builds: react with 🚀 on the triggering comment so
+        // the user sees an instant ack before guardrails / architect / etc.
+        // start running. Non-fatal if it fails.
+        const commentId = (envelope.raw as { comment?: { id?: number } } | undefined)?.comment?.id;
+        if (commentId) {
+          github
+            .reactToComment(owner, repo, commentId, "rocket")
+            .catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.warn(`[event] Could not react to trigger comment: ${msg}`);
+            });
+        }
       }
 
       dispatchWorkflow("build", {
