@@ -8,6 +8,7 @@ import { Login } from "./components/Login";
 import { useSessionStream } from "./hooks/useSessionStream";
 import { UsageFooter } from "./components/UsageFooter";
 import { WorkflowList } from "./components/WorkflowList";
+import { HomePage } from "./components/HomePage";
 import {
   useUrlState,
   enumParser,
@@ -21,11 +22,11 @@ import {
 } from "./hooks/useUrlState";
 
 type AuthState = "checking" | "required" | "ok";
-type Tab = "sessions" | "workflows";
+type Tab = "home" | "sessions" | "workflows";
 
 const PAGE_SIZE = 50;
 
-const TABS = ["workflows", "sessions"] as const;
+const TABS = ["home", "workflows", "sessions"] as const;
 const TIME_RANGES = ["hour", "day", "week", "all", "live"] as const;
 
 function isNoOpSession(s: {
@@ -39,9 +40,9 @@ function Dashboard() {
   // ── Filters & navigation, all persisted to the URL ─────────────────────
   const [tab, setTab] = useUrlState<Tab>(
     "tab",
-    "workflows",
-    enumParser(TABS, "workflows"),
-    enumSerializer<Tab>("workflows"),
+    "home",
+    enumParser(TABS, "home"),
+    enumSerializer<Tab>("home"),
   );
   type TimeRange = (typeof TIME_RANGES)[number];
   const [timeRange, setTimeRange] = useUrlState<TimeRange>(
@@ -216,7 +217,7 @@ function Dashboard() {
 
   // The header's "live" pill shows whichever count is relevant for the active
   // tab — workflow runs vs raw sessions.
-  const headerLiveCount = tab === "workflows" ? workflowLiveCount : sessionLiveCount;
+  const headerLiveCount = tab === "sessions" ? sessionLiveCount : workflowLiveCount;
 
   return (
     <div className="flex flex-col h-full">
@@ -230,6 +231,12 @@ function Dashboard() {
       />
       <div className="flex border-b border-base-300 bg-base-200/60 px-4 gap-1">
         <button
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "home" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
+          onClick={() => setTab("home")}
+        >
+          Home
+        </button>
+        <button
           className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "workflows" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
           onClick={() => setTab("workflows")}
         >
@@ -242,7 +249,9 @@ function Dashboard() {
           Sessions
         </button>
       </div>
-      {tab === "sessions" ? (
+      {tab === "home" ? (
+        <HomePage />
+      ) : tab === "sessions" ? (
         <div className="flex flex-col flex-1 overflow-hidden">
           <SessionFilters
             availableSources={availableSources}
