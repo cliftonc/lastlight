@@ -335,13 +335,26 @@ function Dashboard() {
 
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
+  const [slackOAuth, setSlackOAuth] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
       try {
-        const { required } = await api.authRequired();
+        // Handle OAuth callback: if ?token= is in URL, store it and strip from history
+        const params = new URLSearchParams(window.location.search);
+        const urlToken = params.get("token");
+        if (urlToken) {
+          auth.setToken(urlToken);
+          params.delete("token");
+          const newSearch = params.toString();
+          const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : "") + window.location.hash;
+          window.history.replaceState(null, "", newUrl);
+        }
+
+        const { required, slackOAuth: oauthEnabled } = await api.authRequired();
         if (cancelled) return;
+        if (!cancelled) setSlackOAuth(oauthEnabled);
         if (!required) {
           setAuthState("ok");
           return;
@@ -375,7 +388,7 @@ export default function App() {
     );
   }
   if (authState === "required") {
-    return <Login onAuthed={() => setAuthState("ok")} />;
+    return <Login onAuthed={() => setAuthState("ok")} slackOAuth={slackOAuth} />;
   }
   return <Dashboard />;
 }

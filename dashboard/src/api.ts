@@ -202,7 +202,7 @@ export interface RateLimit {
 }
 
 export const api = {
-  authRequired: () => req<{ required: boolean }>("/auth-required"),
+  authRequired: () => req<{ required: boolean; slackOAuth: boolean }>("/auth-required"),
   login: (password: string) =>
     req<{ token: string }>("/login", {
       method: "POST",

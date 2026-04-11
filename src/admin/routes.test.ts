@@ -1,0 +1,236 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createAdminRoutes, type AdminConfig } from "./routes.js";
+import type { StateDb } from "../state/db.js";
+import type { SessionReader } from "./sessions.js";
+
+// Mock docker so tests don't need a running daemon
+vi.mock("./docker.js", () => ({
+  listRunningContainers: vi.fn(async () => []),
+  killContainer: vi.fn(async () => {}),
+  getContainerStats: vi.fn(async () => []),
+}));
+
+// Mock arctic so we control OAuth flow without hitting Slack
+vi.mock("arctic", () => {
+  class Slack {
+    createAuthorizationURL(_state: string, _scopes: string[]) {
+      return new URL("https://slack.com/openid/connect/authorize?mocked=1");
+    }
+    async validateAuthorizationCode(_code: string) {
+      return { accessToken: () => "mock-slack-access-token" };
+    }
+  }
+  return { Slack };
+});
+
+// Minimal mocks
+const mockDb = {
+  executionStats: vi.fn(() => ({ total: 0, running: 0, success: 0, failed: 0 })),
+  dailyStats: vi.fn(() => []),
+  hourlyStats: vi.fn(() => []),
+  getRateLimits: vi.fn(() => []),
+  listSystemStatus: vi.fn(() => []),
+  allExecutions: vi.fn(() => []),
+  listWorkflowRuns: vi.fn(() => ({ runs: [], total: 0 })),
+  distinctWorkflowNames: vi.fn(() => []),
+  getWorkflowRun: vi.fn(() => null),
+  listPendingApprovals: vi.fn(() => []),
+  runningExecutions: vi.fn(() => []),
+} as unknown as StateDb;
+
+const mockSessions = {
+  listSessionIds: vi.fn(() => []),
+  getSessionMeta: vi.fn(async () => null),
+  exists: vi.fn(() => false),
+  read: vi.fn(async () => []),
+  getFilePath: vi.fn(() => null),
+} as unknown as SessionReader;
+
+function makeConfig(overrides: Partial<AdminConfig> = {}): AdminConfig {
+  return {
+    stateDir: "/tmp",
+    sessionsDir: "/tmp/sessions",
+    adminPassword: "test-password",
+    adminSecret: "test-secret",
+    ...overrides,
+  };
+}
+
+async function request(app: ReturnType<typeof createAdminRoutes>, path: string, opts: RequestInit = {}) {
+  const req = new Request(`http://localhost${path}`, opts);
+  return app.fetch(req);
+}
+
+describe("GET /auth-required", () => {
+  it("returns slackOAuth: false when not configured", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig());
+    const res = await request(app, "/auth-required");
+    const body = await res.json() as { required: boolean; slackOAuth: boolean };
+    expect(res.status).toBe(200);
+    expect(body.slackOAuth).toBe(false);
+    expect(body.required).toBe(true);
+  });
+
+  it("returns slackOAuth: true when client ID and secret are configured", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+      slackOAuthClientSecret: "secret",
+    }));
+    const res = await request(app, "/auth-required");
+    const body = await res.json() as { required: boolean; slackOAuth: boolean };
+    expect(res.status).toBe(200);
+    expect(body.slackOAuth).toBe(true);
+  });
+
+  it("returns slackOAuth: false when only clientId is set (secret missing)", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+    }));
+    const res = await request(app, "/auth-required");
+    const body = await res.json() as { slackOAuth: boolean };
+    expect(body.slackOAuth).toBe(false);
+  });
+});
+
+describe("GET /oauth/slack/authorize", () => {
+  it("returns 404 when Slack OAuth not configured", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig());
+    const res = await request(app, "/oauth/slack/authorize");
+    expect(res.status).toBe(404);
+  });
+
+  it("redirects to Slack when configured", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+      slackOAuthClientSecret: "secret",
+      slackOAuthRedirectUri: "http://localhost/callback",
+    }));
+    const res = await request(app, "/oauth/slack/authorize");
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("slack.com");
+  });
+});
+
+describe("GET /oauth/slack/callback", () => {
+  it("returns 404 when Slack OAuth not configured", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig());
+    const res = await request(app, "/oauth/slack/callback?code=abc&state=xyz");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when state is missing or mismatched", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+      slackOAuthClientSecret: "secret",
+      slackOAuthRedirectUri: "http://localhost/callback",
+    }));
+    // No cookie set → state mismatch
+    const res = await request(app, "/oauth/slack/callback?code=abc&state=bad-state");
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 403 when workspace does not match", async () => {
+    // Mock fetch to return a different team
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ ok: true, team: "other-team", team_id: "T99999" }),
+      { headers: { "Content-Type": "application/json" } },
+    ));
+
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+      slackOAuthClientSecret: "secret",
+      slackOAuthRedirectUri: "http://localhost/callback",
+      slackAllowedWorkspace: "T00001",
+    }));
+
+    // Simulate request with matching state cookie
+    const state = "teststate123";
+    const req = new Request(`http://localhost/oauth/slack/callback?code=abc&state=${state}`, {
+      headers: { Cookie: `slack_oauth_state=${state}` },
+    });
+    const res = await app.fetch(req);
+    expect(res.status).toBe(403);
+
+    global.fetch = originalFetch;
+  });
+
+  it("redirects with token when workspace matches by team_id", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ ok: true, team: "my-team", team_id: "T00001" }),
+      { headers: { "Content-Type": "application/json" } },
+    ));
+
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+      slackOAuthClientSecret: "secret",
+      slackOAuthRedirectUri: "http://localhost/callback",
+      slackAllowedWorkspace: "T00001",
+    }));
+
+    const state = "teststate456";
+    const req = new Request(`http://localhost/oauth/slack/callback?code=abc&state=${state}`, {
+      headers: { Cookie: `slack_oauth_state=${state}` },
+    });
+    const res = await app.fetch(req);
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/admin?token=");
+
+    global.fetch = originalFetch;
+  });
+
+  it("redirects with token when no workspace restriction set", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ ok: true, team: "any-team", team_id: "TANY" }),
+      { headers: { "Content-Type": "application/json" } },
+    ));
+
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      slackOAuthClientId: "C123",
+      slackOAuthClientSecret: "secret",
+      slackOAuthRedirectUri: "http://localhost/callback",
+    }));
+
+    const state = "teststate789";
+    const req = new Request(`http://localhost/oauth/slack/callback?code=abc&state=${state}`, {
+      headers: { Cookie: `slack_oauth_state=${state}` },
+    });
+    const res = await app.fetch(req);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/admin?token=");
+
+    global.fetch = originalFetch;
+  });
+});
+
+describe("POST /login (password)", () => {
+  it("still works with correct password", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      adminPassword: "correct",
+    }));
+    const res = await request(app, "/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "correct" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { token: string };
+    expect(typeof body.token).toBe("string");
+  });
+
+  it("rejects wrong password", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      adminPassword: "correct",
+    }));
+    const res = await request(app, "/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "wrong" }),
+    });
+    expect(res.status).toBe(401);
+  });
+});
