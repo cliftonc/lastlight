@@ -266,9 +266,10 @@ export function createAdminRoutes(
       const match = name.match(/^lastlight-sandbox-(.+?)-[a-f0-9]{8}$/);
       if (match) {
         const taskId = match[1];
-        // Mark any running executions with matching skill as failed
+        // Mark any running executions with matching skill as failed. Phase
+        // skill keys are `<workflowName>:<phaseName>` — match on the colon.
         const skills = db.runningExecutions()
-          .filter((e) => e.skill.startsWith("build:") || e.skill === "pr-fix")
+          .filter((e) => e.skill.includes(":") || e.skill === "pr-fix")
           .filter((e) => taskId.includes(e.triggerId?.replace(/[^a-z0-9]/gi, "") || "---"));
         for (const e of skills) {
           db.recordFinish(e.id, { success: false, error: "terminated via admin dashboard" });
@@ -288,12 +289,39 @@ export function createAdminRoutes(
     return c.json({ executions });
   });
 
-  // Workflow runs
+  // Workflow runs — paginated, optional filters by date, workflow name, and
+  // status. Returns `total` so the dashboard can drive a "load more" pager.
+  // `status=active` is shorthand for ('running','paused') — used by the
+  // header's "live" filter on the workflows tab.
   app.get("/workflow-runs", (c) => {
     const rawLimit = c.req.query("limit");
-    const limit = Math.min(Math.max(parseInt(rawLimit ?? "20", 10) || 20, 1), 100);
-    const runs = db.recentWorkflowRuns(limit);
-    return c.json({ workflowRuns: runs });
+    const rawOffset = c.req.query("offset");
+    const since = c.req.query("since") || undefined;
+    const workflowName = c.req.query("workflow") || undefined;
+    const statusParam = c.req.query("status");
+    const limit = Math.min(Math.max(parseInt(rawLimit ?? "20", 10) || 20, 1), 200);
+    const offset = Math.max(parseInt(rawOffset ?? "0", 10) || 0, 0);
+
+    let statuses: string[] | undefined;
+    if (statusParam === "active") {
+      statuses = ["running", "paused"];
+    } else if (statusParam) {
+      statuses = statusParam.split(",").filter(Boolean);
+    }
+
+    const { runs, total } = db.listWorkflowRuns({
+      limit,
+      offset,
+      sinceIso: since,
+      workflowName,
+      statuses,
+    });
+    return c.json({ workflowRuns: runs, total });
+  });
+
+  // Distinct workflow names — used to populate the dashboard's filter row.
+  app.get("/workflow-names", (c) => {
+    return c.json({ names: db.distinctWorkflowNames() });
   });
 
   app.get("/workflow-runs/:id", (c) => {
@@ -301,6 +329,38 @@ export function createAdminRoutes(
     const run = db.getWorkflowRun(id);
     if (!run) return c.json({ error: "workflow run not found" }, 404);
     return c.json({ workflowRun: run });
+  });
+
+  // List the executions belonging to a workflow run, ordered by start time.
+  // Used by the dashboard's pipeline-detail view to look up the session id
+  // (and usage metrics) for any phase the user clicks.
+  app.get("/workflow-runs/:id/executions", (c) => {
+    const id = c.req.param("id");
+    const run = db.getWorkflowRun(id);
+    if (!run) return c.json({ error: "workflow run not found" }, 404);
+    const rows = db.getExecutionsForWorkflowRun(run.id, run.triggerId, run.workflowName);
+    const prefix = `${run.workflowName}:`;
+    const executions = rows.map((r) => ({
+      id: r.id,
+      skill: r.skill,
+      // <workflowName>:<phaseName> → phaseName
+      phase: r.skill.startsWith(prefix) ? r.skill.slice(prefix.length) : r.skill,
+      sessionId: r.sessionId,
+      success: r.success,
+      error: r.error,
+      startedAt: r.startedAt,
+      finishedAt: r.finishedAt,
+      durationMs: r.durationMs,
+      turns: r.turns,
+      costUsd: r.costUsd,
+      inputTokens: r.inputTokens,
+      cacheCreationInputTokens: r.cacheCreationInputTokens,
+      cacheReadInputTokens: r.cacheReadInputTokens,
+      outputTokens: r.outputTokens,
+      apiDurationMs: r.apiDurationMs,
+      stopReason: r.stopReason,
+    }));
+    return c.json({ executions });
   });
 
   app.post("/workflow-runs/:id/cancel", (c) => {

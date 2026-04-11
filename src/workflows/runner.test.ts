@@ -223,13 +223,33 @@ describe("runWorkflow — guardrails on_output rules", () => {
     expect(result.phases.map((p) => p.phase)).toContain("architect");
   });
 
-  it("bypasses BLOCKED for bootstrap tasks (by title prefix)", async () => {
+  it("bypasses BLOCKED when unless_title_matches regex hits", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "title-bypass",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "guardrails",
+          type: "agent",
+          prompt: "prompts/guardrails.md",
+          on_output: {
+            contains_BLOCKED: {
+              action: "fail",
+              message: "blocked",
+              unless_title_matches: "^guardrails:",
+            },
+          },
+        },
+        { name: "architect", type: "agent", prompt: "prompts/architect.md" },
+      ],
+    };
     const ctx = { ...BASE_CTX, issueTitle: "guardrails: add test framework" };
     mockExecuteAgent
       .mockResolvedValueOnce(makeSuccessResult("BLOCKED"))
       .mockResolvedValueOnce(makeSuccessResult("architect plan"));
 
-    const result = await runWorkflow(WORKFLOW_WITH_GUARDRAILS, ctx, {} as never, {});
+    const result = await runWorkflow(workflow, ctx, {} as never, {});
     expect(result.phases.map((p) => p.phase)).toContain("architect");
   });
 
@@ -276,7 +296,7 @@ describe("runWorkflow — reviewer loop", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(phases).toContain("fix_loop_1");
+    expect(phases).toContain("reviewer_fix_1");
     expect(result.prNumber).toBe(8);
   });
 
@@ -350,7 +370,7 @@ describe("runWorkflow — approval gate", () => {
     mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("architect plan done"));
 
     const db = makeMockDb("phase_0");
-    const approvalConfig: ApprovalGateConfig = { postArchitect: true, postReviewer: false };
+    const approvalConfig: ApprovalGateConfig = { post_architect: true };
 
     const result = await runWorkflow(
       WORKFLOW_WITH_APPROVAL_GATE,
@@ -371,10 +391,10 @@ describe("runWorkflow — approval gate", () => {
   });
 
   it("resumes from executor after post_architect gate approval (currentPhase=architect in DB)", async () => {
-    // Simulate what the orchestrator does after approval: update currentPhase to "architect"
-    // so the runner computes resumeFrom = "executor"
+    // Simulate what simple.ts does after approval: update currentPhase to the
+    // gate-owning phase ("architect") so nextPhaseAfter lands on "executor".
     const db = makeMockDb("architect");
-    const approvalConfig: ApprovalGateConfig = { postArchitect: true, postReviewer: false };
+    const approvalConfig: ApprovalGateConfig = { post_architect: true };
 
     mockExecuteAgent
       .mockResolvedValueOnce(makeSuccessResult("executor done"))
@@ -399,29 +419,30 @@ describe("runWorkflow — approval gate", () => {
     expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
   });
 
-  it("resumes from specified startFrom phase (no-DB path)", async () => {
-    // Simulate no-DB resume: orchestrator parsed current_phase: architect from agent output
-    // and passes startFrom="executor" to skip re-running architect
-    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("executor done"));
-
+  it("pauses at a custom-named gate when that gate is enabled", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "custom-gate",
+      phases: [
+        { name: "phase_0", type: "context" },
+        { name: "plan", type: "agent", prompt: "prompts/plan.md", approval_gate: "post_plan" },
+        { name: "build", type: "agent", prompt: "prompts/build.md" },
+      ],
+    };
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("plan done"));
+    const db = makeMockDb("phase_0");
     const result = await runWorkflow(
-      SIMPLE_WORKFLOW, // phases: phase_0, architect, executor
+      workflow,
       BASE_CTX,
       {} as never,
       {},
-      undefined, // no DB
+      db,
       undefined,
-      undefined,
-      undefined,
-      "executor", // startFrom — skip architect
+      { post_plan: true },
+      "wf-custom-1",
     );
-
-    expect(result.success).toBe(true);
-    // Only executor ran — architect was skipped by startFrom
+    expect(result.paused).toBe(true);
     expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
-    const phaseNames = result.phases.map((p) => p.phase);
-    expect(phaseNames).toContain("executor");
-    expect(phaseNames).not.toContain("architect");
   });
 });
 
@@ -449,7 +470,34 @@ describe("runWorkflow — callbacks", () => {
     expect(ended).toContain("executor");
   });
 
-  it("calls postComment on phase failures", async () => {
+  it("renders phase.messages.on_failure through the template engine", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "fail-msg",
+      phases: [
+        { name: "phase_0", type: "context" },
+        { name: "architect", type: "agent", prompt: "prompts/architect.md" },
+        {
+          name: "executor",
+          type: "agent",
+          prompt: "prompts/executor.md",
+          messages: { on_failure: "**{{issueTitle}}** failed — aborting" },
+        },
+      ],
+    };
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult())
+      .mockResolvedValueOnce(makeFailResult("connection timeout"));
+
+    const comments: string[] = [];
+    await runWorkflow(workflow, BASE_CTX, {} as never, {
+      postComment: async (msg) => { comments.push(msg); },
+    });
+
+    expect(comments).toContain("**Add Rate Limiter** failed — aborting");
+  });
+
+  it("silently skips notification when no on_failure template is set", async () => {
     mockExecuteAgent
       .mockResolvedValueOnce(makeSuccessResult())
       .mockResolvedValueOnce(makeFailResult("connection timeout"));
@@ -459,7 +507,7 @@ describe("runWorkflow — callbacks", () => {
       postComment: async (msg) => { comments.push(msg); },
     });
 
-    expect(comments.some((c) => c.includes("failed"))).toBe(true);
+    expect(comments).toEqual([]);
   });
 });
 
@@ -525,12 +573,32 @@ describe("runWorkflow — generic loop node", () => {
   });
 
   it("stops at max_iterations when condition is never met", async () => {
-    // Always fail the bash check
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "max-iter-msg",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "implement",
+          type: "agent",
+          prompt: "prompts/implement.md",
+          messages: {
+            on_failure: "{{phase}} stopped at {{maxIterations}} max iterations",
+          },
+          generic_loop: {
+            max_iterations: 5,
+            until_bash: "npm test",
+            interactive: false,
+            fresh_context: false,
+          },
+        },
+      ],
+    };
     mockExecSync.mockImplementation(() => { throw new Error("exit 1"); });
     mockExecuteAgent.mockResolvedValue(makeSuccessResult("still failing"));
 
     const comments: string[] = [];
-    const result = await runWorkflow(WORKFLOW_WITH_GENERIC_LOOP, BASE_CTX, {} as never, {
+    const result = await runWorkflow(workflow, BASE_CTX, {} as never, {
       postComment: async (msg) => { comments.push(msg); },
     });
 
@@ -833,6 +901,130 @@ describe("runWorkflow — DAG parallel execution", () => {
     const result = await runWorkflow(SIMPLE_WORKFLOW, BASE_CTX, {} as never, {});
     expect(result.success).toBe(true);
     expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // architect + executor
+  });
+
+  it.todo("placeholder for future DAG tests");
+});
+
+describe("runWorkflow — definition-driven resume + YAML messages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resumes a workflow whose phases have nothing to do with the build cycle", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "custom",
+      phases: [
+        { name: "phase_0", type: "context" },
+        { name: "discover", type: "agent", prompt: "prompts/discover.md" },
+        { name: "plan", type: "agent", prompt: "prompts/plan.md" },
+        { name: "implement", type: "agent", prompt: "prompts/implement.md" },
+        { name: "ship", type: "agent", prompt: "prompts/ship.md" },
+      ],
+    };
+    // Simulate the DB row saying we already completed "plan" → resume from "implement"
+    const db = makeMockDb("plan");
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("implement done"))
+      .mockResolvedValueOnce(makeSuccessResult("ship done"));
+
+    const result = await runWorkflow(workflow, BASE_CTX, {} as never, {}, db, undefined, undefined, "wf-custom-resume");
+    expect(result.success).toBe(true);
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
+    const phaseNames = result.phases.map((p) => p.phase);
+    expect(phaseNames).toEqual(expect.arrayContaining(["implement", "ship"]));
+    expect(phaseNames).not.toContain("discover");
+    expect(phaseNames).not.toContain("plan");
+  });
+
+  it("renders phase.messages.on_start through the template engine", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "msg-test",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "step",
+          type: "agent",
+          prompt: "prompts/step.md",
+          messages: {
+            on_start: "starting {{step}} for #{{issueNumber}}",
+            on_success: "finished",
+          },
+        },
+      ],
+    };
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("ok"));
+    const comments: string[] = [];
+    const ctx = { ...BASE_CTX, step: "step" };
+    await runWorkflow(workflow, ctx, {} as never, {
+      postComment: async (m) => { comments.push(m); },
+    });
+    expect(comments).toContain("starting step for #42");
+    expect(comments).toContain("finished");
+  });
+
+  it("uses the definition name as the dedup key prefix", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "my-custom-workflow",
+      phases: [
+        { name: "phase_0", type: "context" },
+        { name: "solo", type: "agent", prompt: "prompts/solo.md" },
+      ],
+    };
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("done"));
+    const db = makeMockDb("phase_0");
+    const shouldRunPhase = vi.mocked(db.shouldRunPhase);
+    await runWorkflow(workflow, BASE_CTX, {} as never, {}, db, undefined, undefined, "wf-dedup-1");
+    expect(shouldRunPhase).toHaveBeenCalledWith(
+      "my-custom-workflow:solo",
+      expect.any(String),
+      "wf-dedup-1",
+    );
+  });
+
+  it("exposes reviewer loop output via output_var for downstream templates", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "review-then-summarize",
+      phases: [
+        { name: "phase_0", type: "context" },
+        { name: "executor", type: "agent", prompt: "prompts/executor.md" },
+        {
+          name: "reviewer",
+          type: "agent",
+          prompt: "prompts/reviewer.md",
+          output_var: "review",
+          loop: {
+            max_cycles: 1,
+            on_request_changes: {
+              fix_prompt: "prompts/fix.md",
+              re_review_prompt: "prompts/re-reviewer.md",
+            },
+          },
+        },
+        { name: "summary", type: "agent", prompt: "prompts/summary.md" },
+      ],
+    };
+    mockLoadPromptTemplate.mockImplementation((p: string) =>
+      p === "prompts/summary.md" ? "approved={{review.approved}} cycles={{review.cycles}}" : `TEMPLATE:${p}`,
+    );
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("executor"))
+      .mockResolvedValueOnce(makeSuccessResult("VERDICT: APPROVED"))
+      .mockResolvedValueOnce(makeSuccessResult("summary ok"));
+    await runWorkflow(workflow, BASE_CTX, {} as never, {});
+    const summaryCall = mockExecuteAgent.mock.calls[2][0];
+    expect(summaryCall).toContain("approved=true");
+    expect(summaryCall).toContain("cycles=0");
+  });
+});
+
+describe("runWorkflow — DAG unexpected throws", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   it("unexpected throw in executeAgent marks phase failed and overall success=false", async () => {

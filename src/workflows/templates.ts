@@ -49,8 +49,11 @@ export interface TemplateContext {
   maxIterations?: number;
   previousOutput?: string;
 
-  // Optional: phase outputs from DAG workflow (${phaseName.output} substitution)
-  phaseOutputs?: Record<string, string>;
+  // Optional: phase outputs from DAG workflow (${phaseName.output} substitution).
+  // Values may be strings or structured data (e.g. { approved: true, cycles: 1 })
+  // when a phase emits an object via output_var — templates can read
+  // {{phaseName.field}} for nested access and ${phaseName.output} for strings.
+  phaseOutputs?: Record<string, unknown>;
 
   // Arbitrary extra context
   [key: string]: unknown;
@@ -75,15 +78,31 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
   if (ctx.phaseOutputs) {
     const phaseOutputs = ctx.phaseOutputs;
     result = result.replace(/\$\{(\w+)\.output\}/g, (_match, phaseName: string) => {
-      return phaseOutputs[phaseName] ?? "";
+      const val = phaseOutputs[phaseName];
+      if (val === undefined || val === null) return "";
+      return typeof val === "string" ? val : String((val as { output?: unknown })?.output ?? JSON.stringify(val));
     });
   }
 
-  // 1. Conditional blocks: {{#if varName}}...{{/if}}
+  // 1. Conditional blocks: {{#if varName}}...{{/if}} (supports dot notation for
+  //    two-level lookups into ctx or ctx.phaseOutputs).
   result = result.replace(
-    /\{\{#if\s+(\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-    (_match, varName, body) => {
-      const val = ctx[varName];
+    /\{\{#if\s+(!?)(\w+(?:\.\w+)*)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    (_match, negate, varName, body) => {
+      const parts = varName.split(".");
+      let val: unknown;
+      if (parts.length === 1) {
+        val = ctx[varName];
+      } else {
+        const [parent, child] = parts;
+        let parentVal: unknown = ctx[parent];
+        if (parentVal === undefined || parentVal === null) {
+          parentVal = ctx.phaseOutputs?.[parent];
+        }
+        val = parentVal && typeof parentVal === "object"
+          ? (parentVal as Record<string, unknown>)[child]
+          : undefined;
+      }
       // Truthy: non-empty string, non-zero number, non-empty array, true boolean
       const truthy =
         val !== undefined &&
@@ -92,7 +111,7 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
         val !== false &&
         val !== 0 &&
         !(Array.isArray(val) && val.length === 0);
-      return truthy ? body : "";
+      return (negate ? !truthy : truthy) ? body : "";
     }
   );
 
@@ -111,20 +130,25 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
   });
 
   // 4. Simple variable substitution: {{varName}} and {{nested.key}} (single level)
+  //    Two-level access (`{{parent.child}}`) first checks top-level ctx, then
+  //    falls back to ctx.phaseOutputs[parent] so YAML phases can emit structured
+  //    output via `output_var` and downstream prompts can read it directly.
   result = result.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key) => {
     const parts = key.split(".");
     if (parts.length === 1) {
       const val = ctx[key];
       if (val === undefined || val === null) return "";
-      return String(val);
+      return typeof val === "object" ? JSON.stringify(val) : String(val);
     }
-    // Two-level access: e.g. models.architect
     const [parent, child] = parts;
-    const parentVal = ctx[parent];
+    let parentVal: unknown = ctx[parent];
+    if (parentVal === undefined || parentVal === null) {
+      parentVal = ctx.phaseOutputs?.[parent];
+    }
     if (parentVal === null || typeof parentVal !== "object") return "";
     const nested = (parentVal as Record<string, unknown>)[child];
     if (nested === undefined || nested === null) return "";
-    return String(nested);
+    return typeof nested === "object" ? JSON.stringify(nested) : String(nested);
   });
 
   return result;

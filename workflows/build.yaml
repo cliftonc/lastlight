@@ -17,24 +17,61 @@ phases:
         action: fail
         message: "Guardrails check: BLOCKED"
         unless_label: "lastlight:bootstrap"
+        unless_title_matches: "^(guardrails:|\\[guardrails\\])"
+        bypass_message: |
+          **Guardrails check: BLOCKED** — but this is a bootstrap task
+          (label `lastlight:bootstrap` or "guardrails:" title prefix detected).
+          Proceeding with the build cycle so the architect can plan, and the
+          executor can install, the missing tooling. The guardrails report at
+          `{{issueDir}}/guardrails-report.md` lists what's missing.
       contains_READY:
         action: continue
+    messages:
+      on_success: "**Guardrails check: READY** — verified. Starting architect analysis..."
+      on_blocked: |
+        **Guardrails check: BLOCKED** — missing foundational tooling.
+
+        See the guardrails report on branch `{{branch}}` at `{{issueDir}}/guardrails-report.md`.
+        Once you've added the missing tooling, ask me to build this issue again — the check will re-run against the current repo state.
 
   - name: architect
     label: Architect
     prompt: prompts/architect.md
     model: "{{models.architect}}"
     approval_gate: post_architect
+    approval_gate_message: |
+      **Architect analysis complete** — approval required before implementation.
+
+      - Branch: `{{branch}}`
+      - Plan: `{{issueDir}}/architect-plan.md`
+
+      **To proceed:** comment `@last-light approve`
+      **To abort:** comment `@last-light reject [reason]`
+    messages:
+      on_success: |
+        **Architect analysis complete.**
+        - Branch: `{{branch}}`
+        - Plan: `{{issueDir}}/architect-plan.md`
+
+        Starting implementation...
 
   - name: executor
     label: Executor
     prompt: prompts/executor.md
     model: "{{models.executor}}"
+    messages:
+      on_start: "**Starting executor** — implementing the architect's plan..."
+      on_skipped_done: "**Executor** already completed — proceeding to review..."
+      on_success: |
+        **Implementation complete.** Running independent review...
+        - Branch: `{{branch}}`
+        - Summary: `{{issueDir}}/executor-summary.md`
 
   - name: reviewer
     label: Reviewer
     prompt: prompts/reviewer.md
     model: "{{models.reviewer}}"
+    output_var: review
     loop:
       max_cycles: 2
       on_request_changes:
@@ -42,6 +79,20 @@ phases:
         fix_model: "{{models.fix}}"
         re_review_prompt: prompts/re-reviewer.md
       approval_gate: post_reviewer
+      messages:
+        on_cycle_start: "**Starting reviewer** (cycle {{cycle}}) — independent verification..."
+        on_approved: "**Review: APPROVED** — proceeding to PR."
+        on_request_changes: "**Review: REQUEST_CHANGES** — fixing issues (cycle {{cycle}}/{{maxCycles}})..."
+        on_fix_start: "**Starting fix loop** (cycle {{cycle}}/{{maxCycles}}) — addressing reviewer feedback..."
+        on_fix_failed: "Fix cycle {{cycle}} failed. Proceeding to PR with known issues."
+        on_max_cycles: "**Review: REQUEST_CHANGES** after {{maxCycles}} fix cycles. Proceeding with remaining issues noted."
+        on_pause_for_approval: |
+          **Review: REQUEST_CHANGES** — approval required before fix loop.
+
+          - Verdict: `{{issueDir}}/reviewer-verdict.md`
+
+          **To proceed with fixes:** comment `@last-light approve`
+          **To abort:** comment `@last-light reject [reason]`
 
   - name: pr
     label: PR
@@ -49,3 +100,5 @@ phases:
     model: "{{models.pr}}"
     on_success:
       set_phase: complete
+    messages:
+      on_start: "**Creating PR** — packaging changes for review..."

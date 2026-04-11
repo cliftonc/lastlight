@@ -13,9 +13,9 @@ import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
-import { runBuildCycle, runPrFix } from "./engine/orchestrator.js";
 import { runSimpleWorkflow, type SimpleWorkflowRequest } from "./workflows/simple.js";
 import type { RunnerCallbacks } from "./workflows/runner.js";
+import { resumeOrphanedWorkflows } from "./workflows/resume.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 async function main() {
@@ -151,6 +151,8 @@ async function main() {
         callbacks,
         db,
         config.models,
+        config.approval,
+        config.bootstrapLabel,
       );
       const summary = result.phases.map((p) => `${p.phase}=${p.success ? "ok" : "fail"}`).join(", ");
       if (result.success) {
@@ -231,36 +233,15 @@ async function main() {
           return;
         }
         db.resumeWorkflowRun(workflowRun.id);
-        console.log(`[admin] Resuming build cycle for ${owner}/${repo}#${issueNumber} after dashboard approval by ${sender}`);
-        runBuildCycle(
-          {
-            owner,
-            repo,
-            issueNumber,
-            issueTitle: `Issue #${issueNumber}`,
-            issueBody: "",
-            sender,
-          },
-          {
-            mcpConfigPath,
-            model: config.model,
-            maxTurns: config.maxTurns,
-            stateDir: config.stateDir,
-            sandboxDir: config.sandboxDir,
-          },
-          {
-            postComment: async (msg) => {
-              try { await github.postComment(owner, repo, issueNumber, msg); }
-              catch (err: any) { console.error(`[admin] Failed to post comment: ${err.message}`); }
-            },
-            onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
-            onPhaseEnd: async (phase, result) =>
-              console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
-          },
-          db,
-          config.models,
-          config.approval,
-        ).catch((err) => console.error(`[admin] Resume failed:`, err));
+        console.log(`[admin] Resuming ${workflowRun.workflowName} for ${owner}/${repo}#${issueNumber} after dashboard approval by ${sender}`);
+        dispatchWorkflow(workflowRun.workflowName, {
+          repo: `${owner}/${repo}`,
+          issueNumber,
+          title: `Issue #${issueNumber}`,
+          body: "",
+          sender,
+          _triggerType: "admin",
+        }).catch((err) => console.error(`[admin] Resume failed:`, err));
       },
     });
     console.log(`[admin] Dashboard mounted at /admin`);
@@ -328,40 +309,16 @@ async function main() {
       } catch { /* non-fatal */ }
     }
 
-    // Run build cycle asynchronously
-    runBuildCycle(
-        {
-          owner,
-          repo,
-          issueNumber,
-          issueTitle: issueTitle || `Issue #${issueNumber}`,
-          issueBody: issueBody || "",
-          issueLabels: resolvedLabels,
-          sender: sender || "cli",
-        },
-        {
-          mcpConfigPath,
-          model: config.model,
-          maxTurns: config.maxTurns,
-          stateDir: config.stateDir,
-          sandboxDir: config.sandboxDir,
-        },
-        {
-          postComment: async (msg) => {
-            console.log(`[build] ${msg}`);
-            if (github && owner && repo && issueNumber) {
-              try { await github.postComment(owner, repo, issueNumber, msg); }
-              catch (err: any) { console.error(`[build] Failed to post comment: ${err.message}`); }
-            }
-          },
-          onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
-          onPhaseEnd: async (phase, result) =>
-            console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
-        },
-        db,
-        config.models,
-        config.approval,
-    ).catch((err) => {
+    // Run build cycle asynchronously via the generic dispatcher
+    dispatchWorkflow("build", {
+      repo: `${owner}/${repo}`,
+      issueNumber,
+      title: issueTitle || `Issue #${issueNumber}`,
+      body: issueBody || "",
+      labels: resolvedLabels,
+      sender: sender || "cli",
+      _triggerType: "api",
+    }).catch((err) => {
       console.error(`[api] Build failed:`, err);
     });
 
@@ -477,36 +434,22 @@ async function main() {
 
       console.log(`[event] PR fix for ${repoStr}#${prNumber} on branch ${branch}`);
 
-      runPrFix(
-        {
-          owner,
-          repo,
-          prNumber,
-          prTitle,
-          prBody,
-          commentBody: (context.commentBody as string) || "",
-          sender: (context.sender as string) || "unknown",
-          branch,
-          failedChecks,
-        },
-        {
-          mcpConfigPath,
-          model: config.model,
-          maxTurns: config.maxTurns,
-          stateDir: config.stateDir,
-          sandboxDir: config.sandboxDir,
-        },
-        {
-          postComment: async (msg) => {
-            console.log(`[pr-fix] ${msg}`);
-            if (github) {
-              try { await github.postComment(owner, repo, prNumber, msg); }
-              catch (err: any) { console.error(`[pr-fix] Failed to post comment: ${err.message}`); }
-            }
-          },
-        },
-        config.models,
-      ).catch((err) => {
+      const ciSection = failedChecks && !failedChecks.includes("No failed checks")
+        ? `CI FAILURES (from GitHub Actions — fix these first):\n${failedChecks}`
+        : "";
+
+      dispatchWorkflow("pr-fix", {
+        repo: repoStr,
+        prNumber,
+        title: prTitle,
+        body: prBody,
+        commentBody: (context.commentBody as string) || "",
+        sender: (context.sender as string) || "unknown",
+        branch,
+        failedChecks,
+        ciSection,
+        _triggerType: "webhook",
+      }).catch((err) => {
         console.error(`[event] PR fix failed:`, err);
       });
 
@@ -543,42 +486,21 @@ async function main() {
           return;
         }
         if (workflowRun && github) {
-          await envelope.reply(`Approved by ${sender}. Resuming build cycle...`);
+          await envelope.reply(`Approved by ${sender}. Resuming \`${workflowRun.workflowName}\`...`);
           const [owner, repo] = workflowRun.triggerId.includes("/")
             ? workflowRun.triggerId.replace(/#\d+$/, "").split("/")
             : ["", ""];
           const issueNumber = workflowRun.issueNumber;
           if (owner && repo && issueNumber) {
             db.resumeWorkflowRun(workflowRun.id);
-            const ctx = workflowRun.context as Record<string, unknown> | undefined;
-            runBuildCycle(
-              {
-                owner,
-                repo,
-                issueNumber,
-                issueTitle: `Issue #${issueNumber}`,
-                issueBody: "",
-                sender,
-              },
-              {
-                mcpConfigPath,
-                model: config.model,
-                maxTurns: config.maxTurns,
-                stateDir: config.stateDir,
-                sandboxDir: config.sandboxDir,
-              },
-              {
-                postComment: async (msg) => {
-                  try { await github.postComment(owner, repo, issueNumber, msg); } catch {}
-                },
-                onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
-                onPhaseEnd: async (phase, result) =>
-                  console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
-              },
-              db,
-              config.models,
-              config.approval,
-            ).catch((err) => console.error(`[approval] Resume failed:`, err));
+            dispatchWorkflow(workflowRun.workflowName, {
+              repo: `${owner}/${repo}`,
+              issueNumber,
+              title: `Issue #${issueNumber}`,
+              body: "",
+              sender,
+              _triggerType: "approval",
+            }).catch((err) => console.error(`[approval] Resume failed:`, err));
           }
         }
       } else {
@@ -636,55 +558,23 @@ async function main() {
         await envelope.reply(`Starting build cycle for ${repoStr}#${issueNumber}...`);
       }
 
-      runBuildCycle(
-        {
-          owner,
-          repo,
-          issueNumber,
-          issueTitle: issueTitle || `Issue #${issueNumber}`,
-          issueBody,
-          issueLabels,
-          commentBody: context.commentBody as string,
-          sender: (context.sender as string) || "unknown",
-        },
-        {
-          mcpConfigPath,
-          model: config.model,
-          maxTurns: config.maxTurns,
-          stateDir: config.stateDir,
-          sandboxDir: config.sandboxDir,
-        },
-        {
-          postComment: async (msg) => {
-            console.log(`[build] ${msg}`);
-            if (github) {
-              try {
-                await github.postComment(owner, repo, issueNumber, msg);
-              } catch (err: any) {
-                console.error(`[build] Failed to post comment: ${err.message}`);
-              }
-            }
-          },
-          onPhaseStart: async (phase) => console.log(`[build] ▶ ${phase}`),
-          onPhaseEnd: async (phase, result) =>
-            console.log(`[build] ◀ ${phase}: ${result.success ? "OK" : "FAILED"}`),
-        },
-        db,
-        config.models,
-        config.approval,
-      ).then((result) => {
+      dispatchWorkflow("build", {
+        repo: repoStr,
+        issueNumber,
+        title: issueTitle || `Issue #${issueNumber}`,
+        body: issueBody,
+        labels: issueLabels,
+        commentBody: context.commentBody as string,
+        sender: (context.sender as string) || "unknown",
+        _triggerType: envelope.type === "message" ? "chat" : "webhook",
+      }).then((result) => {
         db.recordFinish(executionId, {
           success: result.success,
           error: result.success ? undefined : "Build cycle failed",
           durationMs: 0,
         });
         if (envelope.type === "message") {
-          const msg = result.paused
-            ? `Build cycle paused — awaiting approval.`
-            : result.prNumber
-            ? `Build cycle complete — PR #${result.prNumber} created.`
-            : `Build cycle ${result.success ? "complete" : "failed"}.`;
-          envelope.reply(msg);
+          envelope.reply(result.success ? `Build cycle complete.` : `Build cycle failed.`);
         }
       }).catch((err) => {
         console.error(`[event] Build cycle failed:`, err);
@@ -751,6 +641,28 @@ async function main() {
   await registry.startAll();
   console.log("[main] All connectors started");
   console.log("[main] Cron jobs registered");
+
+  // Boot-time recovery: any workflow_runs left in 'running' state from a
+  // previous harness lifetime have already had their sandbox containers
+  // killed by cleanupOrphanedSandboxes(). Mark their stale execution rows as
+  // failed and re-dispatch each run so the runner can pick up after the last
+  // completed phase. Skips 'paused' runs — those intentionally wait for a
+  // human approval and are resumed via the dashboard / GitHub comment flow.
+  resumeOrphanedWorkflows({
+    db,
+    github,
+    config: {
+      mcpConfigPath,
+      model: config.model,
+      maxTurns: config.maxTurns,
+      stateDir: config.stateDir,
+      sandboxDir: config.sandboxDir,
+    },
+    models: config.models,
+    approvalConfig: config.approval,
+    bootstrapLabel: config.bootstrapLabel,
+  }).catch((err) => console.error("[main] Resume sweep failed:", err));
+
   console.log("[main] Ready to receive events");
 
   // Graceful shutdown

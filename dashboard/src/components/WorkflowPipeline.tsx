@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   ReactFlow,
   type Node,
@@ -11,7 +11,12 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
-import { api, type WorkflowRun, type WorkflowDefinition, type PhaseHistoryEntry } from "../api";
+import type {
+  WorkflowRun,
+  WorkflowDefinition,
+  PhaseHistoryEntry,
+  WorkflowRunExecution,
+} from "../api";
 
 type PhaseStatus = "pending" | "active" | "paused" | "done" | "failed";
 
@@ -20,6 +25,7 @@ interface PhaseNodeData extends Record<string, unknown> {
   status: PhaseStatus;
   timestamp?: string;
   duration?: number;
+  selected?: boolean;
 }
 
 function formatDuration(secs: number): string {
@@ -44,13 +50,14 @@ function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
   });
 
   const containerClass = clsx(
-    "flex flex-col items-center gap-1 px-3 py-2 rounded-lg border min-w-[80px] text-center",
+    "flex flex-col items-center gap-1 px-3 py-2 rounded-lg border min-w-[80px] text-center cursor-pointer transition-shadow",
     {
       "border-success/40 bg-success/5": data.status === "done",
       "border-error/40 bg-error/5": data.status === "failed",
       "border-info/40 bg-info/5": data.status === "active",
       "border-warning/40 bg-warning/5": data.status === "paused",
       "border-base-300/40 bg-base-200/30": data.status === "pending",
+      "ring-2 ring-primary ring-offset-1 ring-offset-base-100": data.selected,
     },
   );
 
@@ -75,18 +82,31 @@ function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
 const nodeTypes = { phase: PhaseFlowNode };
 
 const NODE_WIDTH = 110;
-const NODE_HEIGHT = 70;
 const NODE_GAP = 40;
 
 interface Props {
   run: WorkflowRun;
+  /** Workflow YAML definition. The pipeline is fully definition-driven. */
+  definition: WorkflowDefinition | null;
+  /**
+   * Per-phase execution rows from /workflow-runs/:id/executions. Used as the
+   * source of truth for node timing (started, duration) — phase_history only
+   * records the moment persistPhase fired, which is *after* a phase
+   * completes, so its timestamps are useless as start times.
+   */
+  executions?: WorkflowRunExecution[];
+  /** Pixel height of the pipeline canvas. Defaults to 180. */
+  height?: number | string;
+  /** Optional: phase name currently selected (for visual indicator). */
+  selectedPhase?: string | null;
+  /** Optional: invoked when the user clicks a phase node. */
+  onPhaseClick?: (phaseName: string) => void;
 }
 
 /**
  * Pipeline visualisation for a workflow run. Fully driven by the workflow
- * YAML definition served by GET /admin/api/workflows/:name — no hardcoded
- * phase lists, no fallback labels. Custom user-defined workflows render
- * exactly as they're declared.
+ * YAML definition (passed in as a prop, fetched once by the parent so the
+ * detail panel can share it) — no hardcoded phase lists, no fallback labels.
  *
  * Phase visual states are derived from `run.phaseHistory` (completed) and
  * `run.currentPhase` (active). Phases that show up in history but aren't in
@@ -94,38 +114,28 @@ interface Props {
  * fix_loop_1) are appended after the definition's phases so they remain
  * visible.
  */
-export function WorkflowPipeline({ run }: Props) {
-  const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Fetch the workflow definition by name. Refetches when the run's
-  // workflowName changes (rare — usually constant for a given run).
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    setDefinition(null);
-    api
-      .workflowDefinition(run.workflowName)
-      .then((res) => {
-        if (!cancelled) setDefinition(res.workflow);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setError(`Failed to load workflow definition "${run.workflowName}": ${msg}`);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [run.workflowName]);
-
+export function WorkflowPipeline({
+  run,
+  definition,
+  executions,
+  height = 180,
+  selectedPhase,
+  onPhaseClick,
+}: Props) {
   const { nodes, edges } = useMemo(() => {
     if (!definition) return { nodes: [] as Node<PhaseNodeData>[], edges: [] as Edge[] };
 
     const historyMap = new Map<string, PhaseHistoryEntry>();
     for (const entry of run.phaseHistory) {
       historyMap.set(entry.phase, entry);
+    }
+
+    // Build a phase → most-recent-execution map. Loop phases can produce
+    // multiple rows (reviewer + reviewer_2); we always pick the latest so
+    // the node timing reflects the most recent attempt.
+    const execByPhase = new Map<string, WorkflowRunExecution>();
+    for (const ex of executions ?? []) {
+      execByPhase.set(ex.phase, ex);
     }
 
     // Start with the workflow definition's phases (in declaration order),
@@ -136,10 +146,13 @@ export function WorkflowPipeline({ run }: Props) {
       definition.phases.map((p) => [p.name, p.label] as const),
     );
 
-    const extraPhaseNames = run.phaseHistory
+    const extraFromHistory = run.phaseHistory
       .map((e) => e.phase)
       .filter((p) => !definitionPhaseNames.includes(p));
-    const uniqueExtras = Array.from(new Set(extraPhaseNames));
+    const extraFromExecs = (executions ?? [])
+      .map((e) => e.phase)
+      .filter((p) => !definitionPhaseNames.includes(p));
+    const uniqueExtras = Array.from(new Set([...extraFromHistory, ...extraFromExecs]));
     const allPhaseNames = [...definitionPhaseNames, ...uniqueExtras];
 
     const reactFlowNodes: Node<PhaseNodeData>[] = allPhaseNames.map((name, idx) => {
@@ -147,25 +160,27 @@ export function WorkflowPipeline({ run }: Props) {
       // raw phase name (it's a runtime construction, the YAML didn't name it).
       const label = definitionLabelByName.get(name) ?? name;
       const histEntry = historyMap.get(name);
+      const exec = execByPhase.get(name);
 
       let status: PhaseStatus = "pending";
       let timestamp: string | undefined;
       let duration: number | undefined;
 
-      if (histEntry) {
+      if (exec) {
+        // Execution row is the source of truth for both timing and status —
+        // phase_history is just a "this happened" marker written after the
+        // fact and would otherwise show finish time as if it were start time.
+        timestamp = exec.startedAt;
+        if (typeof exec.durationMs === "number") {
+          duration = exec.durationMs / 1000;
+        }
+        if (exec.success === true) status = "done";
+        else if (exec.success === false) status = "failed";
+        else status = "active";
+      } else if (histEntry) {
+        // Fallback for older runs that don't have execution rows captured.
         status = histEntry.success ? "done" : "failed";
         timestamp = histEntry.timestamp;
-        const i = run.phaseHistory.findIndex((e) => e.phase === name);
-        if (i >= 0 && i + 1 < run.phaseHistory.length) {
-          const next = run.phaseHistory[i + 1];
-          if (next) {
-            duration =
-              (new Date(next.timestamp).getTime() - new Date(histEntry.timestamp).getTime()) / 1000;
-          }
-        } else if (run.finishedAt) {
-          duration =
-            (new Date(run.finishedAt).getTime() - new Date(histEntry.timestamp).getTime()) / 1000;
-        }
       } else if (name === run.currentPhase) {
         status = run.status === "paused" ? "paused" : "active";
       }
@@ -174,7 +189,7 @@ export function WorkflowPipeline({ run }: Props) {
         id: name,
         type: "phase",
         position: { x: idx * (NODE_WIDTH + NODE_GAP), y: 0 },
-        data: { label, status, timestamp, duration },
+        data: { label, status, timestamp, duration, selected: selectedPhase === name },
         style: { width: NODE_WIDTH },
       };
     });
@@ -188,15 +203,7 @@ export function WorkflowPipeline({ run }: Props) {
     }));
 
     return { nodes: reactFlowNodes, edges: reactFlowEdges };
-  }, [definition, run]);
-
-  if (error) {
-    return (
-      <div className="p-4 text-sm text-error border border-error/40 bg-error/5 rounded">
-        {error}
-      </div>
-    );
-  }
+  }, [definition, run, executions, selectedPhase]);
 
   if (!definition) {
     return (
@@ -204,16 +211,19 @@ export function WorkflowPipeline({ run }: Props) {
     );
   }
 
-  const totalWidth = nodes.length * (NODE_WIDTH + NODE_GAP) - NODE_GAP;
-
   return (
-    <div style={{ width: totalWidth, height: NODE_HEIGHT + 20 }}>
+    <div style={{ width: "100%", height }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.1 }}
+        // Cap auto-fit zoom so single-node workflows (e.g. triage) don't
+        // expand to fill the whole canvas. 1.0 keeps nodes at their declared
+        // pixel size; min keeps very long pipelines readable.
+        fitViewOptions={{ padding: 0.2, minZoom: 0.4, maxZoom: 1 }}
+        minZoom={0.4}
+        maxZoom={1}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
@@ -221,6 +231,7 @@ export function WorkflowPipeline({ run }: Props) {
         zoomOnScroll={false}
         zoomOnPinch={false}
         zoomOnDoubleClick={false}
+        onNodeClick={(_, node) => onPhaseClick?.(node.id)}
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={0.5} color="var(--color-base-300, #ccc)" />

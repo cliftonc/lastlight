@@ -67,10 +67,12 @@ function buildPhasePrompt(
   throw new Error(`Phase "${phase.name}" has neither prompt: nor skill: — cannot build prompt`);
 }
 
-export interface ApprovalGateConfig {
-  postArchitect: boolean;
-  postReviewer: boolean;
-}
+/**
+ * Map of approval gate name → enabled. Gate names are arbitrary strings
+ * declared in YAML (`phase.approval_gate`, `phase.loop.approval_gate`); a
+ * gate pauses only if the corresponding key is `true` here.
+ */
+export type ApprovalGateConfig = Record<string, boolean>;
 
 export interface PhaseResult {
   phase: string;
@@ -128,6 +130,7 @@ function pickResult(r: ExecutionResult): Pick<ExecutionResult, "success" | "outp
  * Run a single agent phase with DB-tracked deduplication.
  */
 async function runPhase(
+  workflowName: string,
   phaseName: string,
   taskId: string,
   triggerId: string,
@@ -135,9 +138,11 @@ async function runPhase(
   config: ExecutorConfig,
   db?: StateDb,
   modelOverride?: string,
+  workflowRunId?: string,
 ): Promise<{ result: ExecutionResult; skipped: false } | { skipped: true; reason: "running" | "done" }> {
+  const dedupKey = `${workflowName}:${phaseName}`;
   if (db) {
-    const status = db.shouldRunPhase(`build:${phaseName}`, triggerId);
+    const status = db.shouldRunPhase(dedupKey, triggerId, workflowRunId);
 
     if (status === "running") {
       const alive = await isContainerAlive(taskId);
@@ -146,7 +151,7 @@ async function runPhase(
         return { skipped: true, reason: "running" };
       }
       console.log(`[runner] Phase ${phaseName} was running but container is dead — cleaning up`);
-      db.markStaleAsFailed(`build:${phaseName}`, triggerId);
+      db.markStaleAsFailed(dedupKey, triggerId, workflowRunId);
     } else if (status === "done") {
       console.log(`[runner] Phase ${phaseName} already completed successfully — skipping`);
       return { skipped: true, reason: "done" };
@@ -157,20 +162,40 @@ async function runPhase(
       id: executionId,
       triggerType: "webhook",
       triggerId,
-      skill: `build:${phaseName}`,
+      skill: dedupKey,
       repo: undefined,
       issueNumber: undefined,
       startedAt: new Date().toISOString(),
+      workflowRunId,
     });
 
     const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
-    const result = await executeAgent(prompt, phaseConfig, { taskId });
+    const result = await executeAgent(prompt, phaseConfig, {
+      taskId,
+      // Persist the session id as soon as it arrives so the dashboard can
+      // show live agent logs for an in-flight phase, not just completed ones.
+      onSessionId: (sessionId) => {
+        try {
+          db.recordSessionId(executionId, sessionId);
+        } catch (err) {
+          console.warn(`[runner] Failed to persist session id mid-run for ${phaseName}:`, err);
+        }
+      },
+    });
 
     db.recordFinish(executionId, {
       success: result.success,
       error: result.error,
       turns: result.turns,
       durationMs: result.durationMs,
+      sessionId: result.sessionId,
+      costUsd: result.costUsd,
+      inputTokens: result.inputTokens,
+      cacheCreationInputTokens: result.cacheCreationInputTokens,
+      cacheReadInputTokens: result.cacheReadInputTokens,
+      outputTokens: result.outputTokens,
+      apiDurationMs: result.apiDurationMs,
+      stopReason: result.stopReason,
     });
 
     return { result, skipped: false };
@@ -183,15 +208,68 @@ async function runPhase(
 
 // ── Resume logic ─────────────────────────────────────────────────────────────
 
-const PHASE_ORDER = ["phase_0", "guardrails", "architect", "executor", "reviewer", "complete"] as const;
-type KnownPhase = (typeof PHASE_ORDER)[number];
+/**
+ * Resolve a recorded phase name to its index in `definition.phases`.
+ * Handles the generated iteration labels the runner writes for looping phases:
+ *
+ *   `${phase}_iter_${n}` — generic_loop iteration
+ *   `${phase}_fix_${n}`  — reviewer-style loop fix cycle
+ *   `${phase}_${n}`      — reviewer-style loop re-review cycle
+ *
+ * Returns -1 when the name doesn't match any phase (unknown/untracked labels
+ * like `waiting_approval` or user set_phase values such as `complete`).
+ */
+export function phaseIndexInDefinition(
+  definition: AgentWorkflowDefinition,
+  name: string,
+): number {
+  const exact = definition.phases.findIndex((p) => p.name === name);
+  if (exact >= 0) return exact;
 
-function phaseIndex(phase: string): number {
-  if (phase.startsWith("fix_loop")) return PHASE_ORDER.indexOf("executor");
-  // Generic loop iteration phases (e.g. "implement_iter_1") map to executor position
-  if (phase.includes("_iter_")) return PHASE_ORDER.indexOf("executor");
-  const idx = PHASE_ORDER.indexOf(phase as KnownPhase);
-  return idx === -1 ? -1 : idx;
+  const tryStrip = (re: RegExp): number => {
+    const m = name.match(re);
+    if (!m) return -1;
+    return definition.phases.findIndex((p) => p.name === m[1]);
+  };
+
+  const iterIdx = tryStrip(/^(.*)_iter_\d+$/);
+  if (iterIdx >= 0) return iterIdx;
+  const fixIdx = tryStrip(/^(.*)_fix_\d+$/);
+  if (fixIdx >= 0) return fixIdx;
+  const cycleIdx = tryStrip(/^(.*)_\d+$/);
+  if (cycleIdx >= 0) return cycleIdx;
+
+  return -1;
+}
+
+/**
+ * Given the phase the runner last completed, return the name of the phase the
+ * runner should run next. Returns `null` when there is no next phase (i.e. the
+ * workflow is done).
+ */
+export function nextPhaseAfter(
+  definition: AgentWorkflowDefinition,
+  completedPhase: string,
+): string | null {
+  const idx = phaseIndexInDefinition(definition, completedPhase);
+  if (idx < 0 || idx >= definition.phases.length - 1) return null;
+  return definition.phases[idx + 1].name;
+}
+
+/**
+ * Find the phase that owns an approval gate with the given name — either via
+ * `phase.approval_gate` or `phase.loop.approval_gate`. Returns `null` when no
+ * phase declares that gate. Gate names should be unique within a workflow.
+ */
+function findGateOwningPhase(
+  definition: AgentWorkflowDefinition,
+  gateName: string,
+): string | null {
+  for (const p of definition.phases) {
+    if (p.approval_gate === gateName) return p.name;
+    if (p.loop?.approval_gate === gateName) return p.name;
+  }
+  return null;
 }
 
 // ── Main workflow runner ─────────────────────────────────────────────────────
@@ -202,11 +280,9 @@ function hasDependencies(definition: AgentWorkflowDefinition): boolean {
 }
 
 /**
- * Run a build workflow defined by a YAML definition.
- * Interprets phases, approval gates, and the reviewer loop generically.
- *
- * @param startFrom - Optional phase name to resume from. When provided (e.g. from the
- *   no-DB agent-based resume check), overrides the DB-derived resume point.
+ * Run an agent workflow defined by a YAML definition.
+ * Interprets phases, approval gates, and loops generically — the runner has
+ * no knowledge of specific phase names.
  */
 export async function runWorkflow(
   definition: AgentWorkflowDefinition,
@@ -217,10 +293,10 @@ export async function runWorkflow(
   models?: ModelConfig,
   approvalConfig?: ApprovalGateConfig,
   workflowId?: string,
-  startFrom?: string,
 ): Promise<WorkflowResult> {
   const phases: PhaseResult[] = [];
-  const { taskId, branch, issueDir } = ctx;
+  const phaseOutputs: Record<string, unknown> = {};
+  const { taskId } = ctx;
   const triggerId = `${ctx.owner}/${ctx.repo}#${ctx.issueNumber}`;
   const notify = callbacks.postComment || (async () => {});
   const onStart = callbacks.onPhaseStart || (async () => {});
@@ -232,7 +308,17 @@ export async function runWorkflow(
   /** Render a prompt template with current context. */
   const renderPrompt = (promptPath: string, extraCtx?: Partial<TemplateContext>): string => {
     const template = loadPromptTemplate(promptPath);
-    return renderTemplate(template, extraCtx ? { ...ctx, ...extraCtx } : ctx);
+    return renderTemplate(template, { ...ctx, phaseOutputs, ...(extraCtx || {}) });
+  };
+
+  /** Render a YAML-provided message template and post it as a comment. */
+  const notifyMessage = async (
+    template: string | undefined,
+    extraCtx?: Partial<TemplateContext>,
+  ): Promise<void> => {
+    if (!template) return;
+    const rendered = renderTemplate(template, { ...ctx, phaseOutputs, ...(extraCtx || {}) });
+    if (rendered.trim()) await notify(rendered);
   };
 
   /** Persist a phase transition to the DB workflow run. */
@@ -255,33 +341,37 @@ export async function runWorkflow(
     }
   };
 
-  // Determine resume point: explicit override → DB-derived → default phase_0
-  let resumeFrom = "phase_0";
-  if (startFrom) {
-    resumeFrom = startFrom;
-  } else if (db && workflowId) {
+  // Determine resume point from the DB row's currentPhase. If the row doesn't
+  // exist (no DB), default to running everything from the first phase.
+  let resumeFromIdx = 0;
+  if (db && workflowId) {
     const run = db.getWorkflowRun(workflowId);
-    if (run?.currentPhase && run.currentPhase !== "phase_0") {
-      const idx = phaseIndex(run.currentPhase);
-      if (idx >= 0 && idx < PHASE_ORDER.length - 1) {
-        resumeFrom = PHASE_ORDER[idx + 1];
+    if (run?.currentPhase) {
+      const next = nextPhaseAfter(definition, run.currentPhase);
+      if (next) {
+        const idx = phaseIndexInDefinition(definition, next);
+        if (idx >= 0) resumeFromIdx = idx;
       }
     }
   }
 
   const shouldRun = (phaseName: string): boolean => {
-    const idx = phaseIndex(phaseName);
-    // Unknown phases (not in PHASE_ORDER) always run — they're not tracked in resume order
+    const idx = phaseIndexInDefinition(definition, phaseName);
+    // Unknown phases always run — they're not tracked in the definition order.
     if (idx === -1) return true;
-    return idx >= phaseIndex(resumeFrom);
+    return idx >= resumeFromIdx;
   };
+
+  /** Should an approval gate with this name actually pause the workflow? */
+  const gateEnabled = (gateName: string | undefined): boolean =>
+    !!gateName && approvalConfig?.[gateName] === true;
 
   // ── Execute phases ────────────────────────────────────────────────────────
 
   if (hasDependencies(definition)) {
     return runDagWorkflow(
       definition, ctx, config, callbacks, db, models, approvalConfig, workflowId,
-      { phases, triggerId, notify, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow },
+      { phases, phaseOutputs, triggerId, notify, notifyMessage, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow, gateEnabled },
     );
   }
 
@@ -293,6 +383,10 @@ export async function runWorkflow(
       if (shouldRun(phaseName)) {
         await onStart(phaseName);
         phases.push({ phase: phaseName, success: true, output: "Context assembled" });
+        // Persist a phase_history entry so the dashboard pipeline marks
+        // context phases as 'done' instead of leaving them stuck on
+        // 'pending' — they have no execution row to derive status from.
+        persistPhase(phaseName, "Context assembled");
         await onEnd(phaseName, phases[phases.length - 1]);
       }
       continue;
@@ -326,21 +420,22 @@ export async function runWorkflow(
         }
 
         await onStart(reviewLabel);
-        await notify(`**Starting reviewer** (cycle ${fixCycles + 1}) — independent verification...`);
+        await notifyMessage(loop.messages?.on_cycle_start, { cycle: fixCycles + 1, maxCycles: MAX_CYCLES });
 
         // Choose prompt: first cycle uses phase.prompt or phase.skill (via
         // buildPhasePrompt), subsequent cycles always use the re_review_prompt
         // template path defined in loop.on_request_changes.
         const reviewPrompt =
           fixCycles === 0
-            ? buildPhasePrompt(phase, ctx, { fixCycle: fixCycles })
+            ? buildPhasePrompt(phase, { ...ctx, phaseOutputs }, { fixCycle: fixCycles })
             : renderPrompt(loop.on_request_changes.re_review_prompt, { fixCycle: fixCycles });
 
         // Resolve model
         const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
-        const reviewModel = reviewModelRaw || modelFor("reviewer");
+        const reviewModel = reviewModelRaw || modelFor(phaseName);
 
         const rr = await runPhase(
+          definition.name,
           reviewLabel,
           `${taskId}-${reviewLabel}`,
           triggerId,
@@ -348,11 +443,12 @@ export async function runWorkflow(
           config,
           db,
           reviewModel,
+          workflowId,
         );
 
         if (rr.skipped) {
           if (rr.reason === "running") {
-            await notify(`**Reviewer** is already running — aborting to avoid duplicate work.`);
+            await notifyMessage(phase.messages?.on_skipped_done);
             return { success: false, phases };
           }
           approved = true;
@@ -383,64 +479,56 @@ export async function runWorkflow(
         if (isApproved) {
           approved = true;
           persistPhase(reviewLabel, "APPROVED");
-          await notify(`**Review: APPROVED** — proceeding to PR.`);
+          await notifyMessage(loop.messages?.on_approved, { cycle: fixCycles + 1 });
         } else if (fixCycles < MAX_CYCLES) {
           fixCycles++;
           persistPhase(reviewLabel, "REQUEST_CHANGES");
 
           // Approval gate before fix loop
           const gateKey = loop.approval_gate;
-          if (gateKey && approvalConfig && db && workflowId) {
-            const postGate =
-              gateKey === "post_reviewer" ? approvalConfig.postReviewer : false;
-            if (postGate) {
-              const approvalId = randomUUID();
-              db.createApproval({
-                id: approvalId,
-                workflowRunId: workflowId,
-                gate: gateKey,
-                summary: `Reviewer requested changes (cycle ${fixCycles}/${MAX_CYCLES}).\nVerdict: \`${issueDir}/reviewer-verdict.md\``,
-                requestedBy: ctx.sender,
-                createdAt: new Date().toISOString(),
-              });
-              db.updateWorkflowPhase(workflowId, "waiting_approval", {
-                phase: "waiting_approval",
-                timestamp: new Date().toISOString(),
-                success: true,
-                summary: `Waiting for approval: ${gateKey} (${approvalId})`,
-              });
-              db.pauseWorkflowRun(workflowId);
-              await notify(
-                `**Review: REQUEST_CHANGES** — approval required before fix loop.\n\n` +
-                  `- Verdict: \`${issueDir}/reviewer-verdict.md\`\n\n` +
-                  `**To proceed with fixes:** comment \`@last-light approve\`\n` +
-                  `**To abort:** comment \`@last-light reject [reason]\``,
-              );
-              return { success: true, phases, paused: true };
-            }
+          if (gateEnabled(gateKey) && db && workflowId) {
+            const approvalId = randomUUID();
+            db.createApproval({
+              id: approvalId,
+              workflowRunId: workflowId,
+              gate: gateKey!,
+              summary: `Reviewer requested changes (cycle ${fixCycles}/${MAX_CYCLES}) on phase ${phaseName}.`,
+              requestedBy: ctx.sender,
+              createdAt: new Date().toISOString(),
+            });
+            db.updateWorkflowPhase(workflowId, "waiting_approval", {
+              phase: "waiting_approval",
+              timestamp: new Date().toISOString(),
+              success: true,
+              summary: `Waiting for approval: ${gateKey} (${approvalId})`,
+            });
+            db.pauseWorkflowRun(workflowId);
+            await notifyMessage(loop.messages?.on_pause_for_approval, {
+              cycle: fixCycles,
+              maxCycles: MAX_CYCLES,
+              gateKey,
+            });
+            return { success: true, phases, paused: true };
           }
 
-          await notify(
-            `**Review: REQUEST_CHANGES** — fixing issues (cycle ${fixCycles}/${MAX_CYCLES})...`,
-          );
+          await notifyMessage(loop.messages?.on_request_changes, { cycle: fixCycles, maxCycles: MAX_CYCLES });
 
           // Run fix phase
-          const fixLabel = `fix_loop_${fixCycles}`;
+          const fixLabel = `${phaseName}_fix_${fixCycles}`;
           await onStart(fixLabel);
-          await notify(
-            `**Starting fix loop** (cycle ${fixCycles}/${MAX_CYCLES}) — addressing reviewer feedback...`,
-          );
+          await notifyMessage(loop.messages?.on_fix_start, { cycle: fixCycles, maxCycles: MAX_CYCLES });
 
           const fixModelRaw = loop.on_request_changes.fix_model
             ? renderTemplate(loop.on_request_changes.fix_model, ctx)
             : undefined;
-          const fixModel = fixModelRaw || modelFor("fix");
+          const fixModel = fixModelRaw || modelFor(`${phaseName}_fix`) || modelFor(phaseName);
 
           const fixPromptRendered = renderPrompt(loop.on_request_changes.fix_prompt, {
             fixCycle: fixCycles,
           });
 
           const fr = await runPhase(
+            definition.name,
             fixLabel,
             `${taskId}-fix${fixCycles}`,
             triggerId,
@@ -448,11 +536,12 @@ export async function runWorkflow(
             config,
             db,
             fixModel,
+            workflowId,
           );
 
           if (fr.skipped) {
             if (fr.reason === "running") {
-              await notify(`**Fix loop** is already running — aborting.`);
+              await notifyMessage(phase.messages?.on_skipped_done);
               return { success: false, phases };
             }
             phases.push({ phase: fixLabel, success: true, output: "Already completed" });
@@ -462,9 +551,7 @@ export async function runWorkflow(
 
             if (!fr.result.success) {
               if (!isTerminated(fr.result.error)) {
-                await notify(
-                  `Fix cycle ${fixCycles} failed. Proceeding to PR with known issues.`,
-                );
+                await notifyMessage(loop.messages?.on_fix_failed, { cycle: fixCycles, maxCycles: MAX_CYCLES });
               }
               break;
             }
@@ -472,16 +559,16 @@ export async function runWorkflow(
           }
         } else {
           persistPhase(reviewLabel, "REQUEST_CHANGES — max cycles reached");
-          await notify(
-            `**Review: REQUEST_CHANGES** after ${MAX_CYCLES} fix cycles. Proceeding with remaining issues noted.`,
-          );
+          await notifyMessage(loop.messages?.on_max_cycles, { cycle: fixCycles, maxCycles: MAX_CYCLES });
           break;
         }
       }
 
-      // Update context for the PR phase with fix cycle information
-      (ctx as Record<string, unknown>)["_approved"] = approved;
-      (ctx as Record<string, unknown>)["_fixCycles"] = fixCycles;
+      // Expose loop outcome as a structured phase output so downstream phases
+      // can read {{phaseName.approved}} / {{phaseName.cycles}} in their prompts.
+      if (phase.output_var) {
+        phaseOutputs[phase.output_var] = { approved, cycles: fixCycles };
+      }
       continue;
     }
 
@@ -511,6 +598,7 @@ export async function runWorkflow(
           iteration,
           maxIterations: MAX_ITER,
           previousOutput: loop.fresh_context ? "" : previousOutput,
+          phaseOutputs,
         };
         const prompt = buildPhasePrompt(phase, ctx, iterCtx);
 
@@ -518,6 +606,7 @@ export async function runWorkflow(
         const model = modelRaw || modelFor(phaseName);
 
         const ir = await runPhase(
+          definition.name,
           iterLabel,
           `${taskId}-${iterLabel}`,
           triggerId,
@@ -525,11 +614,12 @@ export async function runWorkflow(
           config,
           db,
           model,
+          workflowId,
         );
 
         if (ir.skipped) {
           if (ir.reason === "running") {
-            await notify(`**${phaseName}** iteration ${iteration} is already running — aborting.`);
+            await notifyMessage(phase.messages?.on_skipped_done, { iteration });
             return { success: false, phases };
           }
           // Already done — treat as complete
@@ -543,7 +633,7 @@ export async function runWorkflow(
 
         if (!ir.result.success) {
           if (!isTerminated(ir.result.error)) {
-            await notify(`**${phaseName}** iteration ${iteration} failed.`);
+            await notifyMessage(phase.messages?.on_failure, { iteration });
           }
           failWorkflow(ir.result.error);
           return { success: false, phases };
@@ -617,14 +707,15 @@ export async function runWorkflow(
       }
 
       if (!complete) {
-        await notify(
-          `**${phaseName}** reached max iterations (${MAX_ITER}) without satisfying the completion condition.`,
-        );
+        await notifyMessage(phase.messages?.on_failure, {
+          iteration,
+          maxIterations: MAX_ITER,
+        });
       }
 
-      // Expose loop outcome in context
-      (ctx as Record<string, unknown>)[`_${phaseName}_loopCompleted`] = complete;
-      (ctx as Record<string, unknown>)[`_${phaseName}_iterations`] = iteration;
+      if (phase.output_var) {
+        phaseOutputs[phase.output_var] = { completed: complete, iterations: iteration };
+      }
       continue;
     }
 
@@ -632,56 +723,29 @@ export async function runWorkflow(
     if (!shouldRun(phaseName)) continue;
 
     await onStart(phaseName);
-
-    // Special phase-specific notifications
-    if (phaseName === "executor") {
-      await notify(`**Starting executor** — implementing the architect's plan...`);
-    } else if (phaseName === "pr") {
-      await notify(`**Creating PR** — packaging changes for review...`);
-    }
+    await notifyMessage(phase.messages?.on_start);
 
     // Resolve model
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
     const model = modelRaw || modelFor(phaseName);
 
-    // Build extra context for the phase's prompt
-    let extraCtx: Partial<TemplateContext> = {};
+    const prompt = buildPhasePrompt(phase, ctx, { phaseOutputs });
 
-    if (phaseName === "pr") {
-      // Compute reviewer note and doc links for PR phase
-      const approved = (ctx as Record<string, unknown>)["_approved"] as boolean | undefined;
-      const fixCycles = (ctx as Record<string, unknown>)["_fixCycles"] as number | undefined ?? 0;
-
-      const reviewerNote =
-        approved === false
-          ? `\n\nNote: There are unresolved reviewer issues after ${fixCycles} fix cycles. See reviewer-verdict.md on the branch.`
-          : "";
-
-      const branchEncoded = encodeURIComponent(branch);
-      const docs = [
-        { file: "guardrails-report.md", label: "Guardrails report" },
-        { file: "architect-plan.md", label: "Architect plan" },
-        { file: "executor-summary.md", label: "Executor summary" },
-        { file: "reviewer-verdict.md", label: "Reviewer verdict" },
-        { file: "status.md", label: "Status" },
-      ];
-      const docLinks = docs
-        .map(
-          (d) =>
-            `  - [${d.label}](https://github.com/${ctx.owner}/${ctx.repo}/blob/${branchEncoded}/${issueDir}/${d.file})`,
-        )
-        .join("\n");
-
-      extraCtx = { reviewerNote, docLinks };
-    }
-
-    const prompt = buildPhasePrompt(phase, ctx, extraCtx);
-
-    const pr = await runPhase(phaseName, `${taskId}-${phaseName}`, triggerId, prompt, config, db, model);
+    const pr = await runPhase(
+      definition.name,
+      phaseName,
+      `${taskId}-${phaseName}`,
+      triggerId,
+      prompt,
+      config,
+      db,
+      model,
+      workflowId,
+    );
 
     if (pr.skipped) {
       if (pr.reason === "running") {
-        await notify(`**${phaseName}** phase is already running — aborting to avoid duplicate work.`);
+        await notifyMessage(phase.messages?.on_skipped_done);
         return { success: false, phases };
       }
       phases.push({ phase: phaseName, success: true, output: "Already completed" });
@@ -691,16 +755,23 @@ export async function runWorkflow(
       // even though it succeeded.
       persistPhase(phaseName, "Already completed (deduplicated)");
       await onEnd(phaseName, { phase: phaseName, success: true, output: "Already completed" });
-      if (phaseName === "executor") {
-        await notify(`**Executor** already completed — proceeding to review...`);
-      }
+      await notifyMessage(phase.messages?.on_skipped_done);
     } else {
       phases.push({ phase: phaseName, ...pickResult(pr.result) });
       await onEnd(phaseName, phases[phases.length - 1]);
 
+      // Record phase output (raw string) for downstream ${phaseName.output}
+      // substitution and, when phase.output_var is set, under the aliased key
+      // so prompts can read {{aliased}} / ${aliased.output} / {{aliased.field}}.
+      const rawOutput = pr.result.output ?? "";
+      phaseOutputs[phaseName] = rawOutput;
+      if (phase.output_var) {
+        phaseOutputs[phase.output_var] = rawOutput;
+      }
+
       if (!pr.result.success) {
         if (!isTerminated(pr.result.error)) {
-          await notify(`**${phaseName}** phase failed — unable to complete.`);
+          await notifyMessage(phase.messages?.on_failure);
         }
         failWorkflow(pr.result.error);
         return { success: false, phases };
@@ -714,133 +785,107 @@ export async function runWorkflow(
           const rule = phase.on_output.contains_BLOCKED;
           const hasUnlessLabel =
             rule.unless_label && ctx.issueLabels.includes(rule.unless_label);
+          const titleMatches =
+            !!rule.unless_title_matches &&
+            new RegExp(rule.unless_title_matches, "i").test(ctx.issueTitle || "");
 
-          if (hasUnlessLabel || isBootstrapContext(ctx)) {
-            // Bootstrap bypass — fall through
-            await notify(
-              `**Guardrails check: BLOCKED** — but this is a bootstrap task ` +
-                `(label \`${rule.unless_label || ctx.bootstrapLabel}\` or "guardrails:" title prefix detected). ` +
-                `Proceeding with the build cycle so the architect can plan, and the ` +
-                `executor can install, the missing tooling. The guardrails report at ` +
-                `\`${issueDir}/guardrails-report.md\` lists what's missing.`,
-            );
+          if (hasUnlessLabel || titleMatches) {
+            // Rule bypassed — fall through to phase success path.
+            await notifyMessage(rule.bypass_message || phase.messages?.on_blocked_bypassed);
           } else if (rule.action === "fail") {
             db?.markLatestAsFailed(
-              `build:${phaseName}`,
+              `${definition.name}:${phaseName}`,
               triggerId,
-              "BLOCKED: missing foundational tooling",
+              rule.message || "BLOCKED",
+              workflowId,
             );
-            failWorkflow("guardrails BLOCKED");
-            await notify(
-              `**${rule.message || "Guardrails check: BLOCKED"}** — missing foundational tooling.\n\n` +
-                `See the guardrails report on branch \`${branch}\` at \`${issueDir}/guardrails-report.md\`. ` +
-                `Once you've added the missing tooling, ask me to build this issue again — the check will re-run against the current repo state.`,
-            );
+            failWorkflow(rule.message || "BLOCKED");
+            const blockedTemplate = rule.message || phase.messages?.on_blocked;
+            if (blockedTemplate) {
+              await notifyMessage(blockedTemplate);
+            }
             return { success: false, phases };
           }
         }
       }
 
       // Approval gate
-      if (phase.approval_gate && approvalConfig && db && workflowId) {
+      if (phase.approval_gate && gateEnabled(phase.approval_gate) && db && workflowId) {
         const gateKey = phase.approval_gate;
-        const postGate =
-          gateKey === "post_architect"
-            ? approvalConfig.postArchitect
-            : gateKey === "post_reviewer"
-              ? approvalConfig.postReviewer
-              : false;
-
-        if (postGate) {
-          const approvalId = randomUUID();
-          db.createApproval({
-            id: approvalId,
-            workflowRunId: workflowId,
-            gate: gateKey,
-            summary: `${phaseName} plan ready.\n- Branch: \`${branch}\`\n- Plan: \`${issueDir}/architect-plan.md\``,
-            requestedBy: ctx.sender,
-            createdAt: new Date().toISOString(),
-          });
-          db.updateWorkflowPhase(workflowId, "waiting_approval", {
-            phase: "waiting_approval",
-            timestamp: new Date().toISOString(),
-            success: true,
-            summary: `Waiting for approval: ${gateKey} (${approvalId})`,
-          });
-          db.pauseWorkflowRun(workflowId);
-
-          if (gateKey === "post_architect") {
-            await notify(
-              `**Architect analysis complete** — approval required before implementation.\n\n` +
-                `- Branch: \`${branch}\`\n` +
-                `- Plan: \`${issueDir}/architect-plan.md\`\n\n` +
-                `**To proceed:** comment \`@last-light approve\`\n` +
-                `**To abort:** comment \`@last-light reject [reason]\``,
-            );
-          }
-          return { success: true, phases, paused: true };
-        }
+        const approvalId = randomUUID();
+        db.createApproval({
+          id: approvalId,
+          workflowRunId: workflowId,
+          gate: gateKey,
+          summary: `${phaseName} complete — awaiting ${gateKey} approval.`,
+          requestedBy: ctx.sender,
+          createdAt: new Date().toISOString(),
+        });
+        db.updateWorkflowPhase(workflowId, "waiting_approval", {
+          phase: "waiting_approval",
+          timestamp: new Date().toISOString(),
+          success: true,
+          summary: `Waiting for approval: ${gateKey} (${approvalId})`,
+        });
+        db.pauseWorkflowRun(workflowId);
+        await notifyMessage(phase.approval_gate_message, { gateKey });
+        return { success: true, phases, paused: true };
       }
 
       persistPhase(phaseName);
-
-      // Phase-specific notifications after success
-      if (phaseName === "guardrails") {
-        await notify(`**Guardrails check: READY** — verified. Starting architect analysis...`);
-      } else if (phaseName === "architect") {
-        await notify(
-          `**Architect analysis complete.**\n` +
-            `- Branch: \`${branch}\`\n` +
-            `- Plan: \`${issueDir}/architect-plan.md\`\n\n` +
-            `Starting implementation...`,
-        );
-      } else if (phaseName === "executor") {
-        await notify(
-          `**Implementation complete.** Running independent review...\n` +
-            `- Branch: \`${branch}\`\n` +
-            `- Summary: \`${issueDir}/executor-summary.md\``,
-        );
-      }
+      await notifyMessage(phase.messages?.on_success);
     }
   }
 
-  // ── Handle PR phase completion ────────────────────────────────────────────
-  const prPhase = phases.find((p) => p.phase === "pr");
-  const prOutput = prPhase?.output || "";
-  const prMatch = prOutput.match(/#(\d+)/);
-  const prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
-  const prSuccess = prPhase ? prPhase.success : true;
+  // ── Workflow wrap-up ──────────────────────────────────────────────────────
+  //
+  // If the definition declares an `on_success.set_phase` terminal marker on any
+  // phase, record it so the DB row shows the workflow as fully complete. We
+  // also try to extract a PR number from the terminal phase's output so
+  // callers can surface it — purely opportunistic, no hardcoded phase names.
+  const anyFailed = phases.some((p) => !p.success);
+  const success = !anyFailed;
 
-  if (prSuccess) {
-    const setPhase = definition.phases.find((p) => p.name === "pr")?.on_success?.set_phase;
-    if (setPhase) {
-      persistPhase(setPhase, prNumber ? `PR #${prNumber}` : undefined);
+  let prNumber: number | undefined;
+  const terminalPhase = [...definition.phases].reverse().find((p) => p.on_success?.set_phase);
+  if (terminalPhase) {
+    const terminalResult = phases.find((p) => p.phase === terminalPhase.name);
+    const prMatch = terminalResult?.output?.match(/#(\d+)/);
+    if (prMatch) prNumber = parseInt(prMatch[1], 10);
+    if (success && terminalPhase.on_success?.set_phase) {
+      persistPhase(
+        terminalPhase.on_success.set_phase,
+        prNumber ? `PR #${prNumber}` : undefined,
+      );
     }
+  }
+
+  if (success) {
     if (db && workflowId) {
       db.finishWorkflowRun(workflowId, "succeeded");
     }
   } else {
-    failWorkflow(prPhase?.error || "PR creation failed");
+    const firstFailure = phases.find((p) => !p.success);
+    failWorkflow(firstFailure?.error || "workflow failed");
   }
 
-  if (prNumber) {
-    await notify(`**PR created:** #${prNumber}\n\nBuild cycle complete.`);
-  }
-
-  return { success: prSuccess, phases, prNumber };
+  return { success, phases, prNumber };
 }
 
 /** Shared runner context threaded into DAG execution (avoids re-deriving these). */
 interface DagRunnerCtx {
   phases: PhaseResult[];
+  phaseOutputs: Record<string, unknown>;
   triggerId: string;
   notify: (msg: string) => Promise<void>;
+  notifyMessage: (template: string | undefined, extraCtx?: Partial<TemplateContext>) => Promise<void>;
   onStart: (phase: string) => Promise<void>;
   onEnd: (phase: string, result: PhaseResult) => Promise<void>;
   modelFor: (taskType: string) => string | undefined;
   renderPrompt: (promptPath: string, extraCtx?: Partial<TemplateContext>) => string;
   persistPhase: (phase: string, summary?: string) => void;
   failWorkflow: (errorMsg?: string) => void;
+  gateEnabled: (gateName: string | undefined) => boolean;
 }
 
 /**
@@ -858,13 +903,11 @@ async function runDagWorkflow(
   workflowId: string | undefined,
   runnerCtx: DagRunnerCtx,
 ): Promise<WorkflowResult> {
-  const { phases, triggerId, notify, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow } = runnerCtx;
+  const { phases, phaseOutputs: outputs, triggerId, notifyMessage, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow, gateEnabled } = runnerCtx;
   const { taskId } = ctx;
 
   const dag = buildDag(definition.phases);
   const phaseMap = new Map(definition.phases.map((p) => [p.name, p]));
-  // phase outputs: keyed by output_var name
-  const outputs: Record<string, string> = {};
 
   /**
    * Execute a single standard agent phase (no loop). Returns PhaseResult and
@@ -874,13 +917,13 @@ async function runDagWorkflow(
     phase: NonNullable<ReturnType<typeof phaseMap.get>>,
     phaseName: string,
   ): Promise<{ result: PhaseResult; paused?: boolean }> {
-    // Build context with current phase outputs for ${name.output} substitution
+    await notifyMessage(phase.messages?.on_start);
     const phaseCtx: Partial<TemplateContext> = { phaseOutputs: { ...outputs } };
     const prompt = buildPhasePrompt(phase, ctx, phaseCtx);
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
     const model = modelRaw || modelFor(phaseName);
 
-    const pr = await runPhase(phaseName, `${taskId}-${phaseName}`, triggerId, prompt, config, db, model);
+    const pr = await runPhase(definition.name, phaseName, `${taskId}-${phaseName}`, triggerId, prompt, config, db, model, workflowId);
 
     if (pr.skipped) {
       return { result: { phase: phaseName, success: true, output: "Already completed" } };
@@ -889,56 +932,51 @@ async function runDagWorkflow(
     const result: PhaseResult = { phase: phaseName, ...pickResult(pr.result) };
 
     if (!pr.result.success) {
+      await notifyMessage(phase.messages?.on_failure);
       return { result };
     }
 
     // Check on_output rules
     if (phase.on_output?.contains_BLOCKED && (pr.result.output?.toUpperCase() || "").includes("BLOCKED")) {
       const rule = phase.on_output.contains_BLOCKED;
-      if (rule.action === "fail") {
-        db?.markLatestAsFailed(`build:${phaseName}`, triggerId, "BLOCKED");
-        failWorkflow("guardrails BLOCKED");
-        await notify(`**${rule.message || "Guardrails: BLOCKED"}**`);
+      const hasUnlessLabel = rule.unless_label && ctx.issueLabels.includes(rule.unless_label);
+      const titleMatches = !!rule.unless_title_matches &&
+        new RegExp(rule.unless_title_matches, "i").test(ctx.issueTitle || "");
+      if (hasUnlessLabel || titleMatches) {
+        await notifyMessage(rule.bypass_message || phase.messages?.on_blocked_bypassed);
+      } else if (rule.action === "fail") {
+        db?.markLatestAsFailed(`${definition.name}:${phaseName}`, triggerId, rule.message || "BLOCKED", workflowId);
+        failWorkflow(rule.message || "BLOCKED");
+        await notifyMessage(rule.message || phase.messages?.on_blocked);
         return { result: { phase: phaseName, success: false, output: pr.result.output ?? "", error: "BLOCKED" } };
       }
     }
 
     // Approval gate
-    if (phase.approval_gate && approvalConfig && db && workflowId) {
+    if (phase.approval_gate && gateEnabled(phase.approval_gate) && db && workflowId) {
       const gateKey = phase.approval_gate;
-      const postGate =
-        gateKey === "post_architect"
-          ? approvalConfig.postArchitect
-          : gateKey === "post_reviewer"
-            ? approvalConfig.postReviewer
-            : false;
-      if (postGate) {
-        const approvalId = randomUUID();
-        db.createApproval({
-          id: approvalId,
-          workflowRunId: workflowId,
-          gate: gateKey,
-          summary: `${phaseName} complete.`,
-          requestedBy: ctx.sender,
-          createdAt: new Date().toISOString(),
-        });
-        db.updateWorkflowPhase(workflowId, "waiting_approval", {
-          phase: "waiting_approval",
-          timestamp: new Date().toISOString(),
-          success: true,
-          summary: `Waiting for approval: ${gateKey} (${approvalId})`,
-        });
-        db.pauseWorkflowRun(workflowId);
-        await notify(
-          `**${phaseName} complete** — approval required to continue.\n\n` +
-            `**To proceed:** comment \`@last-light approve\`\n` +
-            `**To abort:** comment \`@last-light reject [reason]\``,
-        );
-        return { result, paused: true };
-      }
+      const approvalId = randomUUID();
+      db.createApproval({
+        id: approvalId,
+        workflowRunId: workflowId,
+        gate: gateKey,
+        summary: `${phaseName} complete — awaiting ${gateKey} approval.`,
+        requestedBy: ctx.sender,
+        createdAt: new Date().toISOString(),
+      });
+      db.updateWorkflowPhase(workflowId, "waiting_approval", {
+        phase: "waiting_approval",
+        timestamp: new Date().toISOString(),
+        success: true,
+        summary: `Waiting for approval: ${gateKey} (${approvalId})`,
+      });
+      db.pauseWorkflowRun(workflowId);
+      await notifyMessage(phase.approval_gate_message, { gateKey });
+      return { result, paused: true };
     }
 
     persistPhase(phaseName);
+    await notifyMessage(phase.messages?.on_success);
     return { result };
   }
 
@@ -979,6 +1017,9 @@ async function runDagWorkflow(
       // Context phase — immediate
       if (phase.type === "context" || !phase.type) {
         const r: PhaseResult = { phase: node.name, success: true, output: "Context assembled" };
+        // Same persist-history fix as the linear runner so the dashboard
+        // marks context nodes done.
+        persistPhase(node.name, "Context assembled");
         await onEnd(node.name, r);
         return { node, result: r, paused: false, alreadyPushed: false };
       }
@@ -999,16 +1040,14 @@ async function runDagWorkflow(
 
         while (!approved && fixCycles <= MAX_CYCLES) {
           const reviewLabel = fixCycles === 0 ? node.name : `${node.name}_${fixCycles + 1}`;
-          // First cycle uses phase.prompt or phase.skill via buildPhasePrompt;
-          // subsequent cycles always use the re_review_prompt template path.
           const reviewPrompt =
             fixCycles === 0
               ? buildPhasePrompt(phase, ctx, { phaseOutputs: { ...outputs }, fixCycle: fixCycles })
               : renderPrompt(loop.on_request_changes.re_review_prompt, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
           const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
-          const reviewModel = reviewModelRaw || modelFor("reviewer");
+          const reviewModel = reviewModelRaw || modelFor(node.name);
 
-          const rr = await runPhase(reviewLabel, `${taskId}-${reviewLabel}`, triggerId, reviewPrompt, config, db, reviewModel);
+          const rr = await runPhase(definition.name, reviewLabel, `${taskId}-${reviewLabel}`, triggerId, reviewPrompt, config, db, reviewModel, workflowId);
           if (rr.skipped) {
             approved = true;
             phases.push({ phase: reviewLabel, success: true, output: "Already completed" });
@@ -1028,11 +1067,11 @@ async function runDagWorkflow(
             approved = true;
           } else if (fixCycles < MAX_CYCLES) {
             fixCycles++;
-            const fixLabel = `fix_loop_${fixCycles}`;
+            const fixLabel = `${node.name}_fix_${fixCycles}`;
             const fixPromptRendered = renderPrompt(loop.on_request_changes.fix_prompt, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
             const fixModelRaw = loop.on_request_changes.fix_model ? renderTemplate(loop.on_request_changes.fix_model, ctx) : undefined;
-            const fixModel = fixModelRaw || modelFor("fix");
-            const fr = await runPhase(fixLabel, `${taskId}-fix${fixCycles}`, triggerId, fixPromptRendered, config, db, fixModel);
+            const fixModel = fixModelRaw || modelFor(`${node.name}_fix`) || modelFor(node.name);
+            const fr = await runPhase(definition.name, fixLabel, `${taskId}-fix${fixCycles}`, triggerId, fixPromptRendered, config, db, fixModel, workflowId);
             if (!fr.skipped) {
               phases.push({ phase: fixLabel, ...pickResult(fr.result) });
               await onEnd(fixLabel, phases[phases.length - 1]);
@@ -1043,8 +1082,9 @@ async function runDagWorkflow(
         }
 
         const loopResult: PhaseResult = { phase: node.name, success: approved, output: approved ? "Approved" : "Request changes" };
-        (ctx as Record<string, unknown>)["_approved"] = approved;
-        (ctx as Record<string, unknown>)["_fixCycles"] = fixCycles;
+        if (phase.output_var) {
+          outputs[phase.output_var] = { approved, cycles: fixCycles };
+        }
         return { node, result: loopResult, paused: false, alreadyPushed: true };
       }
 
@@ -1070,7 +1110,7 @@ async function runDagWorkflow(
           const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
           const model = modelRaw || modelFor(node.name);
 
-          const ir = await runPhase(iterLabel, `${taskId}-${iterLabel}`, triggerId, iterPrompt, config, db, model);
+          const ir = await runPhase(definition.name, iterLabel, `${taskId}-${iterLabel}`, triggerId, iterPrompt, config, db, model, workflowId);
           if (ir.skipped) { complete = true; break; }
 
           phases.push({ phase: iterLabel, ...pickResult(ir.result) });
@@ -1099,10 +1139,11 @@ async function runDagWorkflow(
         }
 
         if (!complete) {
-          await notify(`**${node.name}** reached max iterations (${MAX_ITER}) without satisfying the completion condition.`);
+          await notifyMessage(phase.messages?.on_failure, { iteration, maxIterations: MAX_ITER });
         }
-        (ctx as Record<string, unknown>)[`_${node.name}_loopCompleted`] = complete;
-        (ctx as Record<string, unknown>)[`_${node.name}_iterations`] = iteration;
+        if (phase.output_var) {
+          outputs[phase.output_var] = { completed: complete, iterations: iteration };
+        }
         return { node, result: { phase: node.name, success: true, output: previousOutput || "" }, paused: false, alreadyPushed: true };
       }
 
@@ -1143,10 +1184,18 @@ async function runDagWorkflow(
         db.updateNodeStatus(workflowId, node.name, node.status);
       }
 
-      // Store output_var if specified
+      // Always record the raw phase output (both by phase name and any
+      // configured output_var alias) so downstream prompts can interpolate via
+      // ${phaseName.output} or {{alias}}. Loop phases that emit structured
+      // objects set their output_var themselves above — don't clobber those.
       const phaseDef = phaseMap.get(node.name)!;
-      if (phaseDef.output_var && result.output) {
-        outputs[phaseDef.output_var] = result.output;
+      if (result.output != null) {
+        if (outputs[node.name] === undefined || typeof outputs[node.name] === "string") {
+          outputs[node.name] = result.output;
+        }
+        if (phaseDef.output_var && outputs[phaseDef.output_var] === undefined) {
+          outputs[phaseDef.output_var] = result.output;
+        }
       }
     }
 
@@ -1158,11 +1207,4 @@ async function runDagWorkflow(
   // Determine overall success
   const anyFailed = phases.some((p) => !p.success);
   return { success: !anyFailed, phases };
-}
-
-/** Check if the request context represents a bootstrap task. */
-function isBootstrapContext(ctx: TemplateContext): boolean {
-  if (ctx.issueLabels.includes(ctx.bootstrapLabel)) return true;
-  const title = (ctx.issueTitle || "").toLowerCase();
-  return title.startsWith("guardrails:") || title.startsWith("[guardrails]");
 }

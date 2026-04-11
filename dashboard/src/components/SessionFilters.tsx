@@ -1,0 +1,72 @@
+import clsx from "clsx";
+import { SlidersHorizontal } from "lucide-react";
+import { getSessionType } from "../sessionTypes";
+
+interface Props {
+  availableSources: string[];
+  sourceCounts: Record<string, number>;
+  totalCount: number;
+  sourceFilter: string | null;
+  onFilterChange: (src: string | null) => void;
+  hideNoOp: boolean;
+  onHideNoOpChange: (v: boolean) => void;
+}
+
+/**
+ * Session-specific filter strip — was previously baked into the global header,
+ * but workflow runs don't have a "session type", so it now lives inside the
+ * sessions tab body and the header keeps only globally-relevant controls.
+ */
+export function SessionFilters({
+  availableSources,
+  sourceCounts,
+  totalCount,
+  sourceFilter,
+  onFilterChange,
+  hideNoOp,
+  onHideNoOpChange,
+}: Props) {
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 border-b border-base-300 bg-base-200/40 shrink-0">
+      <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto flex-nowrap">
+        <SlidersHorizontal size={12} className="text-base-content/40 shrink-0" />
+        <button
+          onClick={() => onFilterChange(null)}
+          className={clsx(
+            "btn btn-xs h-7 min-h-0 font-medium shrink-0",
+            sourceFilter === null ? "btn-primary" : "btn-ghost text-base-content/60",
+          )}
+        >
+          all <span className="text-2xs opacity-60 ml-0.5">{totalCount}</span>
+        </button>
+        {availableSources.map((src) => {
+          const { Icon, label, color } = getSessionType(src);
+          return (
+            <button
+              key={src}
+              onClick={() => onFilterChange(src)}
+              className={clsx(
+                "btn btn-xs h-7 min-h-0 font-medium gap-1 shrink-0",
+                sourceFilter === src ? "btn-primary" : "btn-ghost text-base-content/60",
+              )}
+            >
+              <Icon size={12} className={sourceFilter === src ? "" : color} />
+              <span className="text-2xs">{label}</span>
+              <span className="text-2xs opacity-50">{sourceCounts[src] ?? 0}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <label className="flex items-center gap-1.5 cursor-pointer text-2xs text-base-content/60 shrink-0">
+        <input
+          type="checkbox"
+          className="checkbox checkbox-xs"
+          checked={hideNoOp}
+          onChange={(e) => onHideNoOpChange(e.target.checked)}
+        />
+        hide no-op
+      </label>
+    </div>
+  );
+}

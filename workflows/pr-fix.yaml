@@ -8,3 +8,7 @@ phases:
     label: Fix
     prompt: prompts/pr-fix.md
     model: "{{models.pr-fix}}"
+    messages:
+      on_start: "On it — fixing PR #{{prNumber}}..."
+      on_success: "**Fix pushed** to `{{branch}}`. CI should re-run automatically."
+      on_failure: "**Fix failed** — I wasn't able to resolve this automatically."

@@ -80,13 +80,15 @@ export interface LastLightConfig {
   };
   /** Slack connector config (present when SLACK_BOT_TOKEN is set) */
   slack?: SlackConfig;
-  /** Approval gate configuration */
-  approval?: {
-    /** Pause after architect, before executor — requires human approval to proceed */
-    postArchitect: boolean;
-    /** Pause after reviewer REQUEST_CHANGES, before fix loop — requires human approval to retry */
-    postReviewer: boolean;
-  };
+  /**
+   * Approval gate configuration. Keys are arbitrary gate names declared in
+   * YAML (`phase.approval_gate` / `phase.loop.approval_gate`); a gate pauses
+   * the runner only if the corresponding key is `true` here. Populated from
+   * the `APPROVAL_GATES` env var (comma-separated list of gate names).
+   */
+  approval?: Record<string, boolean>;
+  /** Label applied to issues that exist solely to set up missing guardrails. */
+  bootstrapLabel: string;
 }
 
 /**
@@ -132,11 +134,23 @@ export function loadConfig(): LastLightConfig {
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
     githubApp,
     slack,
-    approval: {
-      postArchitect: process.env.APPROVAL_POST_ARCHITECT === 'true',
-      postReviewer: process.env.APPROVAL_POST_REVIEWER === 'true',
-    },
+    approval: parseApprovalGates(),
+    bootstrapLabel: process.env.BOOTSTRAP_LABEL || "lastlight:bootstrap",
   };
+}
+
+/**
+ * Parse `APPROVAL_GATES` into a map of gate-name → true. The env var is a
+ * comma-separated list of gate names (matching `approval_gate` fields in
+ * workflow YAML). Any gate not present in the list is implicitly disabled.
+ */
+function parseApprovalGates(): Record<string, boolean> {
+  const raw = process.env.APPROVAL_GATES || "";
+  const map: Record<string, boolean> = {};
+  for (const name of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    map[name] = true;
+  }
+  return map;
 }
 
 /**
@@ -145,8 +159,9 @@ export function loadConfig(): LastLightConfig {
  * Format: JSON object mapping session types to model IDs.
  * Example: {"architect":"claude-opus-4-6","chat":"claude-haiku-4-5-20251001"}
  *
- * Session types: guardrails, architect, executor, reviewer, fix, pr, pr-fix,
- *                resume, triage, review, health, chat
+ * Session types are arbitrary — they match the `name:` of any phase in your
+ * workflows (or any key referenced by `resolveModel`). Use `default` as the
+ * catch-all when no per-type override matches.
  */
 function parseModelConfig(): ModelConfig {
   const defaultModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";

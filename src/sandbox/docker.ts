@@ -1,4 +1,4 @@
-import { execFileSync, execFile as execFileCb } from "child_process";
+import { execFileSync, execFile as execFileCb, spawn } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
@@ -140,9 +140,21 @@ export class DockerSandbox {
 
   /**
    * Run the Claude CLI inside the sandbox with a prompt.
-   * Runs asynchronously — does not block the event loop.
+   *
+   * Streams stdout line-by-line so the caller can react to stream-json events
+   * (e.g. capture the session id from the `system/init` line) before the
+   * agent has finished. The full stdout is also buffered and returned for
+   * post-run parsing of the `result` line.
    */
-  async runAgent(taskId: string, prompt: string, opts?: { model?: string }): Promise<string> {
+  async runAgent(
+    taskId: string,
+    prompt: string,
+    opts?: {
+      model?: string;
+      /** Called for each newline-terminated stdout line as it arrives. */
+      onLine?: (line: string) => void;
+    },
+  ): Promise<string> {
     const info = this.activeContainers.get(taskId);
     if (!info) throw new Error(`No sandbox for task ${taskId}`);
 
@@ -162,18 +174,56 @@ export class DockerSandbox {
     // Run as agent user — Claude Code blocks --dangerously-skip-permissions as root
     const args = ["exec", "--user", "agent", "-w", WORKSPACE_DIR, info.containerName, "sh", "-c", cmd];
 
-    try {
-      const { stdout } = await execFileAsync("docker", args, {
-        encoding: "utf-8",
-        timeout: timeout * 1000,
-        maxBuffer: 50 * 1024 * 1024, // 50MB — agent output can be large
+    return await new Promise<string>((resolvePromise, reject) => {
+      const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      let buf = "";
+
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error(`Sandbox agent timed out after ${timeout}s`));
+      }, timeout * 1000);
+
+      child.stdout.setEncoding("utf-8");
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+        if (!opts?.onLine) return;
+        // Emit complete lines to the caller as they arrive — keeps a partial
+        // tail in `buf` for the next chunk.
+        buf += chunk;
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (line.length > 0) {
+            try { opts.onLine(line); } catch { /* swallow listener errors */ }
+          }
+        }
       });
-      return stdout;
-    } catch (err: any) {
-      const stderr = err.stderr?.toString() || "";
-      const stdout = err.stdout?.toString() || "";
-      throw new Error(`Sandbox agent failed (exit ${err.status}): ${stderr || stdout || err.message}`);
-    }
+
+      child.stderr.setEncoding("utf-8");
+      child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Sandbox agent spawn failed: ${err.message}`));
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        // Flush any trailing partial line
+        if (buf.length > 0 && opts?.onLine) {
+          try { opts.onLine(buf); } catch { /* ignore */ }
+          buf = "";
+        }
+        if (code === 0) {
+          resolvePromise(stdout);
+        } else {
+          reject(new Error(`Sandbox agent failed (exit ${code}): ${stderr || stdout || "no output"}`));
+        }
+      });
+    });
   }
 
   /**

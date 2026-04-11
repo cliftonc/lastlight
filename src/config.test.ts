@@ -90,28 +90,27 @@ describe('loadConfig — approval gates', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it('approval gates default to disabled', () => {
-    vi.stubEnv('APPROVAL_POST_ARCHITECT', '');
-    vi.stubEnv('APPROVAL_POST_REVIEWER', '');
+  it('approval gates default to empty when APPROVAL_GATES is unset', () => {
+    vi.stubEnv('APPROVAL_GATES', '');
     const config = loadConfig();
-    expect(config.approval?.postArchitect).toBe(false);
-    expect(config.approval?.postReviewer).toBe(false);
+    expect(config.approval).toEqual({});
   });
 
-  it('enables postArchitect gate from env var', () => {
-    vi.stubEnv('APPROVAL_POST_ARCHITECT', 'true');
-    vi.stubEnv('APPROVAL_POST_REVIEWER', '');
+  it('parses a comma-separated list of gate names', () => {
+    vi.stubEnv('APPROVAL_GATES', 'post_architect,post_reviewer,custom_gate');
     const config = loadConfig();
-    expect(config.approval?.postArchitect).toBe(true);
-    expect(config.approval?.postReviewer).toBe(false);
+    expect(config.approval?.post_architect).toBe(true);
+    expect(config.approval?.post_reviewer).toBe(true);
+    expect(config.approval?.custom_gate).toBe(true);
   });
 
-  it('enables postReviewer gate from env var', () => {
-    vi.stubEnv('APPROVAL_POST_ARCHITECT', '');
-    vi.stubEnv('APPROVAL_POST_REVIEWER', 'true');
+  it('ignores whitespace and empty entries', () => {
+    vi.stubEnv('APPROVAL_GATES', ' post_architect , , post_reviewer ');
     const config = loadConfig();
-    expect(config.approval?.postArchitect).toBe(false);
-    expect(config.approval?.postReviewer).toBe(true);
+    expect(Object.keys(config.approval || {}).sort()).toEqual([
+      'post_architect',
+      'post_reviewer',
+    ]);
   });
 });
 

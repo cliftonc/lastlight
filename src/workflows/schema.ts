@@ -7,6 +7,10 @@ const OutputRuleSchema = z.object({
   message: z.string().optional(),
   /** Skip the action if the request has this label */
   unless_label: z.string().optional(),
+  /** Skip the action if ctx.issueTitle matches this case-insensitive regex */
+  unless_title_matches: z.string().optional(),
+  /** Template rendered when an `unless_*` clause fires and the rule is bypassed */
+  bypass_message: z.string().optional(),
 });
 
 const PhaseOnOutputSchema = z.object({
@@ -15,6 +19,16 @@ const PhaseOnOutputSchema = z.object({
 });
 
 // ── Loop configuration ────────────────────────────────────────────────
+
+const PhaseLoopMessagesSchema = z.object({
+  on_cycle_start: z.string().optional(),
+  on_approved: z.string().optional(),
+  on_request_changes: z.string().optional(),
+  on_max_cycles: z.string().optional(),
+  on_fix_start: z.string().optional(),
+  on_fix_failed: z.string().optional(),
+  on_pause_for_approval: z.string().optional(),
+});
 
 const PhaseLoopSchema = z.object({
   max_cycles: z.number().int().positive(),
@@ -25,6 +39,8 @@ const PhaseLoopSchema = z.object({
   }),
   /** Gate to pause at before running the fix (optional) */
   approval_gate: z.string().optional(),
+  /** Optional per-event notification templates rendered through the template engine. */
+  messages: PhaseLoopMessagesSchema.optional(),
 });
 
 const GenericLoopSchema = z
@@ -75,6 +91,19 @@ const PhaseDefinitionSchema = z
     model: z.string().optional(),
     /** Named approval gate to pause at after this phase */
     approval_gate: z.string().optional(),
+    /** Message template rendered when pausing at this phase's approval gate. */
+    approval_gate_message: z.string().optional(),
+    /** Optional per-event notification templates rendered through the template engine. */
+    messages: z
+      .object({
+        on_start: z.string().optional(),
+        on_success: z.string().optional(),
+        on_failure: z.string().optional(),
+        on_skipped_done: z.string().optional(),
+        on_blocked: z.string().optional(),
+        on_blocked_bypassed: z.string().optional(),
+      })
+      .optional(),
     /** Loop configuration for reviewer-style looping phases */
     loop: PhaseLoopSchema.optional(),
     /** Generic loop configuration — expression/bash-based completion conditions */

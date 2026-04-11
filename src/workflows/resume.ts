@@ -1,0 +1,223 @@
+import type { StateDb, WorkflowRun } from "../state/db.js";
+import type { ExecutorConfig } from "../engine/executor.js";
+import type { GitHubClient } from "../engine/github.js";
+import type { ModelConfig } from "../config.js";
+import { runWorkflow, type ApprovalGateConfig, type RunnerCallbacks } from "./runner.js";
+import { getWorkflow } from "./loader.js";
+import { slugify, type TemplateContext } from "./templates.js";
+
+export interface ResumeOptions {
+  db: StateDb;
+  github: GitHubClient | null;
+  config: ExecutorConfig;
+  models?: ModelConfig;
+  approvalConfig?: ApprovalGateConfig;
+  bootstrapLabel?: string;
+}
+
+/**
+ * Parse `cliftonc/drizby#18` (or `cliftonc/drizby::workflow-name`) into
+ * its components. Returns null when the trigger isn't issue/PR scoped.
+ */
+function parseTriggerId(triggerId: string): { owner: string; repo: string } | null {
+  const slashIdx = triggerId.indexOf("/");
+  if (slashIdx < 0) return null;
+  const hashIdx = triggerId.indexOf("#");
+  const colonIdx = triggerId.indexOf("::");
+  const end = hashIdx >= 0 ? hashIdx : colonIdx >= 0 ? colonIdx : triggerId.length;
+  const owner = triggerId.slice(0, slashIdx);
+  const repo = triggerId.slice(slashIdx + 1, end);
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
+/**
+ * Refetch the issue title/body/labels from GitHub so the resumed workflow
+ * has fresh context (the user may have edited the issue while the harness
+ * was down). Falls back to placeholder values if the fetch fails or no
+ * GitHub client is available.
+ */
+async function refetchIssue(
+  github: GitHubClient | null,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<{ title: string; body: string; labels: string[] }> {
+  const fallback = {
+    title: `Issue #${issueNumber}`,
+    body: "",
+    labels: [] as string[],
+  };
+  if (!github) return fallback;
+  try {
+    const issue = await github.getIssue(owner, repo, issueNumber);
+    return {
+      title: issue.title || fallback.title,
+      body: issue.body || "",
+      labels: ((issue.labels || []) as Array<string | { name?: string }>).map((l) =>
+        typeof l === "string" ? l : l.name ?? "",
+      ).filter(Boolean),
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[resume] Could not refetch ${owner}/${repo}#${issueNumber}: ${msg}`);
+    return fallback;
+  }
+}
+
+/**
+ * Build the standard postComment callback for a resumed workflow. Comments
+ * land on the originating GitHub issue so the maintainer sees the resume
+ * progress alongside the original run.
+ */
+function makeCallbacks(
+  github: GitHubClient | null,
+  owner: string,
+  repo: string,
+  issueNumber: number | undefined,
+  workflowName: string,
+): RunnerCallbacks {
+  return {
+    postComment: github && issueNumber
+      ? async (msg: string) => {
+          try {
+            await github.postComment(owner, repo, issueNumber, msg);
+          } catch (err: unknown) {
+            const m = err instanceof Error ? err.message : String(err);
+            console.warn(`[resume] Failed to post comment: ${m}`);
+          }
+        }
+      : undefined,
+    onPhaseStart: async (phase) => console.log(`[resume] ▶ ${workflowName}/${phase}`),
+    onPhaseEnd: async (phase, result) =>
+      console.log(`[resume] ◀ ${workflowName}/${phase}: ${result.success ? "OK" : "FAILED"}`),
+  };
+}
+
+/**
+ * Resume any orphaned workflow run by calling runWorkflow directly with the
+ * existing workflowId. We bypass runSimpleWorkflow because that wrapper
+ * always creates a fresh workflow_runs row — we want to keep the existing
+ * one and let the runner's per-phase dedup handle "what's already done".
+ */
+async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<void> {
+  const parsed = parseTriggerId(run.triggerId);
+  if (!parsed) {
+    console.warn(`[resume] Skipping ${run.id}: cannot parse triggerId ${run.triggerId}`);
+    return;
+  }
+  const { owner, repo } = parsed;
+  const issueNumber = run.issueNumber;
+
+  let definition;
+  try {
+    definition = getWorkflow(run.workflowName);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[resume] Skipping ${run.id}: workflow definition "${run.workflowName}" not found: ${msg}`);
+    opts.db.finishWorkflowRun(run.id, "failed", `harness restarted; workflow definition not found`);
+    return;
+  }
+
+  const issue = issueNumber
+    ? await refetchIssue(opts.github, owner, repo, issueNumber)
+    : { title: "", body: "", labels: [] as string[] };
+
+  // Reconstruct the template context using the bits we stored on creation +
+  // refreshed issue data. taskId/branch were saved on the original row, fall
+  // back to deterministic defaults if the row is older than that change.
+  const stored = (run.context || {}) as Record<string, unknown>;
+  const taskId = (stored.taskId as string | undefined) ??
+    (issueNumber ? `${repo}-${issueNumber}-${run.workflowName}` : `${repo}-${run.workflowName}`);
+  const branch = (stored.branch as string | undefined) ??
+    (issueNumber
+      ? `lastlight/${issueNumber}-${slugify(issue.title || `issue-${issueNumber}`)}`
+      : `lastlight/${run.workflowName}`);
+  const issueDir = issueNumber ? `.lastlight/issue-${issueNumber}` : `.lastlight/${run.workflowName}`;
+
+  const ctx: TemplateContext = {
+    owner,
+    repo,
+    issueNumber: issueNumber ?? 0,
+    issueTitle: issue.title,
+    issueBody: issue.body,
+    issueLabels: issue.labels,
+    commentBody: "",
+    sender: "system:resume",
+    branch,
+    taskId,
+    issueDir,
+    bootstrapLabel: opts.bootstrapLabel || "lastlight:bootstrap",
+    contextSnapshot: "",
+    models: opts.models as unknown as Record<string, unknown>,
+  };
+
+  console.log(
+    `[resume] Re-dispatching ${run.workflowName} for ${run.triggerId} (was on phase=${run.currentPhase})`,
+  );
+
+  try {
+    const result = await runWorkflow(
+      definition,
+      ctx,
+      opts.config,
+      makeCallbacks(opts.github, owner, repo, issueNumber, run.workflowName),
+      opts.db,
+      opts.models,
+      opts.approvalConfig,
+      run.id,           // <-- key bit: reuse the existing workflow run id
+    );
+
+    if (result.success) {
+      opts.db.finishWorkflowRun(run.id, "succeeded");
+    } else if (!result.paused) {
+      opts.db.finishWorkflowRun(
+        run.id,
+        "failed",
+        result.phases.find((p) => !p.success)?.error || "workflow failed during resume",
+      );
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[resume] ${run.workflowName} resume for ${run.id} threw: ${msg}`);
+    opts.db.finishWorkflowRun(run.id, "failed", `resume threw: ${msg}`);
+  }
+}
+
+/**
+ * Boot-time sweep: find every workflow run that was 'running' when the
+ * harness last shut down, mark its in-flight execution rows as stale (the
+ * Docker containers were already killed by cleanupOrphanedSandboxes), then
+ * re-dispatch each run so the runner can pick up where it left off.
+ *
+ * 'paused' runs are intentionally left alone — they're waiting for human
+ * approval and the dashboard / GitHub comment flow will resume them.
+ */
+export async function resumeOrphanedWorkflows(opts: ResumeOptions): Promise<void> {
+  const active = opts.db.activeWorkflowRuns();
+  const orphans = active.filter((r) => r.status === "running");
+
+  if (orphans.length === 0) {
+    console.log("[resume] No orphaned workflow runs to recover");
+    return;
+  }
+
+  console.log(`[resume] Found ${orphans.length} orphaned workflow run(s) — recovering`);
+
+  for (const run of orphans) {
+    // Clear any "still running" execution rows so dedup works on resume.
+    const cleared = opts.db.markAllStaleForTrigger(
+      run.triggerId,
+      "stale: harness restarted",
+    );
+    if (cleared > 0) {
+      console.log(`[resume] Cleared ${cleared} stale execution(s) for ${run.triggerId}`);
+    }
+
+    // Dispatch in the background — we don't want one slow resume to block
+    // the others (or the rest of the boot sequence).
+    resumeSimpleRun(run, opts).catch((err) =>
+      console.error(`[resume] ${run.workflowName} run ${run.id} crashed:`, err),
+    );
+  }
+}

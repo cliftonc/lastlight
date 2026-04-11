@@ -1,19 +1,24 @@
 import { randomUUID } from "crypto";
 import type { ExecutorConfig } from "../engine/executor.js";
-import type { StateDb } from "../state/db.js";
+import type { StateDb, WorkflowRun } from "../state/db.js";
 import type { ModelConfig } from "../config.js";
 import { getWorkflow } from "./loader.js";
-import { runWorkflow, type RunnerCallbacks, type WorkflowResult } from "./runner.js";
+import {
+  runWorkflow,
+  nextPhaseAfter,
+  type ApprovalGateConfig,
+  type RunnerCallbacks,
+  type WorkflowResult,
+} from "./runner.js";
 import type { TemplateContext } from "./templates.js";
 import { slugify } from "./templates.js";
-import { BOOTSTRAP_LABEL } from "../engine/orchestrator.js";
 
 /**
- * Lightweight invocation request for any agent workflow — used by anything
- * that isn't the full multi-phase build cycle. The build cycle has its own
- * runBuildCycle wrapper because it needs the resume / approval gate logic;
- * everything else (issue triage, PR review, repo health, single-issue
- * comments, custom user workflows) goes through this.
+ * Lightweight invocation request for any agent workflow. The runner handles
+ * all phase-level logic generically, so this single entry point covers
+ * everything from single-phase triage skills to the full multi-phase build
+ * cycle — including resume, approval gates, and the paused/approved/rejected
+ * dance after a human responds to an approval.
  */
 export interface SimpleWorkflowRequest {
   owner: string;
@@ -34,7 +39,8 @@ export interface SimpleWorkflowRequest {
   sender: string;
   /**
    * Extra context to merge into the template context. Use this for
-   * workflow-specific args like { mode: "scan" } from cron jobs.
+   * workflow-specific args like { mode: "scan" } from cron jobs, or the
+   * pr-fix workflow's failedChecks/branch/prNumber payload.
    */
   extra?: Record<string, unknown>;
 }
@@ -42,13 +48,10 @@ export interface SimpleWorkflowRequest {
 /**
  * Run a named agent workflow against a target.
  *
- * Creates a row in the workflow_runs table so the run shows up in the
- * dashboard's workflow flow view alongside the build cycle. Even
- * single-phase workflows (issue-triage, pr-review, etc.) become first-class
- * tracked runs.
- *
- * Caller is responsible for any post-completion notification logic — this
- * function just runs the workflow and updates the DB row.
+ * If a workflow_run row already exists for this trigger, we reuse it and let
+ * the runner's definition-driven resume pick up after the last completed
+ * phase — including the paused/approved/rejected paths. Otherwise we create a
+ * fresh row so the dashboard sees it immediately.
  */
 export async function runSimpleWorkflow(
   workflowName: string,
@@ -57,9 +60,12 @@ export async function runSimpleWorkflow(
   callbacks: RunnerCallbacks,
   db: StateDb,
   models?: ModelConfig,
+  approvalConfig?: ApprovalGateConfig,
+  bootstrapLabel = "lastlight:bootstrap",
 ): Promise<WorkflowResult> {
   const definition = getWorkflow(workflowName);
   const { owner, repo, issueNumber, prNumber } = request;
+  const notify = callbacks.postComment || (async () => {});
 
   // Identify the trigger uniquely. Issue/PR-scoped workflows include the
   // number; repo-scoped workflows (e.g. health) just identify by repo+name.
@@ -69,13 +75,11 @@ export async function runSimpleWorkflow(
     : `${owner}/${repo}::${workflowName}`;
 
   // Per-task ID — used for sandbox container naming and as a stable handle
-  // across resume attempts. Must be unique enough to avoid collisions.
+  // across resume attempts.
   const taskId = number !== undefined
     ? `${repo}-${number}-${workflowName}`
     : `${repo}-${workflowName}-${randomUUID().slice(0, 8)}`;
 
-  // Branch is informational for non-build workflows but build prompts use it.
-  // Use the same naming scheme the build cycle uses so reads are consistent.
   const branch = number !== undefined
     ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
     : `lastlight/${workflowName}`;
@@ -84,32 +88,50 @@ export async function runSimpleWorkflow(
     ? `.lastlight/issue-${number}`
     : `.lastlight/${workflowName}`;
 
-  // Create the workflow_run row up-front so the dashboard sees it
-  // immediately, even before the agent starts. The runner updates the
-  // current_phase as phases progress.
+  // ── Resume handling ────────────────────────────────────────────────────────
   //
-  // The dashboard fetches the workflow definition by name from
-  // /admin/api/workflows/<workflowName> so it can render the actual phases
-  // — no phase list duplication here.
-  const workflowId = randomUUID();
-  db.createWorkflowRun({
-    id: workflowId,
-    workflowName,
-    triggerId,
-    repo,
-    issueNumber: issueNumber ?? prNumber,
-    currentPhase: definition.phases[0]?.name || "phase_0",
-    status: "running",
-    context: {
-      kind: definition.kind,
-      branch,
-      taskId,
-      models: models as Record<string, unknown> | undefined,
-      ...request.extra,
-    },
-    startedAt: new Date().toISOString(),
-  });
-  console.log(`[simple] Created workflow run ${workflowId} (${workflowName})`);
+  // If a workflow_run already exists for this trigger, reuse its id. The
+  // runner's `nextPhaseAfter(definition, currentPhase)` derives the resume
+  // point — no per-workflow branching needed.
+
+  // Only reuse a workflow_run row when the existing run is still live
+  // (running/paused). `getWorkflowRunByTrigger` already filters out
+  // completed rows — a fresh re-trigger for a succeeded run falls through
+  // to the `else` branch, creating a new workflow_run_id and a new set of
+  // dedup-scoped executions.
+  let workflowId: string;
+  const existingRun = db.getWorkflowRunByTrigger(triggerId);
+  if (existingRun && existingRun.workflowName === workflowName) {
+    workflowId = existingRun.id;
+    const handled = await handleExistingRun(existingRun, definition, notify, db);
+    if (handled) return handled;
+  } else {
+    workflowId = randomUUID();
+    db.createWorkflowRun({
+      id: workflowId,
+      workflowName,
+      triggerId,
+      repo,
+      issueNumber: issueNumber ?? prNumber,
+      currentPhase: definition.phases[0]?.name || "phase_0",
+      status: "running",
+      context: {
+        kind: definition.kind,
+        branch,
+        taskId,
+        models: models as Record<string, unknown> | undefined,
+        ...request.extra,
+      },
+      startedAt: new Date().toISOString(),
+    });
+    console.log(`[simple] Created workflow run ${workflowId} (${workflowName})`);
+  }
+
+  // ── Build template context ─────────────────────────────────────────────────
+
+  const contextSnapshot = request.issueBody
+    ? `Task: ${request.commentBody || request.issueBody}\nIssue: ${owner}/${repo}${issueNumber ? `#${issueNumber}` : ""} — ${request.issueTitle || ""}\nRequested by: ${request.sender}\nBranch: ${branch}`
+    : "";
 
   const ctx: TemplateContext = {
     owner,
@@ -123,10 +145,12 @@ export async function runSimpleWorkflow(
     branch,
     taskId,
     issueDir,
-    bootstrapLabel: BOOTSTRAP_LABEL,
-    contextSnapshot: "",
+    bootstrapLabel,
+    contextSnapshot,
     models: models as unknown as Record<string, unknown>,
-    // Extra workflow-specific args (e.g. mode: scan from cron)
+    // Extra workflow-specific args (e.g. mode: scan from cron, or the PR fix
+    // payload). These become top-level ctx keys so prompt templates can read
+    // them directly via {{failedChecks}} etc.
     ...(request.extra || {}),
   };
 
@@ -138,16 +162,13 @@ export async function runSimpleWorkflow(
       callbacks,
       db,
       models,
-      undefined,        // approvalConfig — only build cycle uses this for now
+      approvalConfig,
       workflowId,
-      undefined,        // startFrom — simple workflows don't have a resume path
     );
 
-    // Mark the run finished. Build cycle has its own finish logic; for simple
-    // workflows we trust the runner's success bool.
-    if (result.success) {
+    if (result.success && !result.paused) {
       db.finishWorkflowRun(workflowId, "succeeded");
-    } else if (!result.paused) {
+    } else if (!result.success && !result.paused) {
       db.finishWorkflowRun(
         workflowId,
         "failed",
@@ -161,4 +182,83 @@ export async function runSimpleWorkflow(
     db.finishWorkflowRun(workflowId, "failed", msg);
     throw err;
   }
+}
+
+/**
+ * Short-circuit for a workflow run that already has state. Returns a
+ * WorkflowResult to return directly (already complete / rejected / still
+ * paused), or `null` to continue into `runWorkflow` for normal resume.
+ */
+async function handleExistingRun(
+  run: WorkflowRun,
+  definition: ReturnType<typeof getWorkflow>,
+  notify: (msg: string) => Promise<void>,
+  db: StateDb,
+): Promise<WorkflowResult | null> {
+  // Workflow already completed (currentPhase points past the last real phase
+  // — e.g. a set_phase terminal marker like "complete"). Don't re-run.
+  if (run.currentPhase && nextPhaseAfter(definition, run.currentPhase) === null) {
+    const exactIdx = definition.phases.findIndex((p) => p.name === run.currentPhase);
+    if (exactIdx === -1) {
+      await notify(`Workflow \`${run.workflowName}\` is already complete for this trigger.`);
+      return {
+        success: true,
+        phases: [{ phase: "resume", success: true, output: "Already complete" }],
+      };
+    }
+  }
+
+  // Paused awaiting approval — see if a human has responded.
+  if (run.status === "paused" && run.currentPhase === "waiting_approval") {
+    const pendingApproval = db.getPendingApprovalForWorkflow(run.id);
+    if (pendingApproval?.status === "approved") {
+      // The approval gate has been cleared. Walk the definition to find which
+      // phase owned the gate, then update currentPhase to that phase so the
+      // runner's nextPhaseAfter() lands on the phase AFTER it.
+      const owningPhase = findPhaseOwningGate(definition, pendingApproval.gate);
+      if (owningPhase) {
+        db.updateWorkflowPhase(run.id, owningPhase, {
+          phase: owningPhase,
+          timestamp: new Date().toISOString(),
+          success: true,
+          summary: `Resumed after gate approval: ${pendingApproval.gate}`,
+        });
+      }
+      console.log(
+        `[simple] Approval received for gate ${pendingApproval.gate} — resuming ${run.workflowName}`,
+      );
+      db.resumeWorkflowRun(run.id);
+      await notify(`**Approval received** — resuming \`${run.workflowName}\`.`);
+      return null; // fall through to runWorkflow
+    } else if (pendingApproval?.status === "rejected") {
+      const reason = pendingApproval.response || "no reason given";
+      db.finishWorkflowRun(run.id, "failed", `Rejected: ${reason}`);
+      await notify(`Workflow \`${run.workflowName}\` was rejected. Reason: ${reason}`);
+      return {
+        success: false,
+        phases: [{ phase: "rejected", success: false, output: `Rejected: ${reason}` }],
+      };
+    } else {
+      await notify(`Workflow \`${run.workflowName}\` is paused, awaiting approval.`);
+      return { success: true, phases: [], paused: true };
+    }
+  }
+
+  // Normal resume — the runner's definition-driven resume takes over.
+  console.log(
+    `[simple] Resuming ${run.workflowName} for ${run.triggerId} (last phase: ${run.currentPhase})`,
+  );
+  return null;
+}
+
+/** Walk definition.phases and return the phase that declares this gate. */
+function findPhaseOwningGate(
+  definition: ReturnType<typeof getWorkflow>,
+  gateName: string,
+): string | null {
+  for (const p of definition.phases) {
+    if (p.approval_gate === gateName) return p.name;
+    if (p.loop?.approval_gate === gateName) return p.name;
+  }
+  return null;
 }

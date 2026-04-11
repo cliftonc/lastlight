@@ -1,22 +1,16 @@
 import clsx from "clsx";
-import { Clock, Radio, SlidersHorizontal } from "lucide-react";
+import { Clock, Radio } from "lucide-react";
 import type { StreamStatus } from "../hooks/useSessionStream";
-import { getSessionType } from "../sessionTypes";
 
 interface Props {
-  availableSources: string[];
-  sourceCounts: Record<string, number>;
-  totalCount: number;
-  sourceFilter: string | null;
-  onFilterChange: (src: string | null) => void;
-  hideNoOp: boolean;
-  onHideNoOpChange: (v: boolean) => void;
   timeRange: string;
   onTimeRangeChange: (r: string) => void;
   liveCount: number;
   query: string;
   onQueryChange: (q: string) => void;
   streamStatus: StreamStatus;
+  /** Hide the live-count button (e.g. on the workflows tab where live filter doesn't apply). */
+  hideLive?: boolean;
 }
 
 const STATUS_LABEL: Record<StreamStatus, { text: string; color: string }> = {
@@ -34,26 +28,26 @@ const TIME_RANGES = [
 ];
 
 export function StatsHeader({
-  availableSources,
-  sourceCounts,
-  totalCount,
-  sourceFilter,
-  onFilterChange,
-  hideNoOp,
-  onHideNoOpChange,
   timeRange,
   onTimeRangeChange,
   liveCount,
   query,
   onQueryChange,
   streamStatus,
+  hideLive,
 }: Props) {
   const statusInfo = STATUS_LABEL[streamStatus];
 
   return (
     <header className="bg-base-200 border-b border-base-300 flex items-center gap-3 px-4 h-12 shrink-0">
       <div className="flex items-center gap-2.5 shrink-0">
-        <img src="/admin/logo.png" alt="Last Light" width="28" height="28" style={{ width: 28, height: 28, objectFit: "contain" }} />
+        <img
+          src="/admin/logo.png"
+          alt="Last Light"
+          width="28"
+          height="28"
+          style={{ width: 28, height: 28, objectFit: "contain" }}
+        />
         <span className="text-base font-bold tracking-tight">Last Light</span>
         <span
           className={clsx("w-2 h-2 rounded-full", statusInfo.color)}
@@ -92,16 +86,18 @@ export function StatsHeader({
 
       <div className="flex items-center gap-1 shrink-0 border-l border-base-300 pl-3">
         <Clock size={12} className="text-base-content/40 shrink-0" />
-        <button
-          onClick={() => onTimeRangeChange("live")}
-          className={clsx(
-            "btn btn-xs h-7 min-h-0 font-medium gap-1 px-2",
-            timeRange === "live" ? "btn-success" : "btn-ghost text-base-content/50",
-          )}
-        >
-          <Radio size={12} className={liveCount > 0 ? "animate-pulse text-success" : ""} />
-          <span className="text-2xs">{liveCount > 0 ? `${liveCount} live` : "live"}</span>
-        </button>
+        {!hideLive && (
+          <button
+            onClick={() => onTimeRangeChange("live")}
+            className={clsx(
+              "btn btn-xs h-7 min-h-0 font-medium gap-1 px-2",
+              timeRange === "live" ? "btn-success" : "btn-ghost text-base-content/50",
+            )}
+          >
+            <Radio size={12} className={liveCount > 0 ? "animate-pulse text-success" : ""} />
+            <span className="text-2xs">{liveCount > 0 ? `${liveCount} live` : "live"}</span>
+          </button>
+        )}
         {TIME_RANGES.map((r) => (
           <button
             key={r.key}
@@ -116,45 +112,7 @@ export function StatsHeader({
         ))}
       </div>
 
-      <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto flex-nowrap border-l border-base-300 pl-3">
-        <SlidersHorizontal size={12} className="text-base-content/40 shrink-0" />
-        <button
-          onClick={() => onFilterChange(null)}
-          className={clsx(
-            "btn btn-xs h-7 min-h-0 font-medium shrink-0",
-            sourceFilter === null ? "btn-primary" : "btn-ghost text-base-content/60",
-          )}
-        >
-          all <span className="text-2xs opacity-60 ml-0.5">{totalCount}</span>
-        </button>
-        {availableSources.map((src) => {
-          const { Icon, label, color } = getSessionType(src);
-          return (
-            <button
-              key={src}
-              onClick={() => onFilterChange(src)}
-              className={clsx(
-                "btn btn-xs h-7 min-h-0 font-medium gap-1 shrink-0",
-                sourceFilter === src ? "btn-primary" : "btn-ghost text-base-content/60",
-              )}
-            >
-              <Icon size={12} className={sourceFilter === src ? "" : color} />
-              <span className="text-2xs">{label}</span>
-              <span className="text-2xs opacity-50">{sourceCounts[src] ?? 0}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <label className="flex items-center gap-1.5 cursor-pointer text-2xs text-base-content/60 shrink-0">
-        <input
-          type="checkbox"
-          className="checkbox checkbox-xs"
-          checked={hideNoOp}
-          onChange={(e) => onHideNoOpChange(e.target.checked)}
-        />
-        hide no-op
-      </label>
+      <div className="flex-1" />
     </header>
   );
 }

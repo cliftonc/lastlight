@@ -91,6 +91,31 @@ export interface WorkflowDefinition {
   phases: WorkflowPhaseDefinition[];
 }
 
+/**
+ * Per-phase execution row returned by GET /workflow-runs/:id/executions.
+ * The dashboard uses this to map a clicked pipeline node to its session log
+ * and to surface cost / token metrics in the phase detail panel.
+ */
+export interface WorkflowRunExecution {
+  id: string;
+  skill: string;
+  phase: string;
+  sessionId?: string;
+  success?: boolean;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  turns?: number;
+  costUsd?: number;
+  inputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  outputTokens?: number;
+  apiDurationMs?: number;
+  stopReason?: string;
+}
+
 export interface ContainerInfo {
   id: string;
   name: string;
@@ -188,13 +213,31 @@ export const api = {
   killContainer: (name: string) =>
     req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
   rateLimits: () => req<{ limits: RateLimit[] }>("/rate-limits"),
-  workflowRuns: (opts: { limit?: number } = {}) => {
+  workflowRuns: (
+    opts: {
+      limit?: number;
+      offset?: number;
+      since?: string;
+      workflow?: string;
+      /** "active" → running+paused; or comma-separated explicit statuses. */
+      status?: string;
+    } = {},
+  ) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set("limit", String(opts.limit));
+    if (opts.offset) qs.set("offset", String(opts.offset));
+    if (opts.since) qs.set("since", opts.since);
+    if (opts.workflow) qs.set("workflow", opts.workflow);
+    if (opts.status) qs.set("status", opts.status);
     const qss = qs.toString();
-    return req<{ workflowRuns: WorkflowRun[] }>(`/workflow-runs${qss ? `?${qss}` : ""}`);
+    return req<{ workflowRuns: WorkflowRun[]; total: number }>(
+      `/workflow-runs${qss ? `?${qss}` : ""}`,
+    );
   },
+  workflowNames: () => req<{ names: string[] }>("/workflow-names"),
   workflowRun: (id: string) => req<{ workflowRun: WorkflowRun }>(`/workflow-runs/${id}`),
+  workflowRunExecutions: (id: string) =>
+    req<{ executions: WorkflowRunExecution[] }>(`/workflow-runs/${id}/executions`),
   cancelWorkflowRun: (id: string) =>
     req<{ cancelled: string }>(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   workflowDefinition: (name: string) =>

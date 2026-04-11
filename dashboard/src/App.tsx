@@ -2,16 +2,31 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, auth, UnauthorizedError } from "./api";
 import { StatsHeader } from "./components/StatsHeader";
 import { SessionList } from "./components/SessionList";
+import { SessionFilters } from "./components/SessionFilters";
 import { MessageFeed, type MessageOrder } from "./components/MessageFeed";
 import { Login } from "./components/Login";
 import { useSessionStream } from "./hooks/useSessionStream";
 import { UsageFooter } from "./components/UsageFooter";
 import { WorkflowList } from "./components/WorkflowList";
+import {
+  useUrlState,
+  enumParser,
+  enumSerializer,
+  stringParser,
+  stringSerializer,
+  nullableStringParser,
+  nullableStringSerializer,
+  boolParser,
+  boolSerializer,
+} from "./hooks/useUrlState";
 
 type AuthState = "checking" | "required" | "ok";
 type Tab = "sessions" | "workflows";
 
 const PAGE_SIZE = 50;
+
+const TABS = ["workflows", "sessions"] as const;
+const TIME_RANGES = ["hour", "day", "week", "all", "live"] as const;
 
 function isNoOpSession(s: {
   tool_call_count: number;
@@ -21,15 +36,43 @@ function isNoOpSession(s: {
 }
 
 function Dashboard() {
-  const [tab, setTab] = useState<Tab>("sessions");
+  // ── Filters & navigation, all persisted to the URL ─────────────────────
+  const [tab, setTab] = useUrlState<Tab>(
+    "tab",
+    "workflows",
+    enumParser(TABS, "workflows"),
+    enumSerializer<Tab>("workflows"),
+  );
+  type TimeRange = (typeof TIME_RANGES)[number];
+  const [timeRange, setTimeRange] = useUrlState<TimeRange>(
+    "range",
+    "day",
+    enumParser(TIME_RANGES, "day"),
+    enumSerializer<TimeRange>("day"),
+  );
+  const [query, setQuery] = useUrlState<string>(
+    "q",
+    "",
+    stringParser,
+    stringSerializer,
+  );
+  const [sourceFilter, setSourceFilter] = useUrlState<string | null>(
+    "source",
+    null,
+    nullableStringParser,
+    nullableStringSerializer,
+  );
+  const [hideNoOp, setHideNoOp] = useUrlState<boolean>(
+    "noop",
+    true,
+    boolParser(true),
+    boolSerializer(true),
+  );
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [userSelected, setUserSelected] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const [hideNoOp, setHideNoOp] = useState(true);
-  const [timeRange, setTimeRange] = useState<string>("day");
+  const [_userSelected, setUserSelected] = useState(false);
   const [limit, setLimit] = useState(PAGE_SIZE);
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
   const showLiveOnly = timeRange === "live";
   const [order, setOrder] = useState<MessageOrder>(
     () => (localStorage.getItem("ll-order") as MessageOrder) ?? "newest",
@@ -91,13 +134,11 @@ function Dashboard() {
   }, [sessions, sourceFilter, hideNoOp, debouncedQuery, timeRange]);
 
   useEffect(() => {
-    // If current selection is not in filtered list, clear it
     if (selectedId && !filteredSessions.some((s) => s.id === selectedId)) {
       setSelectedId(filteredSessions.length > 0 ? filteredSessions[0]!.id : null);
       setUserSelected(false);
       return;
     }
-    // Auto-select first session if nothing selected
     if (!selectedId && filteredSessions.length > 0) {
       setSelectedId(filteredSessions[0]!.id);
     }
@@ -113,6 +154,33 @@ function Dashboard() {
     [filteredSessions, selectedId],
   );
 
+  // ── Workflow live count (for the header pill on the workflows tab) ─────
+  // Polled independently of the WorkflowList's own data load so the count
+  // stays accurate even when the user is on the sessions tab.
+  const [workflowLiveCount, setWorkflowLiveCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await api.workflowRuns({ limit: 1, status: "active" });
+        if (!cancelled) setWorkflowLiveCount(res.total);
+      } catch {
+        /* ignore */
+      }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const sessionLiveCount = useMemo(
+    () => sessions.filter((s) => s.live).length,
+    [sessions],
+  );
+
   const [containers, setContainers] = useState<Array<{ name: string }>>([]);
   useEffect(() => {
     let cancelled = false;
@@ -120,82 +188,94 @@ function Dashboard() {
       try {
         const { containers: c } = await api.containers();
         if (!cancelled) setContainers(c);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
     load();
     const timer = setInterval(load, 5000);
-    return () => { cancelled = true; clearInterval(timer); };
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
 
   const handleTerminate = useCallback(async () => {
-    // Find a sandbox container to kill — match by recent activity
     if (containers.length === 0) return;
-    // Kill the first matching sandbox (usually only one is live for a session)
     const target = containers[0];
     if (target) {
       await api.killContainer(target.name);
-      // Refresh containers
       try {
         const { containers: c } = await api.containers();
         setContainers(c);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }, [containers]);
+
+  // The header's "live" pill shows whichever count is relevant for the active
+  // tab — workflow runs vs raw sessions.
+  const headerLiveCount = tab === "workflows" ? workflowLiveCount : sessionLiveCount;
 
   return (
     <div className="flex flex-col h-full">
       <StatsHeader
-        availableSources={availableSources}
-        sourceCounts={sourceCounts}
-        totalCount={sessions.length}
-        sourceFilter={sourceFilter}
-        onFilterChange={setSourceFilter}
-        hideNoOp={hideNoOp}
-        onHideNoOpChange={setHideNoOp}
         timeRange={timeRange}
-        onTimeRangeChange={setTimeRange}
-        liveCount={sessions.filter((s) => s.live).length}
+        onTimeRangeChange={(r) => setTimeRange(r as TimeRange)}
+        liveCount={headerLiveCount}
         query={query}
         onQueryChange={setQuery}
         streamStatus={status}
       />
       <div className="flex border-b border-base-300 bg-base-200/60 px-4 gap-1">
         <button
-          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "sessions" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
-          onClick={() => setTab("sessions")}
-        >
-          Sessions
-        </button>
-        <button
           className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "workflows" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
           onClick={() => setTab("workflows")}
         >
           Workflows
         </button>
+        <button
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "sessions" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
+          onClick={() => setTab("sessions")}
+        >
+          Sessions
+        </button>
       </div>
       {tab === "sessions" ? (
-        <div className="flex flex-1 overflow-hidden">
-          <SessionList
-            sessions={filteredSessions}
-            error={error}
-            selectedId={selectedId}
-            onSelect={handleSelect}
-            query={debouncedQuery}
-            onLoadMore={() => setLimit((l) => l + PAGE_SIZE)}
-            totalAvailable={sessions.length}
-            showLiveOnly={showLiveOnly}
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <SessionFilters
+            availableSources={availableSources}
+            sourceCounts={sourceCounts}
+            totalCount={sessions.length}
+            sourceFilter={sourceFilter}
+            onFilterChange={setSourceFilter}
+            hideNoOp={hideNoOp}
+            onHideNoOpChange={setHideNoOp}
           />
-          <MessageFeed
-            sessionId={selectedId}
-            order={order}
-            onOrderChange={setOrder}
-            searchQuery={debouncedQuery}
-            isLive={selectedSession?.live}
-            onTerminate={handleTerminate}
-          />
+          <div className="flex flex-1 overflow-hidden">
+            <SessionList
+              sessions={filteredSessions}
+              error={error}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              query={debouncedQuery}
+              onLoadMore={() => setLimit((l) => l + PAGE_SIZE)}
+              totalAvailable={sessions.length}
+              showLiveOnly={showLiveOnly}
+            />
+            <MessageFeed
+              sessionId={selectedId}
+              order={order}
+              onOrderChange={setOrder}
+              searchQuery={debouncedQuery}
+              isLive={selectedSession?.live}
+              onTerminate={handleTerminate}
+            />
+          </div>
         </div>
       ) : (
-        <WorkflowList />
+        <WorkflowList timeRange={timeRange} query={debouncedQuery} />
       )}
       <UsageFooter />
     </div>
