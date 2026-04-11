@@ -83,6 +83,27 @@ const nodeTypes = { phase: PhaseFlowNode };
 
 const NODE_WIDTH = 110;
 const NODE_GAP = 40;
+// Approximate rendered height of a PhaseFlowNode (label + timestamp + duration
+// + padding). Used to stack loop iterations vertically under their parent.
+const NODE_ROW_HEIGHT = 78;
+const ROW_GAP = 20;
+
+/**
+ * Map a dynamic phase name (e.g. "reviewer_fix_1", "reviewer_2") back to the
+ * declared phase it iterates on. The runner names loop iterations like
+ * `${parent}_${n}` (re-runs) or `${parent}_fix_${n}` (fix iterations), so the
+ * parent is the longest declared name `d` such that the dynamic name is
+ * `${d}` or starts with `${d}_`.
+ */
+function findParentDeclared(name: string, declared: string[]): string | null {
+  let best: string | null = null;
+  for (const d of declared) {
+    if (name === d || name.startsWith(`${d}_`)) {
+      if (!best || d.length > best.length) best = d;
+    }
+  }
+  return best;
+}
 
 interface Props {
   run: WorkflowRun;
@@ -122,43 +143,63 @@ export function WorkflowPipeline({
   selectedPhase,
   onPhaseClick,
 }: Props) {
-  const { nodes, edges } = useMemo(() => {
-    if (!definition) return { nodes: [] as Node<PhaseNodeData>[], edges: [] as Edge[] };
+  const { nodes, edges, canvasHeight } = useMemo(() => {
+    if (!definition) {
+      return { nodes: [] as Node<PhaseNodeData>[], edges: [] as Edge[], canvasHeight: 0 };
+    }
 
     const historyMap = new Map<string, PhaseHistoryEntry>();
     for (const entry of run.phaseHistory) {
       historyMap.set(entry.phase, entry);
     }
 
-    // Build a phase → most-recent-execution map. Loop phases can produce
-    // multiple rows (reviewer + reviewer_2); we always pick the latest so
-    // the node timing reflects the most recent attempt.
+    // phase → most-recent-execution. Loop iterations (reviewer_2, etc.) get
+    // their own keys here so each iteration is independently selectable.
     const execByPhase = new Map<string, WorkflowRunExecution>();
     for (const ex of executions ?? []) {
       execByPhase.set(ex.phase, ex);
     }
 
-    // Start with the workflow definition's phases (in declaration order),
-    // then append any history entries whose phase name isn't in the
-    // definition (dynamic loop iterations like reviewer_2, fix_loop_1).
-    const definitionPhaseNames = definition.phases.map((p) => p.name);
-    const definitionLabelByName = new Map(
+    const declaredNames = definition.phases.map((p) => p.name);
+    const declaredSet = new Set(declaredNames);
+    const declaredLabelByName = new Map(
       definition.phases.map((p) => [p.name, p.label] as const),
     );
 
-    const extraFromHistory = run.phaseHistory
-      .map((e) => e.phase)
-      .filter((p) => !definitionPhaseNames.includes(p));
-    const extraFromExecs = (executions ?? [])
-      .map((e) => e.phase)
-      .filter((p) => !definitionPhaseNames.includes(p));
-    const uniqueExtras = Array.from(new Set([...extraFromHistory, ...extraFromExecs]));
-    const allPhaseNames = [...definitionPhaseNames, ...uniqueExtras];
+    // Dynamic phases that don't appear in the YAML — loop iterations like
+    // `reviewer_2` (re-runs) and `reviewer_fix_1` (fix attempts).
+    const dynamicNames = Array.from(
+      new Set([
+        ...run.phaseHistory.map((e) => e.phase),
+        ...(executions ?? []).map((e) => e.phase),
+      ]),
+    ).filter((name) => !declaredSet.has(name));
 
-    const reactFlowNodes: Node<PhaseNodeData>[] = allPhaseNames.map((name, idx) => {
-      // Definition phases use their declared label; dynamic extras use the
-      // raw phase name (it's a runtime construction, the YAML didn't name it).
-      const label = definitionLabelByName.get(name) ?? name;
+    // Group each dynamic phase under its declared parent, sorted by start
+    // time so iteration order matches the actual run.
+    const childrenByParent = new Map<string, string[]>();
+    const orphans: string[] = [];
+    for (const name of dynamicNames) {
+      const parent = findParentDeclared(name, declaredNames);
+      if (parent) {
+        const arr = childrenByParent.get(parent) ?? [];
+        arr.push(name);
+        childrenByParent.set(parent, arr);
+      } else {
+        orphans.push(name);
+      }
+    }
+    for (const arr of childrenByParent.values()) {
+      arr.sort((a, b) => {
+        const ea = execByPhase.get(a)?.startedAt;
+        const eb = execByPhase.get(b)?.startedAt;
+        if (ea && eb) return ea.localeCompare(eb);
+        return a.localeCompare(b);
+      });
+    }
+
+    const buildNode = (name: string, x: number, y: number): Node<PhaseNodeData> => {
+      const label = declaredLabelByName.get(name) ?? name;
       const histEntry = historyMap.get(name);
       const exec = execByPhase.get(name);
 
@@ -178,7 +219,6 @@ export function WorkflowPipeline({
         else if (exec.success === false) status = "failed";
         else status = "active";
       } else if (histEntry) {
-        // Fallback for older runs that don't have execution rows captured.
         status = histEntry.success ? "done" : "failed";
         timestamp = histEntry.timestamp;
       } else if (name === run.currentPhase) {
@@ -188,21 +228,74 @@ export function WorkflowPipeline({
       return {
         id: name,
         type: "phase",
-        position: { x: idx * (NODE_WIDTH + NODE_GAP), y: 0 },
+        position: { x, y },
         data: { label, status, timestamp, duration, selected: selectedPhase === name },
         style: { width: NODE_WIDTH },
       };
+    };
+
+    const reactFlowNodes: Node<PhaseNodeData>[] = [];
+    const reactFlowEdges: Edge[] = [];
+
+    // Top row: declared phases in declaration order. Iterations stack below.
+    let maxColumnDepth = 0;
+    declaredNames.forEach((name, idx) => {
+      const x = idx * (NODE_WIDTH + NODE_GAP);
+      reactFlowNodes.push(buildNode(name, x, 0));
+
+      const children = childrenByParent.get(name) ?? [];
+      if (children.length > maxColumnDepth) maxColumnDepth = children.length;
+
+      let prevId = name;
+      children.forEach((childName, childIdx) => {
+        const y = (childIdx + 1) * (NODE_ROW_HEIGHT + ROW_GAP);
+        reactFlowNodes.push(buildNode(childName, x, y));
+        reactFlowEdges.push({
+          id: `${prevId}->${childName}`,
+          source: prevId,
+          target: childName,
+          style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
+          animated: false,
+        });
+        prevId = childName;
+      });
     });
 
-    const reactFlowEdges: Edge[] = allPhaseNames.slice(0, -1).map((name, idx) => ({
-      id: `${name}->${allPhaseNames[idx + 1]}`,
-      source: name,
-      target: allPhaseNames[idx + 1]!,
-      style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
-      animated: false,
-    }));
+    // Horizontal edges between declared phases (top row).
+    for (let i = 0; i < declaredNames.length - 1; i++) {
+      const a = declaredNames[i]!;
+      const b = declaredNames[i + 1]!;
+      reactFlowEdges.push({
+        id: `${a}->${b}`,
+        source: a,
+        target: b,
+        style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
+        animated: false,
+      });
+    }
 
-    return { nodes: reactFlowNodes, edges: reactFlowEdges };
+    // Orphaned dynamic phases (no matching declared parent) — append after
+    // the last declared column on row 0, same as the previous behavior.
+    orphans.forEach((name, idx) => {
+      const x = (declaredNames.length + idx) * (NODE_WIDTH + NODE_GAP);
+      reactFlowNodes.push(buildNode(name, x, 0));
+      const prev = idx === 0
+        ? declaredNames[declaredNames.length - 1]
+        : orphans[idx - 1];
+      if (prev) {
+        reactFlowEdges.push({
+          id: `${prev}->${name}`,
+          source: prev,
+          target: name,
+          style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
+          animated: false,
+        });
+      }
+    });
+
+    const canvasHeight = (maxColumnDepth + 1) * (NODE_ROW_HEIGHT + ROW_GAP) + 20;
+
+    return { nodes: reactFlowNodes, edges: reactFlowEdges, canvasHeight };
   }, [definition, run, executions, selectedPhase]);
 
   if (!definition) {
@@ -211,8 +304,14 @@ export function WorkflowPipeline({
     );
   }
 
+  // Grow the canvas when loop iterations stack vertically. The default
+  // `height` prop is the minimum (used by simple linear runs); when there
+  // are children, expand to fit them.
+  const numericHeight = typeof height === "number" ? height : 180;
+  const effectiveHeight = Math.max(numericHeight, canvasHeight);
+
   return (
-    <div style={{ width: "100%", height }}>
+    <div style={{ width: "100%", height: effectiveHeight }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -222,14 +321,16 @@ export function WorkflowPipeline({
         // expand to fill the whole canvas. 1.0 keeps nodes at their declared
         // pixel size; min keeps very long pipelines readable.
         fitViewOptions={{ padding: 0.2, minZoom: 0.4, maxZoom: 1 }}
-        minZoom={0.4}
-        maxZoom={1}
+        minZoom={0.3}
+        maxZoom={1.5}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
-        panOnDrag={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
+        // Allow pan + scroll-zoom so long pipelines and tall iteration stacks
+        // are navigable when fitView can't squeeze them into the viewport.
+        panOnDrag
+        zoomOnScroll
+        zoomOnPinch
         zoomOnDoubleClick={false}
         onNodeClick={(_, node) => onPhaseClick?.(node.id)}
         proOptions={{ hideAttribution: true }}
