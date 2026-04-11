@@ -49,11 +49,44 @@ WEBHOOK_SECRET=your-secret-here
 
 ### Run
 
-```bash
-# Start the server (with hot reload)
-npm run dev
+`npm run dev` runs the harness on your host but spawns each agent task in a real Docker sandbox container, exactly like production. It is explicitly safe with your personal config:
 
-# In another terminal — trigger work via the CLI
+| | Touched? |
+|---|---|
+| `~/.gitconfig` (your identity, credential helper) | ❌ skipped (`LASTLIGHT_LOCAL_DEV=1`) |
+| `~/.claude/.credentials.json` | ❌ read once on first run, never written |
+| `~/.claude/projects/...` (your session history) | ❌ direct fallback disabled |
+| `./data/sandbox-claude-home/` | ✅ project-local seed of your claude login; sandboxes refresh tokens here, isolated from host |
+| `./data/lastlight.db`, `./data/sandboxes/`, `./data/logs/` | ✅ project-local state, gitignored |
+
+One-time setup — build the sandbox image:
+
+```bash
+docker compose --profile build-only build sandbox
+```
+
+Then run the harness (server + dashboard, with hot reload):
+
+```bash
+npm run dev            # both server and dashboard, concurrent
+npm run dev:server     # server only
+npm run dev:dashboard  # dashboard only
+```
+
+Both server scripts call `scripts/dev-local.sh`, which:
+- Verifies Docker is running and the sandbox image exists
+- Verifies you have a host `~/.claude/.credentials.json` (run `claude login` first if not)
+- Seeds `./data/sandbox-claude-home/` from your host credentials on first run
+- Sets `LASTLIGHT_LOCAL_DEV=1`, `SANDBOX_DATA_VOLUME=./data/sandbox-claude-home`, `STATE_DIR=./data`, `CLAUDE_HOME_DIR=./data/sandbox-claude-home`, and `ENABLE_DIRECT_FALLBACK=false`
+- Starts the harness with `tsx watch src/index.ts`
+
+To wipe and re-seed (e.g. after rotating your host login): `rm -rf data/sandbox-claude-home/` and rerun.
+
+#### Triggering work via the CLI
+
+The CLI talks to the running server — it does not execute agents directly. Start the server first, then in another terminal:
+
+```bash
 npx tsx src/cli.ts https://github.com/owner/repo/issues/42   # build cycle
 npx tsx src/cli.ts owner/repo#42                               # shorthand
 npx tsx src/cli.ts triage owner/repo                           # triage scan
@@ -61,11 +94,9 @@ npx tsx src/cli.ts review owner/repo                           # PR review scan
 npx tsx src/cli.ts health owner/repo                           # health report
 ```
 
-The CLI talks to the running server — it does not execute agents directly. Start the server first.
-
 ### Authentication
 
-Locally, the Agent SDK uses your Claude Code login (subscription). No API key needed — just make sure `claude login` works.
+Locally, the Agent SDK uses your Claude Code login (subscription). No API key needed — just make sure `claude login` works on your host. `npm run dev` copies the credentials into the project-local sandbox claude-home, so the sandbox is logged in without bind-mounting your real `~/.claude`.
 
 To use an API key instead, set `ANTHROPIC_API_KEY` in `.env`.
 
@@ -185,6 +216,10 @@ npx tsx src/cli.ts triage owner/repo
 | `STATE_DIR` | No | Persistent state directory (default: `./data`) |
 | `MAX_TURNS` | No | Max agent turns per invocation (default: `200`) |
 | `BOT_LOGIN` | No | Bot login name for self-event filtering (default: `last-light[bot]`) |
+| `LASTLIGHT_LOCAL_DEV` | No | Set to `1` to skip `git config --global` writes from `git-auth.ts`. Use this on dev machines so the harness doesn't overwrite your personal `~/.gitconfig`. The installation token is still passed to sandboxes via the `GIT_TOKEN` env var. |
+| `SANDBOX_DATA_VOLUME` | No | Either a Docker named volume name (default: `lastlight_agent-data`, used in production) or a host path (starts with `/`, `./`, `../`, or `~`) to bind-mount as `/data` inside each sandbox. Local dev uses `./data/sandbox-claude-home`. |
+| `CLAUDE_HOME_DIR` | No | Directory the dashboard reads sessions from (default: `./data/claude-home`). Local dev points this at `./data/sandbox-claude-home` to match the bind-mounted sandbox volume. |
+| `ENABLE_DIRECT_FALLBACK` | No | If `true`, the harness falls back to in-process Agent SDK execution when the sandbox image is unavailable. Local dev sets this to `false` to keep all agent work isolated in containers. |
 
 ### 3. Managed Repositories
 
@@ -318,8 +353,20 @@ lastlight/
 
 ```bash
 # Check .env is loaded
-npm run dev
+npm run dev:server
 # Look for "Required environment variable not set" errors
+```
+
+### `npm run dev` says the sandbox image is missing
+
+```bash
+docker compose --profile build-only build sandbox
+```
+
+### `npm run dev` says claude is not logged in
+
+```bash
+claude login    # then re-run npm run dev
 ```
 
 ### Agent exits with code 1

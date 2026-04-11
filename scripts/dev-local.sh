@@ -79,6 +79,6 @@ echo "[dev-local] LASTLIGHT_LOCAL_DEV=1"
 echo "[dev-local] SANDBOX_DATA_VOLUME=$SANDBOX_DATA_VOLUME"
 echo "[dev-local] STATE_DIR=$STATE_DIR"
 echo "[dev-local] CLAUDE_HOME_DIR=$CLAUDE_HOME_DIR"
-echo "[dev-local] Starting harness..."
+echo "[dev-local] Starting harness with hot reload..."
 
-exec npx tsx src/index.ts
+exec npx tsx watch src/index.ts

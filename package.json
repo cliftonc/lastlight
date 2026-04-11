@@ -13,10 +13,9 @@
     "build:dashboard": "npm run build -w dashboard",
     "build:all": "tsc && npm run build -w dashboard",
     "start": "node dist/index.js",
-    "dev": "concurrently -n server,dash -c blue,magenta \"tsx watch src/index.ts\" \"npm run dev -w dashboard\"",
-    "dev:server": "tsx watch src/index.ts",
+    "dev": "concurrently -n server,dash -c blue,magenta \"bash scripts/dev-local.sh\" \"npm run dev -w dashboard\"",
+    "dev:server": "bash scripts/dev-local.sh",
     "dev:dashboard": "npm run dev -w dashboard",
-    "dev:local": "bash scripts/dev-local.sh",
     "cli": "tsx src/cli.ts",
     "build:issue": "tsx src/cli.ts",
     "test:watch": "vitest"
