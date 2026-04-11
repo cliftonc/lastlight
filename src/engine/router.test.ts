@@ -71,27 +71,29 @@ describe('routeEvent — comment.created', () => {
     expect(result.action).toBe('ignore');
   });
 
-  it('returns polite-decline for non-maintainer with bot mention', async () => {
+  it('returns reply for non-maintainer with bot mention', async () => {
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light please fix this',
       authorAssociation: 'CONTRIBUTOR',
+      sender: 'someuser',
     }));
-    expect(result.action).toBe('skill');
-    if (result.action === 'skill') {
-      expect(result.skill).toBe('polite-decline');
+    expect(result.action).toBe('reply');
+    if (result.action === 'reply') {
+      expect(result.message).toMatch(/maintainer/i);
     }
   });
 
-  it('returns polite-decline for NONE association', async () => {
+  it('returns reply for NONE association', async () => {
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light please help',
       authorAssociation: 'NONE',
+      sender: 'someuser',
     }));
-    expect(result.action).toBe('skill');
-    if (result.action === 'skill') {
-      expect(result.skill).toBe('polite-decline');
+    expect(result.action).toBe('reply');
+    if (result.action === 'reply') {
+      expect(result.message).toMatch(/maintainer/i);
     }
   });
 
@@ -267,16 +269,17 @@ describe('routeEvent — approval commands in comment.created', () => {
     }
   });
 
-  it('does not route approval for non-maintainer — falls through to polite-decline', async () => {
+  it('does not route approval for non-maintainer — falls through to reply', async () => {
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light approve',
       authorAssociation: 'NONE',
       issueNumber: 10,
+      sender: 'someuser',
     }));
-    expect(result.action).toBe('skill');
-    if (result.action === 'skill') {
-      expect(result.skill).toBe('polite-decline');
+    expect(result.action).toBe('reply');
+    if (result.action === 'reply') {
+      expect(result.message).toMatch(/maintainer/i);
     }
   });
 });

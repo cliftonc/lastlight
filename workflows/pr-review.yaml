@@ -1,0 +1,17 @@
+kind: review
+name: pr-review
+description: |
+  Review a single GitHub pull request: read the diff, check for issues, and
+  post structured feedback. Does not run a full build cycle and does not
+  modify code.
+
+  Triggered by:
+    - pr.opened webhook
+    - cron scan over managed repos
+    - manual CLI: tsx src/cli.ts review owner/repo#N
+
+phases:
+  - name: review
+    label: Review
+    skill: pr-review
+    model: "{{models.review}}"

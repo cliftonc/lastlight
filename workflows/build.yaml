@@ -1,13 +1,15 @@
-type: build
+kind: build
 name: build
 description: "Architect -> Executor -> Reviewer build cycle"
 trigger: build
 
 phases:
   - name: phase_0
+    label: Context
     type: context
 
   - name: guardrails
+    label: Guardrails
     prompt: prompts/guardrails.md
     model: "{{models.guardrails}}"
     on_output:
@@ -19,15 +21,18 @@ phases:
         action: continue
 
   - name: architect
+    label: Architect
     prompt: prompts/architect.md
     model: "{{models.architect}}"
     approval_gate: post_architect
 
   - name: executor
+    label: Executor
     prompt: prompts/executor.md
     model: "{{models.executor}}"
 
   - name: reviewer
+    label: Reviewer
     prompt: prompts/reviewer.md
     model: "{{models.reviewer}}"
     loop:
@@ -39,6 +44,7 @@ phases:
       approval_gate: post_reviewer
 
   - name: pr
+    label: PR
     prompt: prompts/pr.md
     model: "{{models.pr}}"
     on_success:

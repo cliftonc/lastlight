@@ -1,4 +1,4 @@
-type: build
+kind: build
 name: tdd-cycle
 description: "Test-driven development loop — write a failing test, then implement until it passes"
 phases:

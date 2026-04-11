@@ -1,4 +1,4 @@
-type: build
+kind: build
 name: parallel-review
 description: >
   Parallel architect + security review, then concurrent executor + linter,

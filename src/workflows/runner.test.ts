@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { BuildWorkflowDefinition } from "./schema.js";
+import type { AgentWorkflowDefinition } from "./schema.js";
 import type { TemplateContext } from "./templates.js";
 import type { RunnerCallbacks, ApprovalGateConfig } from "./runner.js";
 import type { StateDb } from "../state/db.js";
@@ -67,8 +67,8 @@ function makeFailResult(error = "something went wrong") {
   };
 }
 
-const SIMPLE_WORKFLOW: BuildWorkflowDefinition = {
-  type: "build",
+const SIMPLE_WORKFLOW: AgentWorkflowDefinition = {
+  kind: "agent",
   name: "simple",
   phases: [
     { name: "phase_0", type: "context" },
@@ -77,8 +77,8 @@ const SIMPLE_WORKFLOW: BuildWorkflowDefinition = {
   ],
 };
 
-const WORKFLOW_WITH_GUARDRAILS: BuildWorkflowDefinition = {
-  type: "build",
+const WORKFLOW_WITH_GUARDRAILS: AgentWorkflowDefinition = {
+  kind: "agent",
   name: "guarded",
   phases: [
     { name: "phase_0", type: "context" },
@@ -99,8 +99,8 @@ const WORKFLOW_WITH_GUARDRAILS: BuildWorkflowDefinition = {
   ],
 };
 
-const WORKFLOW_WITH_REVIEWER_LOOP: BuildWorkflowDefinition = {
-  type: "build",
+const WORKFLOW_WITH_REVIEWER_LOOP: AgentWorkflowDefinition = {
+  kind: "agent",
   name: "full",
   phases: [
     { name: "phase_0", type: "context" },
@@ -131,7 +131,7 @@ describe("runWorkflow — basic phase execution", () => {
 
     const result = await runWorkflow(
       {
-        type: "build",
+        kind: "agent",
         name: "ctx-only",
         phases: [{ name: "phase_0", type: "context" }],
       },
@@ -307,8 +307,8 @@ describe("runWorkflow — reviewer loop", () => {
   });
 });
 
-const WORKFLOW_WITH_APPROVAL_GATE: BuildWorkflowDefinition = {
-  type: "build",
+const WORKFLOW_WITH_APPROVAL_GATE: AgentWorkflowDefinition = {
+  kind: "agent",
   name: "gated",
   phases: [
     { name: "phase_0", type: "context" },
@@ -465,8 +465,8 @@ describe("runWorkflow — callbacks", () => {
 
 const mockExecSync = vi.mocked(execSync);
 
-const WORKFLOW_WITH_GENERIC_LOOP: BuildWorkflowDefinition = {
-  type: "build",
+const WORKFLOW_WITH_GENERIC_LOOP: AgentWorkflowDefinition = {
+  kind: "agent",
   name: "loop-test",
   phases: [
     { name: "phase_0", type: "context" },
@@ -540,8 +540,8 @@ describe("runWorkflow — generic loop node", () => {
   });
 
   it("completes immediately when until expression is true on first output", async () => {
-    const workflow: BuildWorkflowDefinition = {
-      type: "build",
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
       name: "expr-loop",
       phases: [
         { name: "phase_0", type: "context" },
@@ -568,8 +568,8 @@ describe("runWorkflow — generic loop node", () => {
   });
 
   it("iterates when until expression is false then stops when true", async () => {
-    const workflow: BuildWorkflowDefinition = {
-      type: "build",
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
       name: "expr-loop-2",
       phases: [
         { name: "phase_0", type: "context" },
@@ -598,8 +598,8 @@ describe("runWorkflow — generic loop node", () => {
   });
 
   it("fresh_context: true does not pass previousOutput on subsequent iterations", async () => {
-    const workflow: BuildWorkflowDefinition = {
-      type: "build",
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
       name: "fresh-ctx",
       phases: [
         { name: "phase_0", type: "context" },
@@ -634,8 +634,8 @@ describe("runWorkflow — generic loop node", () => {
   });
 
   it("fresh_context: false passes previousOutput to subsequent iterations", async () => {
-    const workflow: BuildWorkflowDefinition = {
-      type: "build",
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
       name: "accum-ctx",
       phases: [
         { name: "phase_0", type: "context" },
@@ -673,8 +673,8 @@ describe("runWorkflow — generic loop node", () => {
   });
 
   it("interactive mode pauses workflow after first iteration", async () => {
-    const workflow: BuildWorkflowDefinition = {
-      type: "build",
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
       name: "interactive-loop",
       phases: [
         { name: "phase_0", type: "context" },
@@ -733,8 +733,8 @@ describe("runWorkflow — generic loop node", () => {
 
 // ── DAG workflow tests ────────────────────────────────────────────────────────
 
-const PARALLEL_WORKFLOW: BuildWorkflowDefinition = {
-  type: "build",
+const PARALLEL_WORKFLOW: AgentWorkflowDefinition = {
+  kind: "agent",
   name: "parallel-test",
   phases: [
     { name: "phase_0", type: "context" },
@@ -802,8 +802,8 @@ describe("runWorkflow — DAG parallel execution", () => {
   });
 
   it("all_done trigger rule: downstream runs even when upstream failed", async () => {
-    const workflow: BuildWorkflowDefinition = {
-      type: "build",
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
       name: "all-done-test",
       phases: [
         { name: "step_a", type: "agent", prompt: "prompts/a.md", depends_on: [] },

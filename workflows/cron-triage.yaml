@@ -1,7 +1,7 @@
-type: cron
+kind: cron
 name: triage-new-issues
 schedule: "*/15 * * * *"
-skill: issue-triage
+workflow: issue-triage
 context:
   mode: scan
 condition:

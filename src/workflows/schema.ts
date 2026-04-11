@@ -47,62 +47,102 @@ const GenericLoopSchema = z
 
 // ── Phase definition ──────────────────────────────────────────────────
 
-const PhaseDefinitionSchema = z.object({
-  name: z.string(),
-  /** context: no agent execution (just metadata); agent: run an agent session */
-  type: z.enum(["context", "agent"]).default("agent"),
-  /** Path to the prompt template file (relative to workflowDir) */
-  prompt: z.string().optional(),
-  /** Model override — can reference template vars like {{models.architect}} */
-  model: z.string().optional(),
-  /** Named approval gate to pause at after this phase */
-  approval_gate: z.string().optional(),
-  /** Loop configuration for reviewer-style looping phases */
-  loop: PhaseLoopSchema.optional(),
-  /** Generic loop configuration — expression/bash-based completion conditions */
-  generic_loop: GenericLoopSchema.optional(),
-  /** Rules applied to agent output */
-  on_output: PhaseOnOutputSchema.optional(),
-  /** Actions taken on successful completion */
-  on_success: z
-    .object({
-      set_phase: z.string().optional(),
-    })
-    .optional(),
-  /** DAG: list of phase names this phase depends on */
-  depends_on: z.array(z.string()).optional(),
-  /** DAG: trigger rule for this phase — when to run based on dependency outcomes */
-  trigger_rule: z.enum(["all_success", "one_success", "none_failed_min_one_success", "all_done"]).optional(),
-  /** DAG: variable name to store the output of this phase for use in downstream phases */
-  output_var: z.string().optional(),
-});
+const PhaseDefinitionSchema = z
+  .object({
+    name: z.string(),
+    /**
+     * Optional human-readable label for dashboards and notifications.
+     * Defaults to the phase `name` if not set. Source of truth for any
+     * UI element that wants to display this phase.
+     */
+    label: z.string().optional(),
+    /** context: no agent execution (just metadata); agent: run an agent session */
+    type: z.enum(["context", "agent"]).default("agent"),
+    /**
+     * Path to a prompt template file (relative to workflowDir).
+     * Mutually exclusive with `skill`.
+     */
+    prompt: z.string().optional(),
+    /**
+     * Name of a skill in skills/<name>/SKILL.md to load as the agent's
+     * instructions. Mutually exclusive with `prompt`. The runner reads the
+     * SKILL.md and renders it the same way the legacy executeSkill did:
+     *     "Follow these skill instructions:\n\n<SKILL.md>\n\nContext:\n<ctx>"
+     * Use this for single-phase skill-style workflows (triage, review, etc.).
+     */
+    skill: z.string().optional(),
+    /** Model override — can reference template vars like {{models.architect}} */
+    model: z.string().optional(),
+    /** Named approval gate to pause at after this phase */
+    approval_gate: z.string().optional(),
+    /** Loop configuration for reviewer-style looping phases */
+    loop: PhaseLoopSchema.optional(),
+    /** Generic loop configuration — expression/bash-based completion conditions */
+    generic_loop: GenericLoopSchema.optional(),
+    /** Rules applied to agent output */
+    on_output: PhaseOnOutputSchema.optional(),
+    /** Actions taken on successful completion */
+    on_success: z
+      .object({
+        set_phase: z.string().optional(),
+      })
+      .optional(),
+    /** DAG: list of phase names this phase depends on */
+    depends_on: z.array(z.string()).optional(),
+    /** DAG: trigger rule for this phase — when to run based on dependency outcomes */
+    trigger_rule: z.enum(["all_success", "one_success", "none_failed_min_one_success", "all_done"]).optional(),
+    /** DAG: variable name to store the output of this phase for use in downstream phases */
+    output_var: z.string().optional(),
+  })
+  .refine((p) => !(p.prompt && p.skill), {
+    message: "phase cannot specify both `prompt` and `skill` — pick one",
+  });
 
 export type PhaseDefinition = z.infer<typeof PhaseDefinitionSchema>;
 export type PhaseLoop = z.infer<typeof PhaseLoopSchema>;
 export type GenericLoop = z.infer<typeof GenericLoopSchema>;
 export type OutputRule = z.infer<typeof OutputRuleSchema>;
 
-// ── Build workflow ────────────────────────────────────────────────────
+// ── Agent workflow ────────────────────────────────────────────────────
+//
+// "Agent workflows" are the unified definition for everything Last Light does
+// that involves running an agent — whether it's a multi-phase build cycle, a
+// single-shot triage, a PR review, a health report, or a custom user-defined
+// workflow. Each is a list of phases that the runner executes; simple
+// workflows have a single phase, complex ones have many with optional loops,
+// approval gates, DAG dependencies, etc.
+//
+// The `kind` field is purely a categorization label used by the dashboard
+// (e.g. to group runs by purpose). The runner ignores it.
 
-export const BuildWorkflowSchema = z.object({
-  type: z.literal("build").default("build"),
+export const AgentWorkflowSchema = z.object({
+  /** Categorization label — e.g. "build", "triage", "review", "health". Free string. */
+  kind: z.string().default("agent"),
   name: z.string(),
   description: z.string().optional(),
+  /** What can trigger this workflow (informational; routing is in code). */
   trigger: z.string().optional(),
   variables: z.record(z.string(), z.string()).optional(),
   phases: z.array(PhaseDefinitionSchema),
 });
 
-export type BuildWorkflowDefinition = z.infer<typeof BuildWorkflowSchema>;
+export type AgentWorkflowDefinition = z.infer<typeof AgentWorkflowSchema>;
 
 // ── Cron workflow ─────────────────────────────────────────────────────
+//
+// Cron workflows are NOT runnable themselves — they describe a schedule that
+// triggers another workflow. The `workflow` field is the name of an
+// AgentWorkflow to invoke on each tick. (Previously this carried a `skill`
+// field referencing the legacy executeSkill path; that path no longer exists.)
 
 export const CronWorkflowSchema = z.object({
-  type: z.literal("cron"),
+  kind: z.literal("cron"),
   name: z.string(),
   schedule: z.string(),
-  skill: z.string(),
-  context: z.record(z.string(), z.unknown()),
+  /** Name of the AgentWorkflow to run on each tick */
+  workflow: z.string(),
+  /** Static context to merge into the workflow's input on each tick */
+  context: z.record(z.string(), z.unknown()).default({}),
   condition: z
     .object({
       unless: z.string().optional(),
@@ -111,12 +151,3 @@ export const CronWorkflowSchema = z.object({
 });
 
 export type CronWorkflowDefinition = z.infer<typeof CronWorkflowSchema>;
-
-// ── Union ─────────────────────────────────────────────────────────────
-
-export const WorkflowSchema = z.discriminatedUnion("type", [
-  BuildWorkflowSchema,
-  CronWorkflowSchema,
-]);
-
-export type WorkflowDefinition = z.infer<typeof WorkflowSchema>;

@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
+import { join, resolve } from "path";
 import type { ExecutorConfig, ExecutionResult } from "../engine/executor.js";
 import { executeAgent } from "../engine/executor.js";
 import type { StateDb } from "../state/db.js";
@@ -7,11 +9,63 @@ import type { PhaseHistoryEntry } from "../state/db.js";
 import type { ModelConfig } from "../config.js";
 import { resolveModel } from "../config.js";
 import { listRunningContainers } from "../admin/docker.js";
-import type { BuildWorkflowDefinition } from "./schema.js";
+import type { AgentWorkflowDefinition, PhaseDefinition } from "./schema.js";
 import { loadPromptTemplate } from "./loader.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
 import { evalUntilExpression } from "./loop-eval.js";
 import { buildDag, getReadyNodes, getNodesToSkip, isComplete, type DagNode } from "./dag.js";
+
+/**
+ * Load a skill's SKILL.md instructions from skills/<name>/SKILL.md, falling
+ * back to .claude/skills/<name>/SKILL.md if the project-local copy isn't
+ * present (matches the legacy executeSkill lookup order).
+ */
+function loadSkillInstructions(skillName: string): string {
+  for (const base of [resolve("skills"), resolve(".claude/skills")]) {
+    try {
+      return readFileSync(join(base, skillName, "SKILL.md"), "utf-8");
+    } catch {
+      /* try next path */
+    }
+  }
+  throw new Error(`Skill not found: skills/${skillName}/SKILL.md`);
+}
+
+/**
+ * Build the agent prompt for a phase, handling both `prompt:` (template file)
+ * and `skill:` (SKILL.md reference) phase definitions.
+ *
+ * Skill phases produce the same prompt shape the legacy executeSkill used:
+ *     "Follow these skill instructions:\n\n<SKILL.md>\n\nContext:\n<key: value lines>"
+ * Template variables ({{owner}}, {{issueNumber}}, etc.) are still rendered in
+ * the SKILL.md content so skills can reference workflow context if they want.
+ */
+function buildPhasePrompt(
+  phase: PhaseDefinition,
+  ctx: TemplateContext,
+  extraCtx?: Partial<TemplateContext>,
+): string {
+  const fullCtx = extraCtx ? { ...ctx, ...extraCtx } : ctx;
+
+  if (phase.skill) {
+    const skillContent = loadSkillInstructions(phase.skill);
+    const renderedSkill = renderTemplate(skillContent, fullCtx);
+    // Build a context block from the workflow context — same shape that the
+    // legacy executeSkill produced, so existing skill instructions still work.
+    const contextLines = Object.entries(fullCtx)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+      .join("\n");
+    return `Follow these skill instructions:\n\n${renderedSkill}\n\nContext:\n${contextLines}`;
+  }
+
+  if (phase.prompt) {
+    const template = loadPromptTemplate(phase.prompt);
+    return renderTemplate(template, fullCtx);
+  }
+
+  throw new Error(`Phase "${phase.name}" has neither prompt: nor skill: — cannot build prompt`);
+}
 
 export interface ApprovalGateConfig {
   postArchitect: boolean;
@@ -143,7 +197,7 @@ function phaseIndex(phase: string): number {
 // ── Main workflow runner ─────────────────────────────────────────────────────
 
 /** Returns true if any phase declares explicit dependencies — triggers DAG execution path. */
-function hasDependencies(definition: BuildWorkflowDefinition): boolean {
+function hasDependencies(definition: AgentWorkflowDefinition): boolean {
   return definition.phases.some((p) => p.depends_on && p.depends_on.length > 0);
 }
 
@@ -155,7 +209,7 @@ function hasDependencies(definition: BuildWorkflowDefinition): boolean {
  *   no-DB agent-based resume check), overrides the DB-derived resume point.
  */
 export async function runWorkflow(
-  definition: BuildWorkflowDefinition,
+  definition: AgentWorkflowDefinition,
   ctx: TemplateContext,
   config: ExecutorConfig,
   callbacks: RunnerCallbacks,
@@ -245,8 +299,8 @@ export async function runWorkflow(
     }
 
     // ── Agent phase ───────────────────────────────────────────────────────
-    if (!phase.prompt) {
-      console.warn(`[runner] Phase "${phaseName}" has type=agent but no prompt — skipping`);
+    if (!phase.prompt && !phase.skill) {
+      console.warn(`[runner] Phase "${phaseName}" has type=agent but neither prompt: nor skill: — skipping`);
       continue;
     }
 
@@ -274,10 +328,13 @@ export async function runWorkflow(
         await onStart(reviewLabel);
         await notify(`**Starting reviewer** (cycle ${fixCycles + 1}) — independent verification...`);
 
-        // Choose prompt: first cycle uses phase.prompt, subsequent use re_review_prompt
-        const reviewPromptPath =
-          fixCycles === 0 ? phase.prompt : loop.on_request_changes.re_review_prompt;
-        const reviewPrompt = renderPrompt(reviewPromptPath, { fixCycle: fixCycles });
+        // Choose prompt: first cycle uses phase.prompt or phase.skill (via
+        // buildPhasePrompt), subsequent cycles always use the re_review_prompt
+        // template path defined in loop.on_request_changes.
+        const reviewPrompt =
+          fixCycles === 0
+            ? buildPhasePrompt(phase, ctx, { fixCycle: fixCycles })
+            : renderPrompt(loop.on_request_changes.re_review_prompt, { fixCycle: fixCycles });
 
         // Resolve model
         const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
@@ -455,7 +512,7 @@ export async function runWorkflow(
           maxIterations: MAX_ITER,
           previousOutput: loop.fresh_context ? "" : previousOutput,
         };
-        const prompt = renderPrompt(phase.prompt!, iterCtx);
+        const prompt = buildPhasePrompt(phase, ctx, iterCtx);
 
         const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
         const model = modelRaw || modelFor(phaseName);
@@ -618,7 +675,7 @@ export async function runWorkflow(
       extraCtx = { reviewerNote, docLinks };
     }
 
-    const prompt = renderPrompt(phase.prompt, extraCtx);
+    const prompt = buildPhasePrompt(phase, ctx, extraCtx);
 
     const pr = await runPhase(phaseName, `${taskId}-${phaseName}`, triggerId, prompt, config, db, model);
 
@@ -628,6 +685,12 @@ export async function runWorkflow(
         return { success: false, phases };
       }
       phases.push({ phase: phaseName, success: true, output: "Already completed" });
+      // Persist a phase_history entry even when the phase was deduped, so
+      // the dashboard's pipeline view shows the phase as 'done' instead of
+      // stuck on 'active'/pending. Without this the run looks half-finished
+      // even though it succeeded.
+      persistPhase(phaseName, "Already completed (deduplicated)");
+      await onEnd(phaseName, { phase: phaseName, success: true, output: "Already completed" });
       if (phaseName === "executor") {
         await notify(`**Executor** already completed — proceeding to review...`);
       }
@@ -785,7 +848,7 @@ interface DagRunnerCtx {
  * Runs independent phases concurrently via Promise.allSettled.
  */
 async function runDagWorkflow(
-  definition: BuildWorkflowDefinition,
+  definition: AgentWorkflowDefinition,
   ctx: TemplateContext,
   config: ExecutorConfig,
   callbacks: RunnerCallbacks,
@@ -813,7 +876,7 @@ async function runDagWorkflow(
   ): Promise<{ result: PhaseResult; paused?: boolean }> {
     // Build context with current phase outputs for ${name.output} substitution
     const phaseCtx: Partial<TemplateContext> = { phaseOutputs: { ...outputs } };
-    const prompt = renderPrompt(phase.prompt!, phaseCtx);
+    const prompt = buildPhasePrompt(phase, ctx, phaseCtx);
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
     const model = modelRaw || modelFor(phaseName);
 
@@ -920,10 +983,10 @@ async function runDagWorkflow(
         return { node, result: r, paused: false, alreadyPushed: false };
       }
 
-      // Phase with no prompt — skip
-      if (!phase.prompt) {
-        console.warn(`[dag] Phase "${node.name}" has type=agent but no prompt — skipping`);
-        const r: PhaseResult = { phase: node.name, success: true, output: "Skipped (no prompt)" };
+      // Phase with neither prompt nor skill — skip
+      if (!phase.prompt && !phase.skill) {
+        console.warn(`[dag] Phase "${node.name}" has type=agent but neither prompt: nor skill: — skipping`);
+        const r: PhaseResult = { phase: node.name, success: true, output: "Skipped (no prompt or skill)" };
         return { node, result: r, paused: false, alreadyPushed: false };
       }
 
@@ -936,8 +999,12 @@ async function runDagWorkflow(
 
         while (!approved && fixCycles <= MAX_CYCLES) {
           const reviewLabel = fixCycles === 0 ? node.name : `${node.name}_${fixCycles + 1}`;
-          const reviewPromptPath = fixCycles === 0 ? phase.prompt : loop.on_request_changes.re_review_prompt;
-          const reviewPrompt = renderPrompt(reviewPromptPath, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
+          // First cycle uses phase.prompt or phase.skill via buildPhasePrompt;
+          // subsequent cycles always use the re_review_prompt template path.
+          const reviewPrompt =
+            fixCycles === 0
+              ? buildPhasePrompt(phase, ctx, { phaseOutputs: { ...outputs }, fixCycle: fixCycles })
+              : renderPrompt(loop.on_request_changes.re_review_prompt, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
           const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
           const reviewModel = reviewModelRaw || modelFor("reviewer");
 
@@ -999,7 +1066,7 @@ async function runDagWorkflow(
             previousOutput: loop.fresh_context ? "" : previousOutput,
             phaseOutputs: { ...outputs },
           };
-          const iterPrompt = renderPrompt(phase.prompt, iterCtx);
+          const iterPrompt = buildPhasePrompt(phase, ctx, iterCtx);
           const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
           const model = modelRaw || modelFor(node.name);
 

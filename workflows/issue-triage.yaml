@@ -1,0 +1,16 @@
+kind: triage
+name: issue-triage
+description: |
+  Triage a GitHub issue: read it, classify it, label it, and act on stale or
+  incomplete reports. Single agent invocation, no PR creation.
+
+  Triggered by:
+    - issue.opened webhook
+    - cron scan over managed repos
+    - manual CLI: tsx src/cli.ts cliftonc/owner/repo#N
+
+phases:
+  - name: triage
+    label: Triage
+    skill: issue-triage
+    model: "{{models.triage}}"

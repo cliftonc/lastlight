@@ -1,0 +1,15 @@
+kind: health
+name: repo-health
+description: |
+  Generate a health report for a repository: open issues, stale issues, PR
+  velocity, label distribution, etc. Repo-scoped (no specific issue/PR).
+
+  Triggered by:
+    - weekly cron (default Monday 09:00)
+    - manual CLI: tsx src/cli.ts health owner/repo
+
+phases:
+  - name: report
+    label: Report
+    skill: repo-health
+    model: "{{models.health}}"

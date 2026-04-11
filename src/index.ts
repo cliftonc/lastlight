@@ -1,12 +1,10 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { randomUUID } from "crypto";
-import { loadConfig, generateMcpConfig } from "./config.js";
+import { loadConfig, generateMcpConfig, resolveModel } from "./config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
 import { routeEvent } from "./engine/router.js";
-import { executeSkill } from "./engine/executor.js";
 import { handleChatMessage } from "./engine/chat.js";
-import { agents } from "./engine/agents.js";
 import { configureGitAuth } from "./engine/git-auth.js";
 import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
@@ -16,7 +14,8 @@ import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { runBuildCycle, runPrFix } from "./engine/orchestrator.js";
-import { resolveModel } from "./config.js";
+import { runSimpleWorkflow, type SimpleWorkflowRequest } from "./workflows/simple.js";
+import type { RunnerCallbacks } from "./workflows/runner.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 async function main() {
@@ -68,48 +67,102 @@ async function main() {
   // GitHub API client for harness-level operations (posting comments, fetching issues)
   const github = config.githubApp ? new GitHubClient(config.githubApp) : null;
 
-  // Map skill names to session types for model resolution
-  const skillToSessionType: Record<string, string> = {
-    "issue-triage": "triage",
-    "issue-comment": "triage",
-    "pr-review": "review",
-    "repo-health": "health",
-  };
+  /**
+   * Dispatch a workflow by name. Used by webhook events, cron jobs, and the
+   * /api/run endpoint. Every dispatch creates a workflow_run row visible in
+   * the dashboard, regardless of whether it's a single-phase workflow (like
+   * issue-triage) or a multi-phase one.
+   *
+   * The router still uses skill names for backwards compat — for the four
+   * agent skills they're 1:1 with workflow names.
+   */
+  const dispatchWorkflow = async (
+    workflowName: string,
+    context: Record<string, unknown>,
+  ): Promise<{ success: boolean; error?: string }> => {
+    const repoStr = context.repo as string | undefined;
+    if (!repoStr) {
+      const msg = `dispatchWorkflow(${workflowName}): missing 'repo' in context`;
+      console.error(`[dispatch] ${msg}`);
+      return { success: false, error: msg };
+    }
+    const [owner, repo] = repoStr.includes("/") ? repoStr.split("/") : ["", repoStr];
+    if (!owner || !repo) {
+      const msg = `dispatchWorkflow(${workflowName}): invalid repo format '${repoStr}'`;
+      console.error(`[dispatch] ${msg}`);
+      return { success: false, error: msg };
+    }
 
-  // Skill runner — used by both webhook events and cron jobs
-  const runSkill = async (skill: string, context: Record<string, unknown>) => {
-    const executionId = randomUUID();
-    const triggerId = (context.issueNumber as string) || skill;
+    // Pluck the standard fields, leave the rest in `extra` for the workflow
+    // template to consume.
+    const {
+      _triggerType,
+      repo: _r,
+      issueNumber,
+      prNumber,
+      title,
+      body,
+      labels,
+      sender,
+      commentBody,
+      ...rest
+    } = context;
 
-    db.recordStart({
-      id: executionId,
-      triggerType: context._triggerType as "webhook" | "cron" || "webhook",
-      triggerId,
-      skill,
-      repo: context.repo as string,
-      issueNumber: context.issueNumber as number,
-      startedAt: new Date().toISOString(),
-    });
+    const request: SimpleWorkflowRequest = {
+      owner,
+      repo,
+      issueNumber: typeof issueNumber === "number" ? issueNumber : undefined,
+      prNumber: typeof prNumber === "number" ? prNumber : undefined,
+      issueTitle: typeof title === "string" ? title : "",
+      issueBody: typeof body === "string" ? body : "",
+      issueLabels: Array.isArray(labels) ? (labels as string[]) : undefined,
+      commentBody: typeof commentBody === "string" ? commentBody : undefined,
+      sender: typeof sender === "string" ? sender : "unknown",
+      extra: rest as Record<string, unknown>,
+    };
 
-    const sessionType = skillToSessionType[skill] || skill;
-    const result = await executeSkill(skill, context, {
-      mcpConfigPath,
-      model: resolveModel(config.models, sessionType),
-      maxTurns: config.maxTurns,
-      stateDir: config.stateDir,
-    }, agents);
+    const callbacks: RunnerCallbacks = {
+      postComment: github && issueNumber
+        ? async (msg) => {
+            try {
+              await github.postComment(owner, repo, issueNumber as number, msg);
+            } catch (err: unknown) {
+              const m = err instanceof Error ? err.message : String(err);
+              console.warn(`[dispatch] Failed to post comment: ${m}`);
+            }
+          }
+        : undefined,
+      onPhaseStart: async (phase) => console.log(`[dispatch] ▶ ${workflowName}/${phase}`),
+      onPhaseEnd: async (phase, result) =>
+        console.log(`[dispatch] ◀ ${workflowName}/${phase}: ${result.success ? "OK" : "FAILED"}`),
+    };
 
-    db.recordFinish(executionId, {
-      success: result.success,
-      error: result.error,
-      turns: result.turns,
-      durationMs: result.durationMs,
-    });
-
-    if (!result.success) {
-      console.error(`[runner] Skill ${skill} failed: ${result.error}`);
-    } else {
-      console.log(`[runner] Skill ${skill} completed in ${result.turns} turns (${result.durationMs}ms)`);
+    try {
+      const result = await runSimpleWorkflow(
+        workflowName,
+        request,
+        {
+          mcpConfigPath,
+          model: config.model,
+          maxTurns: config.maxTurns,
+          stateDir: config.stateDir,
+          sandboxDir: config.sandboxDir,
+        },
+        callbacks,
+        db,
+        config.models,
+      );
+      const summary = result.phases.map((p) => `${p.phase}=${p.success ? "ok" : "fail"}`).join(", ");
+      if (result.success) {
+        console.log(`[dispatch] ${workflowName} completed (${summary})`);
+      } else {
+        console.warn(`[dispatch] ${workflowName} failed (${summary})`);
+      }
+      return { success: result.success };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[dispatch] ${workflowName} threw: ${msg}`);
+      return { success: false, error: msg };
     }
   };
 
@@ -229,21 +282,27 @@ async function main() {
   // API endpoint for CLI triggers
   githubConnector?.honoApp.post("/api/run", async (c) => {
     const body = await c.req.json();
-    const { skill, context } = body;
+    // Accept either `skill` (legacy) or `workflow` (preferred). They map 1:1
+    // for the four agent skills (issue-triage, pr-review, repo-health,
+    // issue-comment) which are now backed by single-phase YAML workflows.
+    const workflowName = (body.workflow ?? body.skill) as string | undefined;
+    const context = (body.context ?? {}) as Record<string, unknown>;
 
-    if (!skill) {
-      return c.json({ error: "Missing 'skill' field" }, 400);
+    if (!workflowName) {
+      return c.json({ error: "Missing 'workflow' (or 'skill') field" }, 400);
     }
 
-    console.log(`[api] CLI triggered: skill=${skill}`);
+    console.log(`[api] CLI triggered: workflow=${workflowName}`);
 
-    // Run asynchronously — return immediately with an execution ID
+    // Run asynchronously — return immediately with a stable id the caller
+    // can correlate with workflow_runs in the dashboard.
     const executionId = randomUUID();
-    runSkill(skill, { ...context, _triggerType: "api" }).catch((err) => {
-      console.error(`[api] Skill ${skill} failed:`, err);
+    dispatchWorkflow(workflowName, { ...context, _triggerType: "api" }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[api] workflow ${workflowName} failed: ${msg}`);
     });
 
-    return c.json({ accepted: true, executionId, skill }, 202);
+    return c.json({ accepted: true, executionId, workflow: workflowName }, 202);
   });
 
   // API endpoint for build cycle triggers (issue URL)
@@ -635,28 +694,35 @@ async function main() {
       return;
     }
 
-    // For messaging-triggered skills, acknowledge and reply when done
+    // For messaging-triggered skills, acknowledge and reply when done.
+    // The router still uses skill names — they map 1:1 to workflow YAML names
+    // for the four agent skills (issue-triage, pr-review, repo-health, issue-comment).
     if (envelope.type === "message") {
       await envelope.reply(`Starting *${skill}*... I'll report back when it's done.`);
-      const triggerType = "chat" as const;
-      runSkill(skill, { ...context, _triggerType: triggerType }).then(async () => {
-        await envelope.reply(`*${skill}* completed.`);
-      }).catch(async (err) => {
-        console.error(`[event] Skill ${skill} failed:`, err);
-        await envelope.reply(`*${skill}* failed: ${err.message}`);
+      dispatchWorkflow(skill, { ...context, _triggerType: "chat" }).then(async (result) => {
+        if (result.success) {
+          await envelope.reply(`*${skill}* completed.`);
+        } else {
+          await envelope.reply(`*${skill}* failed${result.error ? `: ${result.error}` : ""}.`);
+        }
+      }).catch(async (err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[event] workflow ${skill} threw: ${msg}`);
+        await envelope.reply(`*${skill}* failed: ${msg}`);
       });
       return;
     }
 
-    // Run skill asynchronously (webhook triggers)
-    runSkill(skill, { ...context, _triggerType: "webhook" }).catch((err) => {
-      console.error(`[event] Unhandled error in skill ${skill}:`, err);
+    // Run workflow asynchronously (webhook triggers)
+    dispatchWorkflow(skill, { ...context, _triggerType: "webhook" }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[event] Unhandled error in workflow ${skill}: ${msg}`);
     });
   });
 
-  // Set up cron scheduler
-  const cron = new CronScheduler(db, async (skill, context) => {
-    await runSkill(skill, { ...context, _triggerType: "cron" });
+  // Set up cron scheduler — each cron tick dispatches an agent workflow by name
+  const cron = new CronScheduler(db, async (workflowName, context) => {
+    await dispatchWorkflow(workflowName, { ...context, _triggerType: "cron" });
   });
 
   const webhooksEnabled = !!(config.webhookSecret && config.githubApp);

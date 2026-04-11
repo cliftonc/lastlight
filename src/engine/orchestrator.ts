@@ -158,7 +158,12 @@ export async function runBuildCycle(
         issueNumber,
         currentPhase: "phase_0",
         status: "running",
-        context: { branch, taskId, models: models as Record<string, unknown> | undefined },
+        context: {
+          kind: "build",
+          branch,
+          taskId,
+          models: models as Record<string, unknown> | undefined,
+        },
         startedAt: new Date().toISOString(),
       });
       console.log(`[orchestrator] Created workflow run ${workflowId}`);

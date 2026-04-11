@@ -77,17 +77,16 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
         return { action: "ignore", reason: "no bot mention in comment" };
       }
 
-      // Only maintainers (OWNER, MEMBER, COLLABORATOR) can trigger builds
+      // Only maintainers (OWNER, MEMBER, COLLABORATOR) can trigger builds.
+      // For non-maintainers we reply directly via the connector — no agent
+      // invocation needed.
       if (!MAINTAINER_ROLES.has(envelope.authorAssociation || "")) {
         return {
-          action: "skill",
-          skill: "polite-decline",
-          context: {
-            repo: envelope.repo,
-            issueNumber: envelope.issueNumber,
-            sender: envelope.sender,
-            body: envelope.body,
-          },
+          action: "reply",
+          message:
+            `Thanks for the report, @${envelope.sender}! ` +
+            `I only act on requests from repository maintainers — a maintainer ` +
+            `(owner / member / collaborator) needs to mention me to trigger a build.`,
         };
       }
 

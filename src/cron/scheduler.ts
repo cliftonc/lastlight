@@ -4,32 +4,33 @@ import type { StateDb } from "../state/db.js";
 export interface CronJob {
   name: string;
   schedule: string;
-  skill: string;
+  /** Name of an agent workflow (workflows/<name>.yaml) to invoke on each tick */
+  workflow: string;
   context: Record<string, unknown>;
   /** Maximum consecutive failures before alerting */
   maxFailures?: number;
 }
 
-/** A lightweight direct job — runs a function, not a skill */
+/** A lightweight direct job — runs a function, not a workflow */
 export interface DirectCronJob {
   name: string;
   schedule: string;
   handler: () => Promise<void>;
 }
 
-export type SkillRunner = (skill: string, context: Record<string, unknown>) => Promise<void>;
+export type WorkflowRunner = (workflow: string, context: Record<string, unknown>) => Promise<void>;
 
 /**
  * Cron scheduler with overlap protection and failure tracking.
- * Each job runs a skill via the agent executor, tracked in SQLite.
+ * Each job runs a workflow via the agent runner, tracked in SQLite.
  */
 export class CronScheduler {
   private jobs: Map<string, Cron> = new Map();
   private running: Set<string> = new Set();
   private db: StateDb;
-  private runner: SkillRunner;
+  private runner: WorkflowRunner;
 
-  constructor(db: StateDb, runner: SkillRunner) {
+  constructor(db: StateDb, runner: WorkflowRunner) {
     this.db = db;
     this.runner = runner;
   }
@@ -50,12 +51,12 @@ export class CronScheduler {
       console.log(`[cron] Running: ${job.name}`);
 
       try {
-        await this.runner(job.skill, job.context);
+        await this.runner(job.workflow, job.context);
       } catch (err: any) {
         console.error(`[cron] ${job.name} failed:`, err.message);
 
-        // Check consecutive failures
-        const failures = this.db.consecutiveFailures(job.skill);
+        // Check consecutive failures (tracked under the workflow name)
+        const failures = this.db.consecutiveFailures(job.workflow);
         const max = job.maxFailures || 3;
         if (failures >= max) {
           console.error(`[cron] ALERT: ${job.name} has failed ${failures} times consecutively`);

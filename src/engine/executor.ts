@@ -1,8 +1,7 @@
 import { readFileSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { randomUUID } from "crypto";
-import type { AgentDefinition } from "./agents.js";
-import { createTaskSandbox, sandboxAvailable, type DockerSandbox } from "../sandbox/index.js";
+import { createTaskSandbox, type DockerSandbox } from "../sandbox/index.js";
 import { refreshGitAuth } from "./git-auth.js";
 
 /** Default directory for agent context files (soul, rules, etc.) */
@@ -112,40 +111,6 @@ export async function executeAgent(
   throw new Error("Docker sandbox not available and ENABLE_DIRECT_FALLBACK is not enabled. Install Docker and build the sandbox image (docker-compose build sandbox), or set ENABLE_DIRECT_FALLBACK=true.");
 }
 
-/**
- * Execute a skill by name.
- */
-export async function executeSkill(
-  skill: string,
-  context: Record<string, unknown>,
-  config: ExecutorConfig,
-  agents?: Record<string, AgentDefinition>
-): Promise<ExecutionResult> {
-  const contextLines = Object.entries(context)
-    .filter(([k, v]) => v !== undefined && v !== null && k !== "_triggerType")
-    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
-    .join("\n");
-
-  // Load the skill content and inject it directly into the prompt.
-  // Claude Code's slash command discovery doesn't work reliably in headless -p mode,
-  // so we include the skill instructions in the prompt itself.
-  let skillContent = "";
-  for (const base of [resolve("skills"), resolve(".claude/skills")]) {
-    try {
-      skillContent = readFileSync(join(base, skill, "SKILL.md"), "utf-8");
-      break;
-    } catch { /* try next path */ }
-  }
-
-  const prompt = skillContent
-    ? `Follow these skill instructions:\n\n${skillContent}\n\nContext:\n${contextLines}`
-    : `Perform "${skill}" with this context:\n\n${contextLines}`;
-
-  console.log(`[executor] Running skill: ${skill}`);
-
-  const taskId = `${skill}-${randomUUID().slice(0, 8)}`;
-  return executeAgent(prompt, config, { taskId });
-}
 
 // ── Docker sandbox execution ────────────────────────────────────────
 

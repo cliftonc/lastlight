@@ -314,6 +314,39 @@ export function createAdminRoutes(
     return c.json({ cancelled: id });
   });
 
+  // ── Workflow definitions ─────────────────────────────────────────
+  //
+  // The dashboard's pipeline visualisation fetches definitions from here so
+  // it can render exactly the phases the YAML file declares — including
+  // user-defined custom workflows. No hardcoded phase list, no fallback.
+
+  app.get("/workflows/:name", async (c) => {
+    const name = c.req.param("name");
+    try {
+      const { getWorkflow } = await import("../workflows/loader.js");
+      const def = getWorkflow(name);
+      // Return only the dashboard-relevant subset (no prompt template paths,
+      // no model overrides) — keeps the surface small and stable.
+      return c.json({
+        workflow: {
+          name: def.name,
+          kind: def.kind,
+          description: def.description,
+          phases: def.phases.map((p) => ({
+            name: p.name,
+            label: p.label ?? p.name,
+            type: p.type,
+            hasLoop: !!p.loop || !!p.generic_loop,
+            approvalGate: p.approval_gate,
+          })),
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `workflow definition not found: ${name}`, detail: msg }, 404);
+    }
+  });
+
   // ── Approval Gates ─────────────────────────────────────────────
 
   app.get("/approvals", (c) => {

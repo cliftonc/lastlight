@@ -8,7 +8,7 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "loader-test-"));
 }
 
-describe("loader — build workflow", () => {
+describe("loader — agent workflow", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -17,11 +17,11 @@ describe("loader — build workflow", () => {
     clearWorkflowCache();
   });
 
-  it("loads a valid build workflow YAML", () => {
+  it("loads a valid agent workflow YAML", () => {
     writeFileSync(
       join(dir, "build.yaml"),
       `
-type: build
+kind: build
 name: build
 description: "Test workflow"
 phases:
@@ -35,6 +35,7 @@ phases:
 
     const wf = getWorkflow("build");
     expect(wf.name).toBe("build");
+    expect(wf.kind).toBe("build");
     expect(wf.phases).toHaveLength(2);
     expect(wf.phases[0].name).toBe("phase_0");
     expect(wf.phases[0].type).toBe("context");
@@ -54,7 +55,7 @@ phases:
     writeFileSync(
       join(dir, "invalid.yaml"),
       `
-type: build
+kind: build
 name: invalid
 phases:
   - name: phase_0
@@ -64,18 +65,49 @@ phases:
     expect(() => getWorkflow("invalid")).toThrow();
   });
 
-  it("applies default type=build when type is omitted", () => {
+  it("applies default kind=agent when omitted", () => {
     writeFileSync(
-      join(dir, "noType.yaml"),
+      join(dir, "noKind.yaml"),
       `
-name: noType
+name: noKind
 phases:
   - name: phase_0
     type: context
 `.trim(),
     );
-    const wf = getWorkflow("noType");
-    expect(wf.name).toBe("noType");
+    const wf = getWorkflow("noKind");
+    expect(wf.name).toBe("noKind");
+    expect(wf.kind).toBe("agent");
+  });
+
+  it("supports phases with skill: instead of prompt:", () => {
+    writeFileSync(
+      join(dir, "triage.yaml"),
+      `
+kind: triage
+name: triage
+phases:
+  - name: triage
+    skill: issue-triage
+`.trim(),
+    );
+    const wf = getWorkflow("triage");
+    expect(wf.phases[0].skill).toBe("issue-triage");
+    expect(wf.phases[0].prompt).toBeUndefined();
+  });
+
+  it("rejects phases with both prompt and skill set", () => {
+    writeFileSync(
+      join(dir, "bad.yaml"),
+      `
+name: bad
+phases:
+  - name: bad
+    prompt: prompts/x.md
+    skill: issue-triage
+`.trim(),
+    );
+    expect(() => getWorkflow("bad")).toThrow();
   });
 
   it("caches the result on second call", () => {
@@ -107,10 +139,10 @@ describe("loader — cron workflows", () => {
     writeFileSync(
       join(dir, "cron-health.yaml"),
       `
-type: cron
+kind: cron
 name: weekly-health-report
 schedule: "0 9 * * 1"
-skill: repo-health
+workflow: repo-health
 context:
   mode: report
 `.trim(),
@@ -120,17 +152,17 @@ context:
     expect(jobs).toHaveLength(1);
     expect(jobs[0].name).toBe("weekly-health-report");
     expect(jobs[0].schedule).toBe("0 9 * * 1");
-    expect(jobs[0].skill).toBe("repo-health");
+    expect(jobs[0].workflow).toBe("repo-health");
   });
 
   it("loads multiple cron workflows", () => {
     writeFileSync(
       join(dir, "cron-triage.yaml"),
       `
-type: cron
+kind: cron
 name: triage-new-issues
 schedule: "*/15 * * * *"
-skill: issue-triage
+workflow: issue-triage
 context:
   mode: scan
 condition:
@@ -140,10 +172,10 @@ condition:
     writeFileSync(
       join(dir, "cron-health.yaml"),
       `
-type: cron
+kind: cron
 name: weekly-health-report
 schedule: "0 9 * * 1"
-skill: repo-health
+workflow: repo-health
 context:
   mode: report
 `.trim(),
@@ -171,7 +203,7 @@ phases:
     writeFileSync(
       join(dir, "cron-bad.yaml"),
       `
-type: cron
+kind: cron
 name: bad
 `.trim(),
     ); // missing required fields

@@ -1,0 +1,15 @@
+kind: comment
+name: issue-comment
+description: |
+  Respond conversationally to a comment on an issue. Used when a maintainer
+  comments on an issue without explicitly asking for a build — the bot
+  replies in-thread without invoking the full Architect → Executor cycle.
+
+  Triggered by:
+    - issue_comment.created webhook (when classifier returns "lightweight")
+
+phases:
+  - name: respond
+    label: Respond
+    skill: issue-comment
+    model: "{{models.comment}}"

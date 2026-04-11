@@ -70,6 +70,27 @@ export interface WorkflowRun {
   finishedAt?: string;
 }
 
+/**
+ * Dashboard-side view of a workflow YAML definition. Mirrors the subset
+ * served by GET /admin/api/workflows/:name. The pipeline visualisation
+ * fetches this on-demand to render the actual phases of any workflow,
+ * including user-defined custom ones.
+ */
+export interface WorkflowPhaseDefinition {
+  name: string;
+  label: string;
+  type: "context" | "agent";
+  hasLoop?: boolean;
+  approvalGate?: string;
+}
+
+export interface WorkflowDefinition {
+  name: string;
+  kind: string;
+  description?: string;
+  phases: WorkflowPhaseDefinition[];
+}
+
 export interface ContainerInfo {
   id: string;
   name: string;
@@ -176,6 +197,8 @@ export const api = {
   workflowRun: (id: string) => req<{ workflowRun: WorkflowRun }>(`/workflow-runs/${id}`),
   cancelWorkflowRun: (id: string) =>
     req<{ cancelled: string }>(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  workflowDefinition: (name: string) =>
+    req<{ workflow: WorkflowDefinition }>(`/workflows/${encodeURIComponent(name)}`),
   approvals: () => req<{ approvals: WorkflowApproval[] }>("/approvals"),
   respondToApproval: (id: string, decision: "approved" | "rejected", reason?: string) =>
     req<{ status: string }>(`/approvals/${id}/respond`, {

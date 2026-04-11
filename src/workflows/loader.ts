@@ -2,9 +2,9 @@ import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import {
-  BuildWorkflowSchema,
+  AgentWorkflowSchema,
   CronWorkflowSchema,
-  type BuildWorkflowDefinition,
+  type AgentWorkflowDefinition,
   type CronWorkflowDefinition,
 } from "./schema.js";
 
@@ -19,13 +19,13 @@ export function setWorkflowDir(dir: string): void {
 }
 
 /** Cache: name → definition */
-const buildCache = new Map<string, BuildWorkflowDefinition>();
+const agentCache = new Map<string, AgentWorkflowDefinition>();
 const cronCache = new Map<string, CronWorkflowDefinition>();
 let cachePopulated = false;
 
 /** Clear the in-memory cache (used in tests). */
 export function clearWorkflowCache(): void {
-  buildCache.clear();
+  agentCache.clear();
   cronCache.clear();
   cachePopulated = false;
 }
@@ -50,6 +50,9 @@ function loadYamlFile(filePath: string): unknown {
 /**
  * Populate the cache by scanning the workflow directory.
  * Called lazily on first access.
+ *
+ * Distinguishes cron schedules (kind: cron) from runnable agent workflows
+ * (everything else, including agent / build / triage / review / etc.).
  */
 function populateCache(): void {
   if (cachePopulated) return;
@@ -73,10 +76,11 @@ function populateCache(): void {
       continue;
     }
 
-    // Determine type from the yaml `type` field (default: build)
-    const type = (raw as Record<string, unknown>)?.type ?? "build";
+    // Cron schedules carry kind: cron and reference an AgentWorkflow by name.
+    // Everything else is parsed as a runnable agent workflow.
+    const kind = (raw as Record<string, unknown>)?.kind;
 
-    if (type === "cron") {
+    if (kind === "cron") {
       const result = CronWorkflowSchema.safeParse(raw);
       if (!result.success) {
         console.error(`[loader] Invalid cron workflow in ${file}:`, result.error.format());
@@ -84,23 +88,23 @@ function populateCache(): void {
       }
       cronCache.set(result.data.name, result.data);
     } else {
-      const result = BuildWorkflowSchema.safeParse(raw);
+      const result = AgentWorkflowSchema.safeParse(raw);
       if (!result.success) {
-        console.error(`[loader] Invalid build workflow in ${file}:`, result.error.format());
+        console.error(`[loader] Invalid agent workflow in ${file}:`, result.error.format());
         continue;
       }
-      buildCache.set(result.data.name, result.data);
+      agentCache.set(result.data.name, result.data);
     }
   }
 }
 
 /**
- * Load and validate a named build workflow YAML.
+ * Load and validate a named agent workflow YAML.
  * Throws if the workflow doesn't exist or fails validation.
  */
-export function getWorkflow(name: string): BuildWorkflowDefinition {
+export function getWorkflow(name: string): AgentWorkflowDefinition {
   populateCache();
-  const cached = buildCache.get(name);
+  const cached = agentCache.get(name);
   if (cached) return cached;
 
   // Try loading directly from a file named {name}.yaml
@@ -112,13 +116,13 @@ export function getWorkflow(name: string): BuildWorkflowDefinition {
   for (const filePath of candidates) {
     if (existsSync(filePath)) {
       const raw = loadYamlFile(filePath);
-      const result = BuildWorkflowSchema.safeParse(raw);
+      const result = AgentWorkflowSchema.safeParse(raw);
       if (!result.success) {
         throw new Error(
           `Invalid workflow "${name}" in ${filePath}: ${JSON.stringify(result.error.format())}`
         );
       }
-      buildCache.set(name, result.data);
+      agentCache.set(name, result.data);
       return result.data;
     }
   }

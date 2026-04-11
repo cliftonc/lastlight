@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   type Node,
@@ -11,18 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import clsx from "clsx";
-import type { WorkflowRun, PhaseHistoryEntry } from "../api";
-
-const CANONICAL_PHASES = ["guardrails", "architect", "executor", "reviewer", "pr", "complete"];
-
-const PHASE_LABELS: Record<string, string> = {
-  guardrails: "Guardrails",
-  architect: "Architect",
-  executor: "Executor",
-  reviewer: "Reviewer",
-  pr: "PR",
-  complete: "Complete",
-};
+import { api, type WorkflowRun, type WorkflowDefinition, type PhaseHistoryEntry } from "../api";
 
 type PhaseStatus = "pending" | "active" | "paused" | "done" | "failed";
 
@@ -93,21 +82,70 @@ interface Props {
   run: WorkflowRun;
 }
 
+/**
+ * Pipeline visualisation for a workflow run. Fully driven by the workflow
+ * YAML definition served by GET /admin/api/workflows/:name — no hardcoded
+ * phase lists, no fallback labels. Custom user-defined workflows render
+ * exactly as they're declared.
+ *
+ * Phase visual states are derived from `run.phaseHistory` (completed) and
+ * `run.currentPhase` (active). Phases that show up in history but aren't in
+ * the definition (e.g. dynamically-named loop iterations like reviewer_2,
+ * fix_loop_1) are appended after the definition's phases so they remain
+ * visible.
+ */
 export function WorkflowPipeline({ run }: Props) {
+  const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch the workflow definition by name. Refetches when the run's
+  // workflowName changes (rare — usually constant for a given run).
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    setDefinition(null);
+    api
+      .workflowDefinition(run.workflowName)
+      .then((res) => {
+        if (!cancelled) setDefinition(res.workflow);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setError(`Failed to load workflow definition "${run.workflowName}": ${msg}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [run.workflowName]);
+
   const { nodes, edges } = useMemo(() => {
+    if (!definition) return { nodes: [] as Node<PhaseNodeData>[], edges: [] as Edge[] };
+
     const historyMap = new Map<string, PhaseHistoryEntry>();
     for (const entry of run.phaseHistory) {
       historyMap.set(entry.phase, entry);
     }
 
-    const extraPhases = run.phaseHistory
-      .map((e) => e.phase)
-      .filter((p) => p !== "phase_0" && !CANONICAL_PHASES.includes(p));
-    const uniqueExtra = Array.from(new Set(extraPhases));
-    const allPhases = [...CANONICAL_PHASES, ...uniqueExtra];
+    // Start with the workflow definition's phases (in declaration order),
+    // then append any history entries whose phase name isn't in the
+    // definition (dynamic loop iterations like reviewer_2, fix_loop_1).
+    const definitionPhaseNames = definition.phases.map((p) => p.name);
+    const definitionLabelByName = new Map(
+      definition.phases.map((p) => [p.name, p.label] as const),
+    );
 
-    const nodes: Node<PhaseNodeData>[] = allPhases.map((name, idx) => {
-      const label = PHASE_LABELS[name] ?? name;
+    const extraPhaseNames = run.phaseHistory
+      .map((e) => e.phase)
+      .filter((p) => !definitionPhaseNames.includes(p));
+    const uniqueExtras = Array.from(new Set(extraPhaseNames));
+    const allPhaseNames = [...definitionPhaseNames, ...uniqueExtras];
+
+    const reactFlowNodes: Node<PhaseNodeData>[] = allPhaseNames.map((name, idx) => {
+      // Definition phases use their declared label; dynamic extras use the
+      // raw phase name (it's a runtime construction, the YAML didn't name it).
+      const label = definitionLabelByName.get(name) ?? name;
       const histEntry = historyMap.get(name);
 
       let status: PhaseStatus = "pending";
@@ -141,16 +179,30 @@ export function WorkflowPipeline({ run }: Props) {
       };
     });
 
-    const edges: Edge[] = allPhases.slice(0, -1).map((name, idx) => ({
-      id: `${name}->${allPhases[idx + 1]}`,
+    const reactFlowEdges: Edge[] = allPhaseNames.slice(0, -1).map((name, idx) => ({
+      id: `${name}->${allPhaseNames[idx + 1]}`,
       source: name,
-      target: allPhases[idx + 1]!,
+      target: allPhaseNames[idx + 1]!,
       style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
       animated: false,
     }));
 
-    return { nodes, edges };
-  }, [run]);
+    return { nodes: reactFlowNodes, edges: reactFlowEdges };
+  }, [definition, run]);
+
+  if (error) {
+    return (
+      <div className="p-4 text-sm text-error border border-error/40 bg-error/5 rounded">
+        {error}
+      </div>
+    );
+  }
+
+  if (!definition) {
+    return (
+      <div className="p-4 text-sm text-base-content/50">Loading workflow definition…</div>
+    );
+  }
 
   const totalWidth = nodes.length * (NODE_WIDTH + NODE_GAP) - NODE_GAP;
 
