@@ -92,6 +92,16 @@ export interface Health {
   stateDir: string;
 }
 
+export interface WorkflowApproval {
+  id: string;
+  workflowRunId: string;
+  gate: string;
+  summary: string;
+  status: "pending" | "approved" | "rejected";
+  requestedBy?: string;
+  createdAt: string;
+}
+
 export class UnauthorizedError extends Error {
   constructor() {
     super("unauthorized");
@@ -166,4 +176,11 @@ export const api = {
   workflowRun: (id: string) => req<{ workflowRun: WorkflowRun }>(`/workflow-runs/${id}`),
   cancelWorkflowRun: (id: string) =>
     req<{ cancelled: string }>(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  approvals: () => req<{ approvals: WorkflowApproval[] }>("/approvals"),
+  respondToApproval: (id: string, decision: "approved" | "rejected", reason?: string) =>
+    req<{ status: string }>(`/approvals/${id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, reason }),
+    }),
 };

@@ -6,8 +6,10 @@ import { MessageFeed, type MessageOrder } from "./components/MessageFeed";
 import { Login } from "./components/Login";
 import { useSessionStream } from "./hooks/useSessionStream";
 import { UsageFooter } from "./components/UsageFooter";
+import { WorkflowList } from "./components/WorkflowList";
 
 type AuthState = "checking" | "required" | "ok";
+type Tab = "sessions" | "workflows";
 
 const PAGE_SIZE = 50;
 
@@ -19,6 +21,7 @@ function isNoOpSession(s: {
 }
 
 function Dashboard() {
+  const [tab, setTab] = useState<Tab>("sessions");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [userSelected, setUserSelected] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
@@ -156,26 +159,44 @@ function Dashboard() {
         onQueryChange={setQuery}
         streamStatus={status}
       />
-      <div className="flex flex-1 overflow-hidden">
-        <SessionList
-          sessions={filteredSessions}
-          error={error}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          query={debouncedQuery}
-          onLoadMore={() => setLimit((l) => l + PAGE_SIZE)}
-          totalAvailable={sessions.length}
-          showLiveOnly={showLiveOnly}
-        />
-        <MessageFeed
-          sessionId={selectedId}
-          order={order}
-          onOrderChange={setOrder}
-          searchQuery={debouncedQuery}
-          isLive={selectedSession?.live}
-          onTerminate={handleTerminate}
-        />
+      <div className="flex border-b border-base-300 bg-base-200/60 px-4 gap-1">
+        <button
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "sessions" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
+          onClick={() => setTab("sessions")}
+        >
+          Sessions
+        </button>
+        <button
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "workflows" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
+          onClick={() => setTab("workflows")}
+        >
+          Workflows
+        </button>
       </div>
+      {tab === "sessions" ? (
+        <div className="flex flex-1 overflow-hidden">
+          <SessionList
+            sessions={filteredSessions}
+            error={error}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            query={debouncedQuery}
+            onLoadMore={() => setLimit((l) => l + PAGE_SIZE)}
+            totalAvailable={sessions.length}
+            showLiveOnly={showLiveOnly}
+          />
+          <MessageFeed
+            sessionId={selectedId}
+            order={order}
+            onOrderChange={setOrder}
+            searchQuery={debouncedQuery}
+            isLive={selectedSession?.live}
+            onTerminate={handleTerminate}
+          />
+        </div>
+      ) : (
+        <WorkflowList />
+      )}
       <UsageFooter />
     </div>
   );
