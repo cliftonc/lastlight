@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { randomUUID } from "crypto";
 import { createTaskSandbox, type DockerSandbox } from "../sandbox/index.js";
-import { refreshGitAuth } from "./git-auth.js";
+import { refreshGitAuth, type GitHubTokenPermissions } from "./git-auth.js";
 
 /** Default directory for agent context files (soul, rules, etc.) */
 const AGENT_CONTEXT_DIR = resolve("agent-context");
@@ -54,6 +54,46 @@ export interface ExecutionResult {
   stopReason?: string;
 }
 
+export type GitAccessProfile = "read" | "issues-write" | "review-write" | "repo-write";
+
+export interface GitSandboxAccess {
+  owner: string;
+  repo: string;
+  profile: GitAccessProfile;
+  /**
+   * When true, sandbox MCP can mint/refresh tokens using the app PEM.
+   * Leave false for lower-trust runs to keep private key material inaccessible.
+   */
+  allowMcpAppAuth?: boolean;
+}
+
+const GITHUB_PERMISSION_PROFILES: Record<GitAccessProfile, GitHubTokenPermissions> = {
+  read: {
+    contents: "read",
+    issues: "read",
+    pull_requests: "read",
+    metadata: "read",
+  },
+  "issues-write": {
+    contents: "read",
+    issues: "write",
+    pull_requests: "read",
+    metadata: "read",
+  },
+  "review-write": {
+    contents: "read",
+    issues: "write",
+    pull_requests: "write",
+    metadata: "read",
+  },
+  "repo-write": {
+    contents: "write",
+    issues: "write",
+    pull_requests: "write",
+    metadata: "read",
+  },
+};
+
 /**
  * Load all .md files from the agent-context directory and concatenate
  * them into a single system prompt string.
@@ -92,6 +132,8 @@ export async function executeAgent(
      * onto the in-flight DB row so the dashboard can show live logs.
      */
     onSessionId?: (sessionId: string) => void;
+    /** Optional per-run GitHub token policy for sandbox tooling. */
+    githubAccess?: GitSandboxAccess;
   },
 ): Promise<ExecutionResult> {
   const taskId = opts?.taskId || `task-${randomUUID().slice(0, 8)}`;
@@ -99,16 +141,31 @@ export async function executeAgent(
 
   // Generate a fresh GitHub App token for the sandbox so git works immediately
   const env: Record<string, string> = {};
+  const access = opts?.githubAccess;
   if (process.env.GITHUB_APP_ID) {
-    env.GITHUB_APP_ID = process.env.GITHUB_APP_ID;
-    env.GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID || "";
+    const allowMcpAppAuth = access?.allowMcpAppAuth === true;
+    env.ALLOW_APP_PEM = allowMcpAppAuth ? "1" : "0";
+    env.GITHUB_APP_ID = allowMcpAppAuth ? process.env.GITHUB_APP_ID : "";
+    env.GITHUB_APP_INSTALLATION_ID = allowMcpAppAuth
+      ? (process.env.GITHUB_APP_INSTALLATION_ID || "")
+      : "";
+    // sandbox-entrypoint materializes app.pem at this path only when ALLOW_APP_PEM=1
+    env.GITHUB_APP_PRIVATE_KEY_PATH = allowMcpAppAuth ? "/home/agent/.claude/app.pem" : "";
+
     try {
+      const permissions = access ? GITHUB_PERMISSION_PROFILES[access.profile] : undefined;
+      const repositories = access ? [access.repo] : undefined;
       const { token } = await refreshGitAuth({
         appId: process.env.GITHUB_APP_ID,
         privateKeyPath: process.env.GITHUB_APP_PRIVATE_KEY_PATH || "",
         installationId: process.env.GITHUB_APP_INSTALLATION_ID || "",
+        permissions,
+        repositories,
       });
+      // Git CLI helper inside the sandbox
       env.GIT_TOKEN = token;
+      // MCP GitHub server static-token mode
+      env.GITHUB_TOKEN = token;
     } catch (err: any) {
       console.warn(`[executor] Could not generate git token: ${err.message}`);
     }

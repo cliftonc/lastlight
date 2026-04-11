@@ -45,6 +45,18 @@ export interface SimpleWorkflowRequest {
   extra?: Record<string, unknown>;
 }
 
+function workflowScopedTaskId(
+  repo: string,
+  number: number | undefined,
+  workflowName: string,
+  workflowId: string,
+): string {
+  const suffix = workflowId.slice(0, 8);
+  return number !== undefined
+    ? `${repo}-${number}-${workflowName}-${suffix}`
+    : `${repo}-${workflowName}-${suffix}`;
+}
+
 /**
  * Run a named agent workflow against a target.
  *
@@ -74,12 +86,6 @@ export async function runSimpleWorkflow(
     ? `${owner}/${repo}#${number}`
     : `${owner}/${repo}::${workflowName}`;
 
-  // Per-task ID — used for sandbox container naming and as a stable handle
-  // across resume attempts.
-  const taskId = number !== undefined
-    ? `${repo}-${number}-${workflowName}`
-    : `${repo}-${workflowName}-${randomUUID().slice(0, 8)}`;
-
   const branch = number !== undefined
     ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
     : `lastlight/${workflowName}`;
@@ -100,13 +106,18 @@ export async function runSimpleWorkflow(
   // to the `else` branch, creating a new workflow_run_id and a new set of
   // dedup-scoped executions.
   let workflowId: string;
+  let taskId: string;
   const existingRun = db.getWorkflowRunByTrigger(triggerId);
   if (existingRun && existingRun.workflowName === workflowName) {
     workflowId = existingRun.id;
+    const stored = (existingRun.context || {}) as Record<string, unknown>;
+    taskId = (stored.taskId as string | undefined) ||
+      workflowScopedTaskId(repo, number, workflowName, workflowId);
     const handled = await handleExistingRun(existingRun, definition, notify, db);
     if (handled) return handled;
   } else {
     workflowId = randomUUID();
+    taskId = workflowScopedTaskId(repo, number, workflowName, workflowId);
     db.createWorkflowRun({
       id: workflowId,
       workflowName,

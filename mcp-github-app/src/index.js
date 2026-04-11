@@ -12,15 +12,27 @@ import { GitHubClient } from "./github.js";
 const appId = process.env.GITHUB_APP_ID;
 const privateKeyPath = process.env.GITHUB_APP_PRIVATE_KEY_PATH;
 const installationId = process.env.GITHUB_APP_INSTALLATION_ID;
+const staticToken = process.env.GITHUB_TOKEN;
 
-if (!appId || !privateKeyPath || !installationId) {
+const hasAppCreds = Boolean(appId && privateKeyPath && installationId);
+
+if (!staticToken && !hasAppCreds) {
   console.error(
-    "Required env vars: GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH, GITHUB_APP_INSTALLATION_ID"
+    "Required auth env vars: either GITHUB_TOKEN or all of GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH, GITHUB_APP_INSTALLATION_ID"
   );
   process.exit(1);
 }
 
-const auth = new GitHubAppAuth({ appId, privateKeyPath, installationId });
+const auth = staticToken
+  ? {
+      async getToken() {
+        return staticToken;
+      },
+      get expiresAt() {
+        return null;
+      },
+    }
+  : new GitHubAppAuth({ appId, privateKeyPath, installationId });
 const gh = new GitHubClient(auth);
 
 // ── MCP Server ──────────────────────────────────────────────────────

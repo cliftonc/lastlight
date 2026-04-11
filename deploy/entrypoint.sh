@@ -31,6 +31,7 @@ chown -R lastlight:lastlight "$STATE_DIR"
 for pem in "$SECRETS"/*.pem; do
   if [ -f "$pem" ]; then
     cp "$pem" "$STATE_DIR/secrets/app.pem"
+    chmod 600 "$STATE_DIR/secrets/app.pem"
     echo "Copied PEM to data volume for sandbox access"
     break
   fi

@@ -3,6 +3,19 @@ import { createSign } from "crypto";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
+export type GitHubPermissionLevel = "read" | "write";
+
+/**
+ * Subset of GitHub App installation-token permissions supported by Last Light.
+ * Any omitted permission inherits the app's installation defaults.
+ */
+export type GitHubTokenPermissions = Partial<{
+  contents: GitHubPermissionLevel;
+  issues: GitHubPermissionLevel;
+  pull_requests: GitHubPermissionLevel;
+  metadata: GitHubPermissionLevel;
+}>;
+
 /**
  * When true, all `git config --global` writes are skipped. The harness still
  * mints installation tokens and passes them to sandboxes via the GIT_TOKEN env
@@ -34,6 +47,13 @@ export async function configureGitAuth(config: {
   privateKeyPath: string;
   installationId: string;
   botName?: string;
+  /**
+   * Optional repository-name allowlist for the minted installation token.
+   * Names are repo names within the installation owner (e.g. ["lastlight"]).
+   */
+  repositories?: string[];
+  /** Optional per-token permission downscoping. */
+  permissions?: GitHubTokenPermissions;
 }): Promise<{ token: string; expiresAt: string }> {
   const token = await getInstallationToken(config);
 
@@ -69,6 +89,13 @@ export async function refreshGitAuth(config: {
   appId: string;
   privateKeyPath: string;
   installationId: string;
+  /**
+   * Optional repository-name allowlist for the minted installation token.
+   * Names are repo names within the installation owner (e.g. ["lastlight"]).
+   */
+  repositories?: string[];
+  /** Optional per-token permission downscoping. */
+  permissions?: GitHubTokenPermissions;
 }): Promise<{ token: string; expiresAt: string }> {
   const token = await getInstallationToken(config);
 
@@ -89,6 +116,8 @@ async function getInstallationToken(config: {
   appId: string;
   privateKeyPath: string;
   installationId: string;
+  repositories?: string[];
+  permissions?: GitHubTokenPermissions;
 }): Promise<{ token: string; expiresAt: string }> {
   const privateKey = readFileSync(resolve(config.privateKeyPath), "utf-8");
 
@@ -102,6 +131,15 @@ async function getInstallationToken(config: {
   const jwtToken = `${header}.${payload}.${signature}`;
 
   // Exchange for installation token
+  const requestBody: Record<string, unknown> = {};
+  if (config.repositories && config.repositories.length > 0) {
+    requestBody.repositories = config.repositories;
+  }
+  if (config.permissions && Object.keys(config.permissions).length > 0) {
+    requestBody.permissions = config.permissions;
+  }
+  const hasRequestBody = Object.keys(requestBody).length > 0;
+
   const res = await fetch(
     `https://api.github.com/app/installations/${config.installationId}/access_tokens`,
     {
@@ -109,7 +147,9 @@ async function getInstallationToken(config: {
       headers: {
         Authorization: `Bearer ${jwtToken}`,
         Accept: "application/vnd.github+json",
+        ...(hasRequestBody ? { "Content-Type": "application/json" } : {}),
       },
+      body: hasRequestBody ? JSON.stringify(requestBody) : undefined,
     }
   );
 

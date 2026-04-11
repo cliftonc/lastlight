@@ -87,9 +87,9 @@ else
   echo "Run \`claude /login\` first." >&2
   exit 1
 fi
-# Make credentials world-readable so the agent user inside the sandbox can
-# read the file via the bind mount regardless of host UID translation.
-chmod 644 "$LOCAL_CLAUDE_HOME/.credentials.json"
+# Keep credentials owner-readable on host; sandbox-entrypoint adjusts read
+# permissions inside the container as needed.
+chmod 600 "$LOCAL_CLAUDE_HOME/.credentials.json"
 
 # Optional secondary config files — copy if present, otherwise skip
 if [ -f "$HOST_CLAUDE_HOME/.claude.json" ]; then
@@ -113,7 +113,7 @@ fi
 if [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] && [ -f "$GITHUB_APP_PRIVATE_KEY_PATH" ]; then
   echo "[dev-local] Seeding GitHub App PEM from $GITHUB_APP_PRIVATE_KEY_PATH"
   cp "$GITHUB_APP_PRIVATE_KEY_PATH" "$LOCAL_SECRETS/app.pem"
-  chmod 644 "$LOCAL_SECRETS/app.pem"
+  chmod 600 "$LOCAL_SECRETS/app.pem"
 else
   echo "WARNING: GITHUB_APP_PRIVATE_KEY_PATH not set or file not found." >&2
   echo "         The in-sandbox GitHub MCP server will fail to start." >&2

@@ -5,8 +5,9 @@
       "args": ["/app/mcp-github-app/src/index.js"],
       "env": {
         "GITHUB_APP_ID": "${GITHUB_APP_ID}",
-        "GITHUB_APP_PRIVATE_KEY_PATH": "/data/secrets/app.pem",
-        "GITHUB_APP_INSTALLATION_ID": "${GITHUB_APP_INSTALLATION_ID}"
+        "GITHUB_APP_PRIVATE_KEY_PATH": "${GITHUB_APP_PRIVATE_KEY_PATH}",
+        "GITHUB_APP_INSTALLATION_ID": "${GITHUB_APP_INSTALLATION_ID}",
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
       }
     }
   }

@@ -31,6 +31,18 @@ function parseTriggerId(triggerId: string): { owner: string; repo: string } | nu
   return { owner, repo };
 }
 
+function workflowScopedTaskId(
+  repo: string,
+  issueNumber: number | undefined,
+  workflowName: string,
+  workflowRunId: string,
+): string {
+  const suffix = workflowRunId.slice(0, 8);
+  return issueNumber !== undefined
+    ? `${repo}-${issueNumber}-${workflowName}-${suffix}`
+    : `${repo}-${workflowName}-${suffix}`;
+}
+
 /**
  * Refetch the issue title/body/labels from GitHub so the resumed workflow
  * has fresh context (the user may have edited the issue while the harness
@@ -128,7 +140,7 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
   // back to deterministic defaults if the row is older than that change.
   const stored = (run.context || {}) as Record<string, unknown>;
   const taskId = (stored.taskId as string | undefined) ??
-    (issueNumber ? `${repo}-${issueNumber}-${run.workflowName}` : `${repo}-${run.workflowName}`);
+    workflowScopedTaskId(repo, issueNumber, run.workflowName, run.id);
   const branch = (stored.branch as string | undefined) ??
     (issueNumber
       ? `lastlight/${issueNumber}-${slugify(issue.title || `issue-${issueNumber}`)}`

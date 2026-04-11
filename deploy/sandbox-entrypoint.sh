@@ -19,6 +19,21 @@ chown agent:agent "$AGENT_HOME/.claude"
 # Skills: direct symlink to baked-in path
 ln -sfn /app/skills "$AGENT_HOME/.claude/skills"
 
+# Keep the shared app PEM unreadable by the unprivileged agent by default.
+if [ -f /data/secrets/app.pem ]; then
+  chmod 600 /data/secrets/app.pem 2>/dev/null || true
+fi
+
+# Optionally materialize an agent-readable PEM for high-trust runs only.
+if [ "${ALLOW_APP_PEM:-0}" = "1" ] && [ -f /data/secrets/app.pem ]; then
+  cp /data/secrets/app.pem "$AGENT_HOME/.claude/app.pem"
+  chown agent:agent "$AGENT_HOME/.claude/app.pem"
+  chmod 600 "$AGENT_HOME/.claude/app.pem"
+  export GITHUB_APP_PRIVATE_KEY_PATH="$AGENT_HOME/.claude/app.pem"
+else
+  export GITHUB_APP_PRIVATE_KEY_PATH=""
+fi
+
 # Auth: link children of shared claude-home (sessions, settings, etc.)
 if [ -d /data/claude-home ]; then
   # Ensure auth files are readable by agent (they may be owned by a different user)
@@ -43,7 +58,7 @@ cat /app/agent-context/*.md > "$WORKSPACE/CLAUDE.md" 2>/dev/null || true
 chown agent:agent "$WORKSPACE/CLAUDE.md" 2>/dev/null || true
 
 # ── MCP config from template ──
-envsubst '$GITHUB_APP_ID $GITHUB_APP_INSTALLATION_ID' \
+envsubst '$GITHUB_APP_ID $GITHUB_APP_INSTALLATION_ID $GITHUB_APP_PRIVATE_KEY_PATH $GITHUB_TOKEN' \
   < /app/mcp-config.tmpl.json > "$WORKSPACE/.mcp.json"
 chown agent:agent "$WORKSPACE/.mcp.json"
 

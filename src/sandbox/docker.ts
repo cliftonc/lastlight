@@ -1,7 +1,7 @@
 import { execFileSync, execFile as execFileCb, spawn } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { randomUUID } from "crypto";
 
 const execFileAsync = promisify(execFileCb);
@@ -252,8 +252,20 @@ export class DockerSandbox {
       const content = readFileSync(gitPath, "utf-8").trim();
       const match = content.match(/^gitdir:\s*(.+)$/);
       if (match) {
-        const gitdirPath = match[1];
+        // Resolve relative to the .git file location (not process cwd).
+        const gitdirPath = resolve(dirname(gitPath), match[1]);
         const parentGitDir = resolve(gitdirPath, "..", "..");
+        const sandboxRoot = resolve(worktreePath, "..");
+        if (!isSubpath(sandboxRoot, parentGitDir)) {
+          console.warn(
+            `[sandbox] Blocking unsafe gitdir mount outside sandbox root: ${parentGitDir}`,
+          );
+          return [];
+        }
+        if (!existsSync(parentGitDir)) {
+          console.warn(`[sandbox] Skipping missing gitdir parent mount: ${parentGitDir}`);
+          return [];
+        }
         return [
           `${gitPath}:${gitPath}`,
           `${parentGitDir}:${parentGitDir}`,
@@ -261,7 +273,8 @@ export class DockerSandbox {
       }
     } catch { /* fall through */ }
 
-    return [`${gitPath}:${gitPath}`];
+    // Normal repo clone with a real .git directory needs no extra mount.
+    return [];
   }
 }
 
@@ -275,6 +288,11 @@ function execCmd(cmd: string, args: string[], opts?: { timeout?: number }): stri
 
 function execSafe(cmd: string, args: string[]): void {
   try { execFileSync(cmd, args, { stdio: "ignore" }); } catch { /* ignore */ }
+}
+
+function isSubpath(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /**

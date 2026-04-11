@@ -1,7 +1,6 @@
 import { execFileSync } from "child_process";
 import { mkdirSync, writeFileSync, chmodSync } from "fs";
-import { join, resolve } from "path";
-import { randomUUID } from "crypto";
+import { join, resolve, sep } from "path";
 import { DockerSandbox } from "./docker.js";
 
 export { DockerSandbox } from "./docker.js";
@@ -133,6 +132,10 @@ export function sandboxAvailable(): boolean {
   return _sandboxAvailable;
 }
 
+function isWithinDir(parent: string, child: string): boolean {
+  return child === parent || child.startsWith(`${parent}${sep}`);
+}
+
 /**
  * Create a sandbox for a task. Returns the sandbox and a cleanup function.
  * If Docker is not available, returns null (caller should fall back to direct execution).
@@ -150,8 +153,14 @@ export async function createTaskSandbox(opts: {
   // during long dev sessions). No-op in production.
   refreshLocalDevCredentials();
 
-  const sandboxBase = opts.sandboxDir || join(opts.stateDir, "sandboxes");
-  const workDir = join(sandboxBase, opts.taskId);
+  const sandboxBase = resolve(opts.sandboxDir || join(opts.stateDir, "sandboxes"));
+  mkdirSync(sandboxBase, { recursive: true });
+
+  const workDir = resolve(sandboxBase, opts.taskId);
+  if (!isWithinDir(sandboxBase, workDir)) {
+    throw new Error(`Invalid taskId path escape attempt: ${opts.taskId}`);
+  }
+
   mkdirSync(workDir, { recursive: true });
 
   const sandbox = new DockerSandbox({
