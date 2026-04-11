@@ -116,6 +116,12 @@ Pre-existing, not introduced by this PR. Noted for completeness: `localStorage` 
 - The `if (!cancelled) setSlackOAuth(oauthEnabled)` check on `App.tsx:357` is redundant — the `if (cancelled) return` guard on line 356 already ensures cancelled is false at that point.
 - `slackOAuthRedirectUri` is optional in `AdminConfig` but the executor summary says it is a required env var for Slack OAuth to work. The type could reflect this as required when `slackOAuthClientId` and `slackOAuthClientSecret` are set, though TypeScript's structural types make conditional-required fields awkward.
 
+## Re-review after Fix Cycle 1
+
+VERDICT: APPROVED
+
+All three important issues raised in the initial review were correctly addressed. The state cookie is now deleted immediately after reading in the callback handler (`deleteCookie` called before any further processing), closing the replay window. The auth middleware bypass was tightened from `path.includes("/oauth/slack/")` to two `path.endsWith(...)` checks against the exact route suffixes. Raw error detail is no longer returned to clients — both 502 paths now log server-side via `console.error` and return only the generic error string. All 231 tests continue to pass with no regressions.
+
 ## Test Results
 
 ```
