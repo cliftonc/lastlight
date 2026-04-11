@@ -201,28 +201,37 @@ export function unwrapLine(raw: Record<string, unknown>): JsonlMessage[] {
   return [];
 }
 
+/**
+ * Which on-disk slice of `claude-home/projects` a SessionReader exposes.
+ *
+ * - `sandbox`: every project dir EXCEPT `-app`. These are workflow runs that
+ *   executed inside a per-task docker sandbox; they're what the "Sessions"
+ *   tab has historically shown.
+ * - `chat`: ONLY `-app`. These are in-process Agent SDK runs from the host
+ *   harness (cwd `/app`) — primarily the chat skill responding to Slack DMs
+ *   and threads. Surfaced separately so the chat stream doesn't pollute the
+ *   workflow session list.
+ */
+export type SessionReaderScope = "sandbox" | "chat";
+
 export class SessionReader {
   private claudeHomeDir: string;
+  private scope: SessionReaderScope;
   private metaCache = new Map<string, { meta: SessionMeta; cachedAt: number }>();
   private static CACHE_TTL_MS = 10_000; // 10s cache for session metadata
 
-  constructor(claudeHomeDir: string) {
+  constructor(claudeHomeDir: string, scope: SessionReaderScope = "sandbox") {
     this.claudeHomeDir = claudeHomeDir;
+    this.scope = scope;
   }
 
-  /** Find all project directories under claude-home/projects/.
-   *
-   *  Only sandbox sessions are surfaced — i.e. project dirs derived from a
-   *  sandbox workspace cwd (e.g. /home/agent/workspace -> -home-agent-workspace).
-   *  Host-process sessions (cwd /app -> -app) are excluded so the dashboard
-   *  isn't polluted by capacity-check stubs or other in-process work.
-   */
+  /** Find the project directories this reader is scoped to. See SessionReaderScope. */
   private projectDirs(): string[] {
     const projectsDir = path.join(this.claudeHomeDir, "projects");
     try {
       return fs
         .readdirSync(projectsDir)
-        .filter((name) => name !== "-app")
+        .filter((name) => (this.scope === "chat" ? name === "-app" : name !== "-app"))
         .map((d) => path.join(projectsDir, d))
         .filter((p) => fs.statSync(p).isDirectory());
     } catch {

@@ -11,8 +11,9 @@ export { type AdminConfig } from "./routes.js";
  * This mounts directly so paths like /admin/assets/* resolve correctly.
  */
 export function mountAdmin(app: Hono, db: StateDb, config: AdminConfig): void {
-  const sessions = new SessionReader(config.sessionsDir);
-  const apiRoutes = createAdminRoutes(db, sessions, config);
+  const sessions = new SessionReader(config.sessionsDir, "sandbox");
+  const chatSessions = new SessionReader(config.sessionsDir, "chat");
+  const apiRoutes = createAdminRoutes(db, sessions, chatSessions, config);
 
   // API at /admin/api/*
   app.route("/admin/api", apiRoutes);

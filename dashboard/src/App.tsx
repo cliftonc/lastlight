@@ -22,11 +22,16 @@ import {
 } from "./hooks/useUrlState";
 
 type AuthState = "checking" | "required" | "ok";
-type Tab = "home" | "sessions" | "workflows";
+type Tab = "home" | "sessions" | "chat-sessions" | "workflows";
 
 const PAGE_SIZE = 50;
 
-const TABS = ["home", "workflows", "sessions"] as const;
+const TABS = ["home", "workflows", "sessions", "chat-sessions"] as const;
+
+const SESSION_SOURCE_PATHS: Record<"sessions" | "chat-sessions", string> = {
+  sessions: "/admin/api/sessions",
+  "chat-sessions": "/admin/api/chat-sessions",
+};
 const TIME_RANGES = ["hour", "day", "week", "all", "live"] as const;
 
 function isNoOpSession(s: {
@@ -88,7 +93,19 @@ function Dashboard() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const { sessions, status, error } = useSessionStream(limit);
+  // Both Sessions and Chat Sessions tabs share the same UI; only the on-disk
+  // source path differs. The hook re-subscribes when sourcePath changes.
+  const sessionSourcePath =
+    tab === "chat-sessions" ? SESSION_SOURCE_PATHS["chat-sessions"] : SESSION_SOURCE_PATHS.sessions;
+  const isChatSessionsTab = tab === "chat-sessions";
+  const { sessions, status, error } = useSessionStream(limit, sessionSourcePath);
+
+  // Selected session id is per-source — switching tabs should clear it so we
+  // don't try to render a sandbox session id against the chat stream.
+  useEffect(() => {
+    setSelectedId(null);
+    setUserSelected(false);
+  }, [sessionSourcePath]);
 
   const availableSources = useMemo(
     () => Array.from(new Set(sessions.map((s) => s.sessionType || "agent"))).sort(),
@@ -252,7 +269,13 @@ function Dashboard() {
           className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "sessions" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
           onClick={() => setTab("sessions")}
         >
-          Sessions
+          Sandbox Sessions
+        </button>
+        <button
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 -mb-px ${tab === "chat-sessions" ? "border-primary text-primary" : "border-transparent text-base-content/50 hover:text-base-content/80"}`}
+          onClick={() => setTab("chat-sessions")}
+        >
+          Chat Sessions
         </button>
       </div>
       {tab === "home" ? (
@@ -267,7 +290,7 @@ function Dashboard() {
             setTab("workflows");
           }}
         />
-      ) : tab === "sessions" ? (
+      ) : tab === "sessions" || tab === "chat-sessions" ? (
         <div className="flex flex-col flex-1 overflow-hidden">
           <SessionFilters
             availableSources={availableSources}
@@ -291,11 +314,14 @@ function Dashboard() {
             />
             <MessageFeed
               sessionId={selectedId}
+              sourcePath={sessionSourcePath}
               order={order}
               onOrderChange={setOrder}
               searchQuery={debouncedQuery}
               isLive={selectedSession?.live}
-              onTerminate={handleTerminate}
+              // Chat sessions are in-process and have no docker container to
+              // terminate. Hide the kill button for that tab.
+              onTerminate={isChatSessionsTab ? undefined : handleTerminate}
             />
           </div>
         </div>

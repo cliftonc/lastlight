@@ -35,45 +35,15 @@ function isSessionLive(meta: SessionMeta, liveTaskIds: Set<string | null>): bool
   return true;
 }
 
-export function createAdminRoutes(
-  db: StateDb,
-  sessions: SessionReader,
-  config: AdminConfig,
-): Hono {
-  const app = new Hono();
-
-  // Auth middleware
-  app.use("/*", authMiddleware(config.adminPassword, config.adminSecret));
-
-  // Auth endpoints
-  app.get("/auth-required", (c) => {
-    return c.json({ required: Boolean(config.adminPassword) });
-  });
-
-  app.post("/login", async (c) => {
-    if (!config.adminPassword) {
-      return c.json({ token: createToken(config.adminSecret), authDisabled: true });
-    }
-    const body = await c.req.json<{ password?: string }>();
-    if (typeof body.password !== "string") {
-      return c.json({ error: "password required" }, 400);
-    }
-    const a = Buffer.from(body.password);
-    const b = Buffer.from(config.adminPassword);
-    const ok = a.length === b.length && timingSafeEqual(a, b);
-    if (!ok) {
-      return c.json({ error: "invalid password" }, 401);
-    }
-    return c.json({ token: createToken(config.adminSecret) });
-  });
-
-  // Health
-  app.get("/health", (c) => {
-    return c.json({ status: "ok", stateDir: config.stateDir });
-  });
-
+/**
+ * Mount the read/list/stream endpoints for a SessionReader under a given
+ * route prefix on `app`. The same handler shape is reused for the workflow
+ * "Sessions" tab (sandbox-scoped reader at `/sessions`) and the chat tab
+ * (in-process Agent SDK runs at `/chat-sessions`).
+ */
+function mountSessionRoutes(app: Hono, sessions: SessionReader, prefix: string): void {
   // Session list — enriched with live container status
-  app.get("/sessions", async (c) => {
+  app.get(`${prefix}`, async (c) => {
     const limit = Number(c.req.query("limit") ?? 200);
     const allIds = sessions.listSessionIds();
     const [metas, containers] = await Promise.all([
@@ -90,11 +60,11 @@ export function createAdminRoutes(
   });
 
   // Session list SSE stream
-  app.get("/sessions/stream", (c) => {
+  app.get(`${prefix}/stream`, (c) => {
     const limit = Number(c.req.query("limit") ?? 200);
 
     return streamSSE(c, async (stream) => {
-      let prevSig = "";
+      let prevSig: string | null = null; // null = nothing sent yet (covers empty-list initial push)
       let stopped = false;
 
       stream.onAbort(() => { stopped = true; });
@@ -133,7 +103,7 @@ export function createAdminRoutes(
   });
 
   // Single session
-  app.get("/sessions/:id", async (c) => {
+  app.get(`${prefix}/:id`, async (c) => {
     const id = c.req.param("id");
     if (sessions.exists(id)) {
       const meta = await sessions.getSessionMeta(id);
@@ -143,7 +113,7 @@ export function createAdminRoutes(
   });
 
   // Messages for a session
-  app.get("/sessions/:id/messages", async (c) => {
+  app.get(`${prefix}/:id/messages`, async (c) => {
     const id = c.req.param("id");
     const sinceIndex = Number(c.req.query("since") ?? -1);
 
@@ -160,7 +130,7 @@ export function createAdminRoutes(
   });
 
   // Live message stream for a session
-  app.get("/sessions/:id/stream", async (c) => {
+  app.get(`${prefix}/:id/stream`, async (c) => {
     const id = c.req.param("id");
     const sinceIndex = Number(c.req.query("since") ?? -1);
 
@@ -212,6 +182,51 @@ export function createAdminRoutes(
       tailer.stop();
     });
   });
+}
+
+export function createAdminRoutes(
+  db: StateDb,
+  sessions: SessionReader,
+  chatSessions: SessionReader,
+  config: AdminConfig,
+): Hono {
+  const app = new Hono();
+
+  // Auth middleware
+  app.use("/*", authMiddleware(config.adminPassword, config.adminSecret));
+
+  // Auth endpoints
+  app.get("/auth-required", (c) => {
+    return c.json({ required: Boolean(config.adminPassword) });
+  });
+
+  app.post("/login", async (c) => {
+    if (!config.adminPassword) {
+      return c.json({ token: createToken(config.adminSecret), authDisabled: true });
+    }
+    const body = await c.req.json<{ password?: string }>();
+    if (typeof body.password !== "string") {
+      return c.json({ error: "password required" }, 400);
+    }
+    const a = Buffer.from(body.password);
+    const b = Buffer.from(config.adminPassword);
+    const ok = a.length === b.length && timingSafeEqual(a, b);
+    if (!ok) {
+      return c.json({ error: "invalid password" }, 401);
+    }
+    return c.json({ token: createToken(config.adminSecret) });
+  });
+
+  // Health
+  app.get("/health", (c) => {
+    return c.json({ status: "ok", stateDir: config.stateDir });
+  });
+
+  // Workflow / sandbox sessions and chat (in-process Agent SDK) sessions both
+  // expose the same five endpoints, just under different prefixes and backed
+  // by different on-disk slices.
+  mountSessionRoutes(app, sessions, "/sessions");
+  mountSessionRoutes(app, chatSessions, "/chat-sessions");
 
   // Stats — running count uses live Docker containers, not stale DB records
   app.get("/stats", async (c) => {

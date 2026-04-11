@@ -16,6 +16,8 @@ interface Props {
   searchQuery: string;
   isLive?: boolean;
   onTerminate?: () => Promise<void>;
+  /** API base path for the session source. Defaults to /admin/api/sessions. */
+  sourcePath?: string;
 }
 
 const STATUS_DOT: Record<StreamStatus, string> = {
@@ -34,8 +36,8 @@ function isUserMessage(item: TimelineItemT): boolean {
   return !isToolPair(item) && item.message.type === "user";
 }
 
-export function MessageFeed({ sessionId, order, onOrderChange, searchQuery, isLive, onTerminate }: Props) {
-  const { messages, status, error, newIds } = useMessageStream(sessionId);
+export function MessageFeed({ sessionId, order, onOrderChange, searchQuery, isLive, onTerminate, sourcePath }: Props) {
+  const { messages, status, error, newIds } = useMessageStream(sessionId, sourcePath);
   const [showConfirm, setShowConfirm] = useState(false);
   const [terminating, setTerminating] = useState(false);
 

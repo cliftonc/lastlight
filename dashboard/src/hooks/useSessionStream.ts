@@ -3,12 +3,26 @@ import { auth, type Session } from "../api";
 
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "closed";
 
-export function useSessionStream(limit: number) {
+/**
+ * @param sourcePath base path of the session source on the admin API.
+ *   Defaults to `/admin/api/sessions` (sandbox/workflow runs); pass
+ *   `/admin/api/chat-sessions` for the in-process chat skill stream.
+ */
+export function useSessionStream(
+  limit: number,
+  sourcePath: string = "/admin/api/sessions",
+) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [status, setStatus] = useState<StreamStatus>("connecting");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Reset list whenever the source changes — otherwise the previously
+    // loaded sessions from the other source linger until the new stream
+    // pushes data, which it may never do if the new source is empty.
+    setSessions([]);
+    setStatus("connecting");
+
     let cancelled = false;
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -19,7 +33,7 @@ export function useSessionStream(limit: number) {
       const qs = new URLSearchParams();
       if (token) qs.set("token", token);
       qs.set("limit", String(limit));
-      const url = `/admin/api/sessions/stream?${qs}`;
+      const url = `${sourcePath}/stream?${qs}`;
 
       es = new EventSource(url);
 
@@ -64,7 +78,7 @@ export function useSessionStream(limit: number) {
       es?.close();
       setStatus("closed");
     };
-  }, [limit]);
+  }, [limit, sourcePath]);
 
   return { sessions, status, error };
 }

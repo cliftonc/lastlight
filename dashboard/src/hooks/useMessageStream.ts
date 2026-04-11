@@ -3,7 +3,15 @@ import { auth, type Message } from "../api";
 
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "closed";
 
-export function useMessageStream(sessionId: string | null) {
+/**
+ * @param sourcePath base path of the session source on the admin API.
+ *   Defaults to `/admin/api/sessions`; pass `/admin/api/chat-sessions` to
+ *   stream messages for an in-process chat-skill session instead.
+ */
+export function useMessageStream(
+  sessionId: string | null,
+  sourcePath: string = "/admin/api/sessions",
+) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<StreamStatus>("closed");
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +42,7 @@ export function useMessageStream(sessionId: string | null) {
       if (token) qs.set("token", token);
       const since = latestStreamedIdRef.current ?? -1;
       qs.set("since", String(since));
-      const url = `/admin/api/sessions/${encodeURIComponent(sessionId)}/stream?${qs}`;
+      const url = `${sourcePath}/${encodeURIComponent(sessionId)}/stream?${qs}`;
 
       es = new EventSource(url);
 
@@ -88,7 +96,7 @@ export function useMessageStream(sessionId: string | null) {
       es?.close();
       setStatus("closed");
     };
-  }, [sessionId]);
+  }, [sessionId, sourcePath]);
 
   return { messages, status, error, newIds };
 }
