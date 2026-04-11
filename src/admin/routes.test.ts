@@ -134,7 +134,11 @@ describe("GET /oauth/slack/callback", () => {
     // Mock fetch to return a different team
     const originalFetch = global.fetch;
     global.fetch = vi.fn(async () => new Response(
-      JSON.stringify({ ok: true, team: "other-team", team_id: "T99999" }),
+      JSON.stringify({
+        sub: "U99999",
+        "https://slack.com/team_id": "T99999",
+        "https://slack.com/team_domain": "other-team",
+      }),
       { headers: { "Content-Type": "application/json" } },
     ));
 
@@ -159,7 +163,11 @@ describe("GET /oauth/slack/callback", () => {
   it("redirects with token when workspace matches by team_id", async () => {
     const originalFetch = global.fetch;
     global.fetch = vi.fn(async () => new Response(
-      JSON.stringify({ ok: true, team: "my-team", team_id: "T00001" }),
+      JSON.stringify({
+        sub: "U00001",
+        "https://slack.com/team_id": "T00001",
+        "https://slack.com/team_domain": "my-team",
+      }),
       { headers: { "Content-Type": "application/json" } },
     ));
 
@@ -185,7 +193,11 @@ describe("GET /oauth/slack/callback", () => {
   it("redirects with token when no workspace restriction set", async () => {
     const originalFetch = global.fetch;
     global.fetch = vi.fn(async () => new Response(
-      JSON.stringify({ ok: true, team: "any-team", team_id: "TANY" }),
+      JSON.stringify({
+        sub: "UANY",
+        "https://slack.com/team_id": "TANY",
+        "https://slack.com/team_domain": "any-team",
+      }),
       { headers: { "Content-Type": "application/json" } },
     ));
 

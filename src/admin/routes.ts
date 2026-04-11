@@ -272,22 +272,38 @@ export function createAdminRoutes(
       const tokens = await slack.validateAuthorizationCode(code);
       const accessToken = tokens.accessToken();
 
-      // Fetch workspace info using Slack's auth.test API
-      const authTestRes = await fetch("https://slack.com/api/auth.test", {
+      // "Sign in with Slack" issues OIDC-scoped tokens (openid + profile),
+      // which Slack's classic auth.test endpoint rejects with invalid_auth.
+      // Use the OIDC userInfo endpoint instead — it returns a JWT-style
+      // payload with claims under namespaced URLs.
+      const userInfoRes = await fetch("https://slack.com/api/openid.connect.userInfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      const authTest = (await authTestRes.json()) as { ok: boolean; team?: string; team_id?: string; error?: string };
-      if (!authTest.ok) {
-        console.error("Slack auth.test failed:", authTest.error);
-        return c.json({ error: "Slack auth.test failed" }, 502);
+      const userInfo = (await userInfoRes.json()) as {
+        ok?: boolean;
+        error?: string;
+        sub?: string;
+        "https://slack.com/team_id"?: string;
+        "https://slack.com/team_domain"?: string;
+        "https://slack.com/user_id"?: string;
+      };
+      if (userInfo.ok === false) {
+        console.error("Slack openid.connect.userInfo failed:", userInfo.error);
+        return c.json({ error: "Slack userInfo failed" }, 502);
       }
+
+      const teamId = userInfo["https://slack.com/team_id"];
+      const teamDomain = userInfo["https://slack.com/team_domain"];
 
       // Workspace restriction check
       if (config.slackAllowedWorkspace) {
         const allowed = config.slackAllowedWorkspace;
-        const matchesId = authTest.team_id === allowed;
-        const matchesDomain = authTest.team === allowed;
+        const matchesId = teamId === allowed;
+        const matchesDomain = teamDomain === allowed;
         if (!matchesId && !matchesDomain) {
+          console.warn(
+            `[oauth] Slack login rejected: workspace ${teamDomain ?? teamId ?? "unknown"} not in allowlist (${allowed})`,
+          );
           return c.json({ error: "workspace not allowed" }, 403);
         }
       }
