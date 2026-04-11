@@ -410,9 +410,11 @@ describe("dailyStats", () => {
     }
   }
 
-  it("returns empty array when no executions exist", () => {
+  it("returns days rows of zeros when no executions exist", () => {
     const rows = db.dailyStats(30);
-    expect(rows).toEqual([]);
+    expect(rows).toHaveLength(30);
+    expect(rows.every((r) => r.executions === 0)).toBe(true);
+    expect(rows.every((r) => r.totalTokens === 0 && r.costUsd === 0)).toBe(true);
   });
 
   it("aggregates executions by date", () => {
@@ -423,7 +425,7 @@ describe("dailyStats", () => {
     insertExecution({ id: randomUUID(), startedAt: day2, success: true });
 
     const rows = db.dailyStats(30);
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(30);
 
     const d1 = rows.find((r) => r.date === "2026-04-09");
     const d2 = rows.find((r) => r.date === "2026-04-10");
@@ -474,8 +476,10 @@ describe("dailyStats", () => {
     insertExecution({ id: randomUUID(), startedAt: new Date().toISOString(), success: true });
 
     const rows = db.dailyStats(30);
-    // Only today's row should appear
-    expect(rows).toHaveLength(1);
+    // 30 daily rows (filled with zeros), with exactly one having an execution
+    expect(rows).toHaveLength(30);
+    const withExec = rows.filter((r) => r.executions > 0);
+    expect(withExec).toHaveLength(1);
   });
 
   it("orders results by date ascending", () => {
@@ -487,7 +491,7 @@ describe("dailyStats", () => {
     insertExecution({ id: randomUUID(), startedAt: d2, success: true });
 
     const rows = db.dailyStats(30);
-    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(rows).toHaveLength(30);
     const dates = rows.map((r) => r.date);
     const sorted = [...dates].sort();
     expect(dates).toEqual(sorted);

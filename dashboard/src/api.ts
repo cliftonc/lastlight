@@ -215,6 +215,8 @@ export const api = {
     ),
   stats: () => req<Stats>("/stats"),
   dailyStats: (days = 30) => req<{ daily: DailyStat[] }>(`/stats/daily?days=${days}`),
+  hourlyStats: (hours = 24) =>
+    req<{ hourly: DailyStat[] }>(`/stats/hourly?hours=${hours}`),
   executions: (opts: { limit?: number; offset?: number } = {}) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set("limit", String(opts.limit));

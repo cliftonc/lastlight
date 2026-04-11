@@ -1,20 +1,34 @@
 import { useEffect, useState } from "react";
 import {
   ResponsiveContainer,
-  BarChart,
-  Bar,
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
 } from "recharts";
 import { api, type WorkflowRun } from "../api";
-import { useDailyStats } from "../hooks/useDailyStats";
+import { useStatsSeries } from "../hooks/useDailyStats";
 import clsx from "clsx";
 
 type StatRange = "today" | "7d" | "30d";
+
+// Recharts can't resolve `hsl(var(--p))` because it parses fill strings
+// internally for tooltip swatches and gradients. Use literal hex matching
+// the daisyUI `lastlight` theme so the chart renders.
+const CHART = {
+  success: "#86efac",
+  error: "#fca5a5",
+  primary: "#7dd3fc",
+  secondary: "#c4b5fd",
+  accent: "#fcd34d",
+  info: "#67e8f9",
+  grid: "#21262d",
+  axis: "rgba(230, 237, 243, 0.45)",
+  tooltipBg: "#161b22",
+  tooltipBorder: "#21262d",
+};
 
 function timeAgo(iso: string): string {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -148,7 +162,13 @@ function LiveActivitySection({
   );
 }
 
-function RecentWorkflowsSection({ runs }: { runs: WorkflowRun[] }) {
+function RecentWorkflowsSection({
+  runs,
+  onSelect,
+}: {
+  runs: WorkflowRun[];
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="card bg-base-200 shadow-sm">
       <div className="card-body p-4">
@@ -169,20 +189,27 @@ function RecentWorkflowsSection({ runs }: { runs: WorkflowRun[] }) {
                   : `${Math.floor(durationMs / 60000)}m${Math.round((durationMs % 60000) / 1000)}s`
                 : null;
               return (
-                <div
+                <button
                   key={run.id}
-                  className="flex items-center gap-2 px-3 py-2 bg-base-100 rounded text-xs"
+                  onClick={() => onSelect(run.id)}
+                  className="flex items-center gap-2 px-3 py-2 bg-base-100 rounded text-xs w-full text-left hover:bg-base-300/60 transition-colors"
                 >
                   <StatusBadge status={run.status} />
-                  <span className="font-mono text-base-content/70 truncate flex-1">
-                    {run.repo ? `${run.repo}` : run.workflowName}
-                    {run.issueNumber ? `#${run.issueNumber}` : ""}
+                  <span className="font-mono text-base-content/90 shrink-0">
+                    {run.workflowName}
                   </span>
+                  {(run.repo || run.issueNumber) && (
+                    <span className="font-mono text-base-content/50 truncate flex-1">
+                      {run.repo ?? ""}
+                      {run.issueNumber ? `#${run.issueNumber}` : ""}
+                    </span>
+                  )}
+                  {!run.repo && !run.issueNumber && <span className="flex-1" />}
                   {duration && (
                     <span className="text-base-content/50 shrink-0">{duration}</span>
                   )}
                   <span className="text-base-content/40 shrink-0">{timeAgo(run.startedAt)}</span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -194,11 +221,12 @@ function RecentWorkflowsSection({ runs }: { runs: WorkflowRun[] }) {
 
 function StatsChartsSection() {
   const [range, setRange] = useState<StatRange>("7d");
-  const days = range === "today" ? 1 : range === "7d" ? 7 : 30;
-  const { daily, loading } = useDailyStats(days);
+  const granularity = range === "today" ? "hour" : "day";
+  const count = range === "today" ? 24 : range === "7d" ? 7 : 30;
+  const { series, loading } = useStatsSeries(granularity, count);
 
-  const summary = daily
-    ? daily.reduce(
+  const summary = series
+    ? series.reduce(
         (acc, d) => ({
           executions: acc.executions + d.executions,
           tokens: acc.tokens + d.totalTokens,
@@ -208,8 +236,10 @@ function StatsChartsSection() {
       )
     : null;
 
-  const chartData = daily?.map((d) => ({
-    date: d.date.slice(5), // MM-DD
+  const chartData = series?.map((d) => ({
+    // Hourly bucket key is `YYYY-MM-DDTHH` → render `HH:00`.
+    // Daily bucket key is `YYYY-MM-DD` → render `MM-DD`.
+    date: granularity === "hour" ? `${d.date.slice(11, 13)}:00` : d.date.slice(5),
     executions: d.executions,
     successes: d.successes,
     failures: d.failures,
@@ -275,54 +305,66 @@ function StatsChartsSection() {
           <div className="space-y-4">
             {/* Execution count bar chart */}
             <div>
-              <p className="text-xs text-base-content/50 mb-1 font-medium">Executions per day</p>
+              <p className="text-xs text-base-content/50 mb-1 font-medium">Executions per {granularity}</p>
               <ResponsiveContainer width="100%" height={120}>
-                <BarChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--b3))" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="hsl(var(--bc) / 0.3)" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--bc) / 0.3)" allowDecimals={false} />
+                <LineChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} />
+                  <YAxis tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} allowDecimals={false} />
                   <Tooltip
-                    contentStyle={{ fontSize: 11, background: "hsl(var(--b2))", border: "1px solid hsl(var(--b3))" }}
+                    contentStyle={{ fontSize: 11, background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}` }}
                   />
-                  <Bar dataKey="successes" stackId="a" fill="hsl(var(--su))" name="success" />
-                  <Bar dataKey="failures" stackId="a" fill="hsl(var(--er))" name="failure" />
-                </BarChart>
+                  <Line type="monotone" dataKey="successes" stroke={CHART.success} strokeWidth={2} dot={false} name="success" />
+                  <Line type="monotone" dataKey="failures" stroke={CHART.error} strokeWidth={2} dot={false} name="failure" />
+                </LineChart>
               </ResponsiveContainer>
             </div>
 
             {/* Token usage stacked area */}
             <div>
-              <p className="text-xs text-base-content/50 mb-1 font-medium">Token usage per day</p>
+              <p className="text-xs text-base-content/50 mb-1 font-medium">Token usage per {granularity}</p>
               <ResponsiveContainer width="100%" height={120}>
-                <AreaChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--b3))" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="hsl(var(--bc) / 0.3)" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--bc) / 0.3)" tickFormatter={formatTokens} />
+                <LineChart data={chartData} margin={{ top: 2, right: -10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} />
+                  <YAxis
+                    yAxisId="io"
+                    tick={{ fontSize: 10, fill: CHART.axis }}
+                    stroke={CHART.axis}
+                    tickFormatter={formatTokens}
+                  />
+                  <YAxis
+                    yAxisId="cache"
+                    orientation="right"
+                    tick={{ fontSize: 10, fill: CHART.axis }}
+                    stroke={CHART.axis}
+                    tickFormatter={formatTokens}
+                  />
                   <Tooltip
-                    contentStyle={{ fontSize: 11, background: "hsl(var(--b2))", border: "1px solid hsl(var(--b3))" }}
+                    contentStyle={{ fontSize: 11, background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}` }}
                     formatter={(v: number) => formatTokens(v)}
                   />
-                  <Area type="monotone" dataKey="inputTokens" stackId="t" fill="hsl(var(--p) / 0.4)" stroke="hsl(var(--p))" name="input" />
-                  <Area type="monotone" dataKey="outputTokens" stackId="t" fill="hsl(var(--s) / 0.4)" stroke="hsl(var(--s))" name="output" />
-                  <Area type="monotone" dataKey="cacheTokens" stackId="t" fill="hsl(var(--a) / 0.4)" stroke="hsl(var(--a))" name="cache" />
-                </AreaChart>
+                  <Line yAxisId="io" type="monotone" dataKey="inputTokens" stroke={CHART.primary} strokeWidth={2} dot={false} name="input" />
+                  <Line yAxisId="io" type="monotone" dataKey="outputTokens" stroke={CHART.secondary} strokeWidth={2} dot={false} name="output" />
+                  <Line yAxisId="cache" type="monotone" dataKey="cacheTokens" stroke={CHART.accent} strokeWidth={2} strokeDasharray="4 2" dot={false} name="cache" />
+                </LineChart>
               </ResponsiveContainer>
             </div>
 
             {/* Cost area chart */}
             <div>
-              <p className="text-xs text-base-content/50 mb-1 font-medium">Cost per day (USD)</p>
+              <p className="text-xs text-base-content/50 mb-1 font-medium">Cost per {granularity} (USD)</p>
               <ResponsiveContainer width="100%" height={100}>
-                <AreaChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--b3))" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="hsl(var(--bc) / 0.3)" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--bc) / 0.3)" tickFormatter={(v) => `$${v.toFixed(2)}`} />
+                <LineChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} />
+                  <YAxis tick={{ fontSize: 10, fill: CHART.axis }} stroke={CHART.axis} tickFormatter={(v) => `$${v.toFixed(2)}`} />
                   <Tooltip
-                    contentStyle={{ fontSize: 11, background: "hsl(var(--b2))", border: "1px solid hsl(var(--b3))" }}
+                    contentStyle={{ fontSize: 11, background: CHART.tooltipBg, border: `1px solid ${CHART.tooltipBorder}` }}
                     formatter={(v: number) => formatCost(v)}
                   />
-                  <Area type="monotone" dataKey="cost" fill="hsl(var(--in) / 0.3)" stroke="hsl(var(--in))" name="cost" />
-                </AreaChart>
+                  <Line type="monotone" dataKey="cost" stroke={CHART.info} strokeWidth={2} dot={false} name="cost" />
+                </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -332,21 +374,25 @@ function StatsChartsSection() {
   );
 }
 
-export function HomePage() {
+export function HomePage({ onSelectWorkflow }: { onSelectWorkflow: (id: string) => void }) {
   const { workflowCount, liveWorkflows, containerCount } = useLiveActivity();
   const recentRuns = useRecentWorkflows();
 
   return (
-    <div className="flex-1 overflow-auto p-4 space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LiveActivitySection
-          workflowCount={workflowCount}
-          liveWorkflows={liveWorkflows}
-          containerCount={containerCount}
-        />
-        <RecentWorkflowsSection runs={recentRuns} />
+    <div className="flex-1 overflow-auto p-4">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div className="lg:col-span-2 space-y-4">
+          <LiveActivitySection
+            workflowCount={workflowCount}
+            liveWorkflows={liveWorkflows}
+            containerCount={containerCount}
+          />
+          <RecentWorkflowsSection runs={recentRuns} onSelect={onSelectWorkflow} />
+        </div>
+        <div className="lg:col-span-3">
+          <StatsChartsSection />
+        </div>
       </div>
-      <StatsChartsSection />
     </div>
   );
 }

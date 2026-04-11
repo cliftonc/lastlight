@@ -250,7 +250,17 @@ function Dashboard() {
         </button>
       </div>
       {tab === "home" ? (
-        <HomePage />
+        <HomePage
+          onSelectWorkflow={(id) => {
+            // Pre-write `run` into the URL so WorkflowList picks it up the
+            // moment it mounts after the tab switch (its useUrlState reads
+            // the URL on first render).
+            const url = new URL(window.location.href);
+            url.searchParams.set("run", id);
+            window.history.replaceState(null, "", url.toString());
+            setTab("workflows");
+          }}
+        />
       ) : tab === "sessions" ? (
         <div className="flex flex-col flex-1 overflow-hidden">
           <SessionFilters

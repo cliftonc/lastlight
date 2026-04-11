@@ -1,17 +1,32 @@
 import { useEffect, useState } from "react";
 import { api, type DailyStat } from "../api";
 
-export function useDailyStats(days = 30, intervalMs = 60000) {
-  const [daily, setDaily] = useState<DailyStat[] | null>(null);
+export type StatGranularity = "hour" | "day";
+
+/**
+ * Fetches a stats series. `granularity: "hour"` returns rolling N-hour buckets
+ * (bucket key `YYYY-MM-DDTHH`); `granularity: "day"` returns N daily buckets
+ * (bucket key `YYYY-MM-DD`). Both use the same DailyStat shape — only the
+ * `date` field's format differs.
+ */
+export function useStatsSeries(
+  granularity: StatGranularity,
+  count: number,
+  intervalMs = 60000,
+) {
+  const [series, setSeries] = useState<DailyStat[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await api.dailyStats(days);
+        const res =
+          granularity === "hour"
+            ? await api.hourlyStats(count)
+            : await api.dailyStats(count);
         if (!cancelled) {
-          setDaily(res.daily);
+          setSeries(granularity === "hour" ? (res as { hourly: DailyStat[] }).hourly : (res as { daily: DailyStat[] }).daily);
           setLoading(false);
         }
       } catch {
@@ -25,7 +40,7 @@ export function useDailyStats(days = 30, intervalMs = 60000) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [days, intervalMs]);
+  }, [granularity, count, intervalMs]);
 
-  return { daily, loading };
+  return { series, loading };
 }

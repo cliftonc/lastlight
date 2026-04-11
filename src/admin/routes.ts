@@ -230,6 +230,13 @@ export function createAdminRoutes(
     return c.json({ daily: db.dailyStats(days) });
   });
 
+  // Hourly aggregated stats (rolling last N hours, default 24)
+  app.get("/stats/hourly", (c) => {
+    const hoursParam = c.req.query("hours");
+    const hours = Math.min(Math.max(1, parseInt(hoursParam ?? "24", 10) || 24), 168);
+    return c.json({ hourly: db.hourlyStats(hours) });
+  });
+
   // API rate limits
   app.get("/rate-limits", (c) => {
     return c.json({ limits: db.getRateLimits() });

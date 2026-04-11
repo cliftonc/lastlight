@@ -609,10 +609,22 @@ export class StateDb {
     cacheReadTokens: number;
     costUsd: number;
   }[] {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-    cutoff.setHours(0, 0, 0, 0);
-    const cutoffIso = cutoff.toISOString();
+    // Build the inclusive UTC date window: [today - (days-1), today].
+    // SQLite's date(started_at) returns a UTC YYYY-MM-DD string, so we
+    // generate the same format here to align keys.
+    const today = new Date();
+    const startUtc = new Date(Date.UTC(
+      today.getUTCFullYear(),
+      today.getUTCMonth(),
+      today.getUTCDate() - (days - 1),
+    ));
+
+    const dateKeys: string[] = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startUtc);
+      d.setUTCDate(startUtc.getUTCDate() + i);
+      dateKeys.push(d.toISOString().slice(0, 10));
+    }
 
     const rows = this.db.prepare(`
       SELECT
@@ -626,10 +638,9 @@ export class StateDb {
         COALESCE(SUM(cache_read_input_tokens), 0) AS cacheReadTokens,
         COALESCE(SUM(cost_usd), 0) AS costUsd
       FROM executions
-      WHERE started_at >= ?
+      WHERE date(started_at) >= ?
       GROUP BY date(started_at)
-      ORDER BY date
-    `).all(cutoffIso) as {
+    `).all(dateKeys[0]) as {
       date: string;
       executions: number;
       successes: number;
@@ -641,7 +652,86 @@ export class StateDb {
       costUsd: number;
     }[];
 
-    return rows;
+    const byDate = new Map(rows.map((r) => [r.date, r]));
+    return dateKeys.map((date) => byDate.get(date) ?? {
+      date,
+      executions: 0,
+      successes: 0,
+      failures: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      costUsd: 0,
+    });
+  }
+
+  /** Hourly aggregated stats for the last N hours (UTC). Bucket key is `YYYY-MM-DDTHH`. */
+  hourlyStats(hours: number): {
+    date: string;
+    executions: number;
+    successes: number;
+    failures: number;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    costUsd: number;
+  }[] {
+    const now = new Date();
+    const startUtc = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      now.getUTCHours() - (hours - 1),
+    ));
+
+    const hourKeys: string[] = [];
+    for (let i = 0; i < hours; i++) {
+      const d = new Date(startUtc);
+      d.setUTCHours(startUtc.getUTCHours() + i);
+      // YYYY-MM-DDTHH (matches strftime('%Y-%m-%dT%H', …))
+      hourKeys.push(d.toISOString().slice(0, 13));
+    }
+
+    const rows = this.db.prepare(`
+      SELECT
+        strftime('%Y-%m-%dT%H', started_at) AS date,
+        COUNT(*) AS executions,
+        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
+        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures,
+        COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) + COALESCE(SUM(cache_read_input_tokens), 0) AS totalTokens,
+        COALESCE(SUM(input_tokens), 0) AS inputTokens,
+        COALESCE(SUM(output_tokens), 0) AS outputTokens,
+        COALESCE(SUM(cache_read_input_tokens), 0) AS cacheReadTokens,
+        COALESCE(SUM(cost_usd), 0) AS costUsd
+      FROM executions
+      WHERE strftime('%Y-%m-%dT%H', started_at) >= ?
+      GROUP BY strftime('%Y-%m-%dT%H', started_at)
+    `).all(hourKeys[0]) as {
+      date: string;
+      executions: number;
+      successes: number;
+      failures: number;
+      totalTokens: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      costUsd: number;
+    }[];
+
+    const byHour = new Map(rows.map((r) => [r.date, r]));
+    return hourKeys.map((date) => byHour.get(date) ?? {
+      date,
+      executions: 0,
+      successes: 0,
+      failures: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      costUsd: 0,
+    });
   }
 
   // ── Workflow Runs ──────────────────────────────────────────────
