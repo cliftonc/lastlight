@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import path from "node:path";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, randomBytes } from "node:crypto";
 import { streamSSE } from "hono/streaming";
+import { getCookie, setCookie } from "hono/cookie";
+import { Slack } from "arctic";
 import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
@@ -17,6 +19,12 @@ export interface AdminConfig {
   adminNotifier?: (msg: string) => Promise<void>;
   /** Optional callback to actively resume a paused workflow after dashboard approval */
   resumeWorkflow?: (workflowRun: WorkflowRun, sender: string) => Promise<void>;
+  /** Slack OAuth config (optional — enables "Login with Slack" on dashboard) */
+  slackOAuthClientId?: string;
+  slackOAuthClientSecret?: string;
+  slackOAuthRedirectUri?: string;
+  /** Restrict login to this Slack workspace team_id or team domain */
+  slackAllowedWorkspace?: string;
 }
 
 /**
@@ -192,12 +200,14 @@ export function createAdminRoutes(
 ): Hono {
   const app = new Hono();
 
+  const slackOAuthEnabled = Boolean(config.slackOAuthClientId && config.slackOAuthClientSecret);
+
   // Auth middleware
   app.use("/*", authMiddleware(config.adminPassword, config.adminSecret));
 
   // Auth endpoints
   app.get("/auth-required", (c) => {
-    return c.json({ required: Boolean(config.adminPassword) });
+    return c.json({ required: Boolean(config.adminPassword), slackOAuth: slackOAuthEnabled });
   });
 
   app.post("/login", async (c) => {
@@ -214,7 +224,79 @@ export function createAdminRoutes(
     if (!ok) {
       return c.json({ error: "invalid password" }, 401);
     }
-    return c.json({ token: createToken(config.adminSecret) });
+    return c.json({ token: createToken(config.adminSecret, "password") });
+  });
+
+  // Slack OAuth routes (only active when Slack OAuth env vars are configured)
+  app.get("/oauth/slack/authorize", (c) => {
+    if (!slackOAuthEnabled) {
+      return c.json({ error: "Slack OAuth not configured" }, 404);
+    }
+    const slack = new Slack(
+      config.slackOAuthClientId!,
+      config.slackOAuthClientSecret!,
+      config.slackOAuthRedirectUri ?? "",
+    );
+    const state = randomBytes(16).toString("hex");
+    setCookie(c, "slack_oauth_state", state, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 600, // 10 minutes
+    });
+    const url = slack.createAuthorizationURL(state, ["openid", "profile"]);
+    return c.redirect(url.toString());
+  });
+
+  app.get("/oauth/slack/callback", async (c) => {
+    if (!slackOAuthEnabled) {
+      return c.json({ error: "Slack OAuth not configured" }, 404);
+    }
+    const storedState = getCookie(c, "slack_oauth_state");
+    const { code, state } = c.req.query() as { code?: string; state?: string };
+
+    if (!storedState || !state || storedState !== state) {
+      return c.json({ error: "invalid state parameter" }, 400);
+    }
+    if (!code) {
+      return c.json({ error: "missing authorization code" }, 400);
+    }
+
+    try {
+      const slack = new Slack(
+        config.slackOAuthClientId!,
+        config.slackOAuthClientSecret!,
+        config.slackOAuthRedirectUri ?? "",
+      );
+      const tokens = await slack.validateAuthorizationCode(code);
+      const accessToken = tokens.accessToken();
+
+      // Fetch workspace info using Slack's auth.test API
+      const authTestRes = await fetch("https://slack.com/api/auth.test", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const authTest = (await authTestRes.json()) as { ok: boolean; team?: string; team_id?: string; error?: string };
+      if (!authTest.ok) {
+        return c.json({ error: "Slack auth.test failed", detail: authTest.error }, 502);
+      }
+
+      // Workspace restriction check
+      if (config.slackAllowedWorkspace) {
+        const allowed = config.slackAllowedWorkspace;
+        const matchesId = authTest.team_id === allowed;
+        const matchesDomain = authTest.team === allowed;
+        if (!matchesId && !matchesDomain) {
+          return c.json({ error: "workspace not allowed" }, 403);
+        }
+      }
+
+      const token = createToken(config.adminSecret, "slack");
+      // Redirect to dashboard with token in URL; App.tsx strips it immediately
+      return c.redirect(`/admin?token=${encodeURIComponent(token)}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "OAuth exchange failed", detail: msg }, 502);
+    }
   });
 
   // Health
