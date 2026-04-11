@@ -44,7 +44,8 @@ export function authMiddleware(password: string, secret: string) {
       path.endsWith("/login") ||
       path.endsWith("/health") ||
       path.endsWith("/auth-required") ||
-      path.includes("/oauth/slack/")
+      path.endsWith("/oauth/slack/authorize") ||
+      path.endsWith("/oauth/slack/callback")
     ) {
       return next();
     }

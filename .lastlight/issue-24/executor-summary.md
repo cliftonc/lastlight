@@ -45,6 +45,27 @@ npx tsc --noEmit
 (no output — clean)
 ```
 
+## Fix Cycle 1
+
+### Issues Fixed
+
+**1. State cookie not deleted after use (routes.ts)**
+Added `deleteCookie` import from `hono/cookie` and called `deleteCookie(c, "slack_oauth_state", { path: "/" })` immediately after `getCookie` in the callback handler. The cookie is now cleared before any further processing, closing the replay window.
+
+**2. Auth middleware bypass pattern overly broad (auth.ts:47)**
+Replaced `path.includes("/oauth/slack/")` with two `path.endsWith(...)` checks — one for `/oauth/slack/authorize` and one for `/oauth/slack/callback`. This is an exact-suffix match against the two intended routes only.
+
+**3. OAuth error detail leaked to client (routes.ts:280, 298)**
+Moved raw error detail to `console.error(...)` server-side and removed the `detail` field from both 502 JSON responses. Clients now receive only the generic error string.
+
+### Guardrails Results
+
+```
+Tests:  231 passed | 1 todo (232) — all green
+Lint:   no linter configured (non-blocking)
+Typecheck: npx tsc --noEmit — clean (no output)
+```
+
 ## Deviations from Plan
 
 None. All planned steps implemented as specified. The Arctic Slack provider uses the OpenID Connect endpoint (`https://slack.com/openid/connect/authorize`) with scopes `openid profile`, matching the plan's primary recommendation.

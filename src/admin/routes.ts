@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import path from "node:path";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { streamSSE } from "hono/streaming";
-import { getCookie, setCookie } from "hono/cookie";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { Slack } from "arctic";
 import { unwrapLine, type SessionReader, type SessionMeta } from "./sessions.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
@@ -253,6 +253,7 @@ export function createAdminRoutes(
       return c.json({ error: "Slack OAuth not configured" }, 404);
     }
     const storedState = getCookie(c, "slack_oauth_state");
+    deleteCookie(c, "slack_oauth_state", { path: "/" });
     const { code, state } = c.req.query() as { code?: string; state?: string };
 
     if (!storedState || !state || storedState !== state) {
@@ -277,7 +278,8 @@ export function createAdminRoutes(
       });
       const authTest = (await authTestRes.json()) as { ok: boolean; team?: string; team_id?: string; error?: string };
       if (!authTest.ok) {
-        return c.json({ error: "Slack auth.test failed", detail: authTest.error }, 502);
+        console.error("Slack auth.test failed:", authTest.error);
+        return c.json({ error: "Slack auth.test failed" }, 502);
       }
 
       // Workspace restriction check
@@ -294,8 +296,8 @@ export function createAdminRoutes(
       // Redirect to dashboard with token in URL; App.tsx strips it immediately
       return c.redirect(`/admin?token=${encodeURIComponent(token)}`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "OAuth exchange failed", detail: msg }, 502);
+      console.error("OAuth exchange failed:", err);
+      return c.json({ error: "OAuth exchange failed" }, 502);
     }
   });
 
