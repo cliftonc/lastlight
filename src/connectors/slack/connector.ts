@@ -85,17 +85,20 @@ export class SlackConnector extends MessagingConnector {
     }
   }
 
-  async showTyping(channelId: string, messageId: string): Promise<void> {
-    // Use Slack's assistant.threads.setStatus with rotating fun messages
+  async showTyping(channelId: string, messageId: string, threadRootId: string): Promise<void> {
+    // Use Slack's assistant.threads.setStatus with rotating fun messages.
+    // thread_ts MUST be the thread root — passing the new reply's ts in an
+    // existing thread silently errors and the indicator never shows.
     try {
       await this.app.client.assistant.threads.setStatus({
         channel_id: channelId,
-        thread_ts: messageId,
+        thread_ts: threadRootId,
         status: "Thinking...",
         loading_messages: THINKING_MESSAGES,
       });
     } catch {
-      // Assistant API not available — fall back to emoji reaction
+      // Assistant API not available — fall back to an emoji reaction on
+      // the user's actual message (not the thread root).
       await this.addReaction(channelId, messageId, "eyes");
     }
   }

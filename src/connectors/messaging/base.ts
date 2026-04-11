@@ -31,8 +31,12 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
   abstract sendMessage(channelId: string, threadId: string | null, text: string): Promise<string | void>;
   /** Add an emoji reaction to a message */
   abstract addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
-  /** Show a typing/processing indicator */
-  abstract showTyping(channelId: string, messageId: string): Promise<void>;
+  /**
+   * Show a typing/processing indicator.
+   * @param messageId   the user's message id (e.g. for an emoji reaction fallback)
+   * @param threadRootId the thread root id (where status indicators must anchor)
+   */
+  abstract showTyping(channelId: string, messageId: string, threadRootId: string): Promise<void>;
   /** Clear the typing/processing indicator (optional — not all platforms need this) */
   async clearTyping(_channelId: string, _threadId: string): Promise<void> {}
 
@@ -60,14 +64,20 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
     const cleanText = this.stripBotMention(text).trim();
     if (!cleanText) return;
 
+    // Thread anchor for status indicators / replies. For a reply inside an
+    // existing thread this is the parent thread ts; for a fresh DM or
+    // top-level mention it's the new message's own ts (which becomes the
+    // root of a brand-new thread).
+    const replyThreadId = threadId || messageId;
+
     // Show acknowledgment
-    this.showTyping(channelId, messageId).catch(() => {});
+    this.showTyping(channelId, messageId, replyThreadId).catch(() => {});
 
     // Get or create session
     const session = this.sessionManager.getOrCreateSession({
       platform: this.name,
       channelId,
-      threadId: threadId || messageId, // Use message ID as thread root if no thread
+      threadId: replyThreadId,
       userId: platformUserId,
     });
 
@@ -76,7 +86,6 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
     this.sessionManager.touchSession(session.id);
 
     // Build the reply callback — sends to same channel/thread
-    const replyThreadId = threadId || messageId;
     const reply = async (msg: string) => {
       // Clear thinking indicator before sending response
       this.clearTyping(channelId, replyThreadId).catch(() => {});
