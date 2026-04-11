@@ -293,8 +293,10 @@ export function createAdminRoutes(
       }
 
       const token = createToken(config.adminSecret, "slack");
-      // Redirect to dashboard with token in URL; App.tsx strips it immediately
-      return c.redirect(`/admin?token=${encodeURIComponent(token)}`);
+      // Redirect to dashboard with token in URL; App.tsx strips it immediately.
+      // Trailing slash matters: Vite serves the SPA with base "/admin/" so a
+      // bare "/admin" 404s in dev. Production static serving accepts both.
+      return c.redirect(`/admin/?token=${encodeURIComponent(token)}`);
     } catch (err: unknown) {
       console.error("OAuth exchange failed:", err);
       return c.json({ error: "OAuth exchange failed" }, 502);

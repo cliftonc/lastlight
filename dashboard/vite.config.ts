@@ -12,5 +12,9 @@ export default defineConfig({
     proxy: {
       "/admin/api": `http://localhost:${API_PORT}`,
     },
+    // Allow access through any localtunnel/cloudflared/ngrok subdomain so the
+    // dev server can be reached over a public HTTPS URL (needed for testing
+    // OAuth flows like "Login with Slack" that reject http callbacks).
+    allowedHosts: [".loca.lt", ".trycloudflare.com", ".ngrok-free.app", ".ngrok.app"],
   },
 });

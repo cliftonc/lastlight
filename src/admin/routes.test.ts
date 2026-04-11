@@ -177,7 +177,7 @@ describe("GET /oauth/slack/callback", () => {
     const res = await app.fetch(req);
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
-    expect(location).toContain("/admin?token=");
+    expect(location).toContain("/admin/?token=");
 
     global.fetch = originalFetch;
   });
@@ -201,7 +201,7 @@ describe("GET /oauth/slack/callback", () => {
     });
     const res = await app.fetch(req);
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("/admin?token=");
+    expect(res.headers.get("location")).toContain("/admin/?token=");
 
     global.fetch = originalFetch;
   });
