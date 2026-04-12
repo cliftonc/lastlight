@@ -12,7 +12,9 @@
     "workflows",
     "skills",
     "agent-context",
-    "mcp-github-app",
+    "mcp-github-app/src",
+    "mcp-github-app/package.json",
+    "mcp-github-app/tsconfig.json",
     "deploy",
     "sandbox.Dockerfile",
     "docker-compose.yml"
