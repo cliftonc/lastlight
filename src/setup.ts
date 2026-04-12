@@ -3,11 +3,9 @@
  * Last Light setup wizard — `npx lastlight setup`
  *
  * Guides a user from a bare server to a fully configured Last Light instance.
- * Uses only Node.js built-ins: readline/promises, crypto, fs, child_process.
- * Zero new dependencies.
+ * Uses @clack/prompts for the interactive UI and chalk for styling.
  */
 
-import { createInterface } from "node:readline/promises";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -19,6 +17,16 @@ import {
 } from "node:fs";
 import { resolve, join } from "node:path";
 import { execSync } from "node:child_process";
+import * as p from "@clack/prompts";
+import chalk from "chalk";
+
+// ── Brand colors ───────────────────────────────────────────────────────────
+
+const gold = chalk.hex("#F0B429");
+const teal = chalk.hex("#1A7A8A");
+const orange = chalk.hex("#E8752A");
+const dim = chalk.dim;
+const bright = chalk.white.bold;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -40,15 +48,10 @@ export interface SetupConfig {
 
 // ── Validation helpers (exported for unit tests) ────────────────────────────
 
-/** Returns true if the string is a positive integer (no decimals, no leading spaces). */
 export function isPositiveInt(s: string): boolean {
   return /^\d+$/.test(s) && parseInt(s, 10) > 0;
 }
 
-/**
- * Returns true if the file at `filePath` exists and starts with a PEM header.
- * Accepts both RSA PRIVATE KEY and PKCS8 PRIVATE KEY formats.
- */
 export function isPemFile(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, "utf8");
@@ -61,24 +64,20 @@ export function isPemFile(filePath: string): boolean {
   }
 }
 
-/** Returns true if the key has the `sk-ant-` prefix. */
 export function isAnthropicKey(s: string): boolean {
   return s.startsWith("sk-ant-");
 }
 
-/** Returns true if the token has the `xoxb-` prefix. */
 export function isSlackBotToken(s: string): boolean {
   return s.startsWith("xoxb-");
 }
 
-/** Returns true if the token has the `xapp-` prefix. */
 export function isSlackAppToken(s: string): boolean {
   return s.startsWith("xapp-");
 }
 
 // ── .env serialization (exported for unit tests) ────────────────────────────
 
-/** Builds the full .env file content from the collected config. */
 export function buildEnvContent(config: SetupConfig): string {
   const lines: string[] = [
     "# ── Last Light — Environment Variables ─────────────────────",
@@ -125,304 +124,325 @@ export function buildEnvContent(config: SetupConfig): string {
   return lines.join("\n");
 }
 
-// ── Interactive helpers ─────────────────────────────────────────────────────
+// ── Clack helper — bail on cancel ───────────────────────────────────────────
 
-type Validator = (value: string) => boolean;
-
-async function prompt(
-  rl: ReturnType<typeof createInterface>,
-  question: string,
-  validator?: Validator,
-  errorMsg?: string
-): Promise<string> {
-  while (true) {
-    const answer = (await rl.question(question)).trim();
-    if (!validator || validator(answer)) return answer;
-    console.error(`  ${errorMsg ?? "Invalid input. Please try again."}`);
+function required<T>(value: T | symbol): T {
+  if (p.isCancel(value)) {
+    p.cancel("Setup cancelled.");
+    process.exit(0);
   }
+  return value;
 }
 
-async function promptYesNo(
-  rl: ReturnType<typeof createInterface>,
-  question: string,
-  defaultYes = false
-): Promise<boolean> {
-  const hint = defaultYes ? "[Y/n]" : "[y/N]";
-  while (true) {
-    const answer = (await rl.question(`${question} ${hint}: `)).trim().toLowerCase();
-    if (answer === "" ) return defaultYes;
-    if (answer === "y" || answer === "yes") return true;
-    if (answer === "n" || answer === "no") return false;
-    console.error("  Please enter y or n.");
+// ── Banner ──────────────────────────────────────────────────────────────────
+
+function printBanner(): void {
+  console.log();
+  console.log(gold("  ╭──────────────────────────────────────────────╮"));
+  console.log(gold("  │") + "                                              " + gold("│"));
+  console.log(gold("  │") + bright("        ✦  L A S T   L I G H T  ✦           ") + gold("│"));
+  console.log(gold("  │") + "                                              " + gold("│"));
+  console.log(gold("  │") + dim("     GitHub Repository Maintenance Agent     ") + gold("│"));
+  console.log(gold("  │") + "                                              " + gold("│"));
+  console.log(gold("  ╰──────────────────────────────────────────────╯"));
+  console.log();
+}
+
+// ── Preflight ───────────────────────────────────────────────────────────────
+
+function preflight(): void {
+  if (!existsSync("docker-compose.yml")) {
+    if (existsSync("lastlight/docker-compose.yml")) {
+      p.log.info("Found existing lastlight/ directory — continuing setup there.");
+      process.chdir("lastlight");
+    } else {
+      const s = p.spinner();
+      s.start("Cloning cliftonc/lastlight ...");
+      try {
+        execSync("git clone https://github.com/cliftonc/lastlight.git lastlight", {
+          stdio: "pipe",
+        });
+        s.stop("Repository cloned.");
+      } catch {
+        s.stop("Clone failed.");
+        p.log.error("Failed to clone. Please clone manually:");
+        p.log.info("  git clone https://github.com/cliftonc/lastlight.git");
+        process.exit(1);
+      }
+      process.chdir("lastlight");
+      p.log.info(`Working directory: ${dim(process.cwd())}`);
+    }
+  }
+
+  try {
+    execSync("docker info", { stdio: "ignore" });
+  } catch {
+    p.log.error("Docker is not running or not installed.");
+    p.log.info("Please start Docker and re-run: " + teal("npx lastlight setup"));
+    process.exit(1);
+  }
+
+  if (existsSync(".env")) {
+    p.log.error(".env already exists. To reconfigure, remove it first: " + dim("rm .env"));
+    process.exit(1);
   }
 }
 
 // ── Setup steps ─────────────────────────────────────────────────────────────
 
-function preflight(): void {
-  // Check for docker-compose.yml; clone if not present, then cd into it
-  if (!existsSync("docker-compose.yml")) {
-    // Maybe we're one level up and a `lastlight/` clone already exists
-    if (existsSync("lastlight/docker-compose.yml")) {
-      console.log("\nFound existing lastlight/ directory — continuing setup there.\n");
-      process.chdir("lastlight");
-    } else {
-      console.log("\nNo docker-compose.yml found in current directory.");
-      console.log("Cloning cliftonc/lastlight into ./lastlight ...\n");
-      try {
-        execSync("git clone https://github.com/cliftonc/lastlight.git lastlight", {
-          stdio: "inherit",
-        });
-      } catch {
-        console.error("Failed to clone repository. Please clone it manually:");
-        console.error("  git clone https://github.com/cliftonc/lastlight.git");
-        process.exit(1);
-      }
-      process.chdir("lastlight");
-      console.log(`\nContinuing setup in ${process.cwd()}\n`);
-    }
-  }
-
-  // Check Docker is available
-  try {
-    execSync("docker info", { stdio: "ignore" });
-  } catch {
-    console.error("\nDocker is not running or not installed.");
-    console.error("Please start Docker and re-run: npx lastlight setup\n");
-    process.exit(1);
-  }
-
-  // Check .env doesn't already exist
-  if (existsSync(".env")) {
-    console.error("\n.env already exists. To reconfigure, edit it directly.");
-    console.error("If you want to start over, remove it first: rm .env\n");
-    process.exit(1);
-  }
-}
-
-async function collectGitHubApp(
-  rl: ReturnType<typeof createInterface>
-): Promise<{ appId: string; installationId: string; pemSourcePath: string }> {
-  console.log("\n── Step 1: GitHub App ─────────────────────────────────────");
-  console.log(
-    "Create a GitHub App at https://github.com/settings/apps/new if you haven't already.\n"
+async function collectGitHubApp(): Promise<{
+  appId: string;
+  installationId: string;
+  pemSourcePath: string;
+}> {
+  p.log.step(gold("GitHub App"));
+  p.log.info(
+    dim("Create one at ") +
+    teal("https://github.com/settings/apps/new") +
+    dim(" if you haven't already.")
   );
 
-  const appId = await prompt(
-    rl,
-    "GitHub App ID (numeric): ",
-    isPositiveInt,
-    "Must be a positive integer (e.g. 123456)."
+  const appId = required(
+    await p.text({
+      message: "GitHub App ID",
+      placeholder: "123456",
+      validate: (v) =>
+        v && isPositiveInt(v) ? undefined : "Must be a positive integer.",
+    }),
   );
 
-  const installationId = await prompt(
-    rl,
-    "GitHub App Installation ID (numeric): ",
-    isPositiveInt,
-    "Must be a positive integer (e.g. 789012)."
+  const installationId = required(
+    await p.text({
+      message: "Installation ID",
+      placeholder: "789012",
+      validate: (v) =>
+        v && isPositiveInt(v) ? undefined : "Must be a positive integer.",
+    }),
   );
 
-  const pemPath = await prompt(
-    rl,
-    "Path to GitHub App private key (.pem): ",
-    (p) => isPemFile(resolve(p)),
-    "File not found or does not look like a PEM private key."
+  const pemPath = required(
+    await p.text({
+      message: "Path to private key (.pem)",
+      placeholder: "~/downloads/your-app.private-key.pem",
+      validate: (v) =>
+        v && isPemFile(resolve(v)) ? undefined : "File not found or not a valid PEM.",
+    }),
   );
 
   return {
-    appId,
-    installationId,
-    pemSourcePath: resolve(pemPath),
+    appId: appId as string,
+    installationId: installationId as string,
+    pemSourcePath: resolve(pemPath as string),
   };
 }
 
-function generateSecrets(): { webhookSecret: string; adminSecret: string } {
-  console.log("\n── Step 2: Secrets ────────────────────────────────────────");
-  const webhookSecret = randomBytes(32).toString("hex");
-  const adminSecret = randomBytes(32).toString("hex");
+async function collectDomain(): Promise<{ domain: string; useCaddy: boolean }> {
+  p.log.step(gold("Domain & TLS"));
 
-  console.log("\nAuto-generated WEBHOOK_SECRET (paste this into your GitHub App webhook settings):");
-  console.log(`  ${webhookSecret}\n`);
-
-  return { webhookSecret, adminSecret };
-}
-
-async function collectDomain(
-  rl: ReturnType<typeof createInterface>
-): Promise<{ domain: string; useCaddy: boolean }> {
-  console.log("── Step 3: Domain + TLS ───────────────────────────────────");
-
-  const domain = await prompt(
-    rl,
-    "Your domain (e.g. lastlight.example.com): ",
-    (d) => d.length > 0 && d.includes("."),
-    "Please enter a valid domain name."
+  const domain = required(
+    await p.text({
+      message: "Your domain",
+      placeholder: "lastlight.example.com",
+      validate: (v) =>
+        v && v.length > 0 && v.includes(".")
+          ? undefined
+          : "Enter a valid domain name.",
+    }),
   );
 
-  const useCaddy = await promptYesNo(
-    rl,
-    "Use Caddy for automatic TLS (recommended)?",
-    true
+  const useCaddy = required(
+    await p.confirm({
+      message: "Use Caddy for automatic TLS?",
+      initialValue: true,
+    }),
   );
 
-  console.log(`\nWebhook URL: https://${domain}/webhook`);
+  p.log.info(`Webhook URL: ${teal(`https://${domain}/webhook`)}`);
 
-  return { domain, useCaddy };
+  return { domain: domain as string, useCaddy: useCaddy as boolean };
 }
 
-async function collectAnthropicKey(
-  rl: ReturnType<typeof createInterface>
-): Promise<string> {
-  console.log("\n── Step 4: Anthropic API Key ──────────────────────────────");
-  return prompt(
-    rl,
-    "ANTHROPIC_API_KEY (sk-ant-...): ",
-    isAnthropicKey,
-    "Must start with sk-ant-"
+async function collectAnthropicKey(): Promise<string> {
+  p.log.step(gold("Anthropic API Key"));
+
+  const key = required(
+    await p.text({
+      message: "ANTHROPIC_API_KEY",
+      placeholder: "sk-ant-...",
+      validate: (v) =>
+        v && isAnthropicKey(v) ? undefined : "Must start with sk-ant-",
+    }),
   );
+
+  return key as string;
 }
 
-async function collectAdminPassword(
-  rl: ReturnType<typeof createInterface>
-): Promise<string | undefined> {
-  console.log("\n── Step 5: Admin Dashboard Password ──────────────────────");
-  const wantPassword = await promptYesNo(
-    rl,
-    "Set an admin dashboard password?",
-    false
+async function collectAdminPassword(): Promise<string | undefined> {
+  p.log.step(gold("Admin Dashboard"));
+
+  const wantPassword = required(
+    await p.confirm({
+      message: "Set an admin dashboard password?",
+      initialValue: false,
+    }),
   );
   if (!wantPassword) return undefined;
 
-  return prompt(
-    rl,
-    "Admin password: ",
-    (p) => p.length >= 8,
-    "Password must be at least 8 characters."
+  const password = required(
+    await p.password({
+      message: "Admin password",
+      validate: (v) =>
+        v && v.length >= 8 ? undefined : "Must be at least 8 characters.",
+    }),
   );
+
+  return password as string;
 }
 
-async function collectSlack(rl: ReturnType<typeof createInterface>): Promise<{
+async function collectSlack(): Promise<{
   botToken?: string;
   appToken?: string;
   deliveryChannel?: string;
   allowedUsers?: string;
 }> {
-  console.log("\n── Step 6: Slack (optional) ───────────────────────────────");
-  const wantSlack = await promptYesNo(rl, "Enable Slack integration?", false);
+  p.log.step(gold("Slack") + dim(" (optional)"));
+
+  const wantSlack = required(
+    await p.confirm({
+      message: "Enable Slack integration?",
+      initialValue: false,
+    }),
+  );
   if (!wantSlack) return {};
 
-  const botToken = await prompt(
-    rl,
-    "SLACK_BOT_TOKEN (xoxb-...): ",
-    isSlackBotToken,
-    "Must start with xoxb-"
-  );
+  const botToken = required(
+    await p.text({
+      message: "SLACK_BOT_TOKEN",
+      placeholder: "xoxb-...",
+      validate: (v) =>
+        v && isSlackBotToken(v) ? undefined : "Must start with xoxb-",
+    }),
+  ) as string;
 
-  const appToken = await prompt(
-    rl,
-    "SLACK_APP_TOKEN (xapp-...): ",
-    isSlackAppToken,
-    "Must start with xapp-"
-  );
+  const appToken = required(
+    await p.text({
+      message: "SLACK_APP_TOKEN",
+      placeholder: "xapp-...",
+      validate: (v) =>
+        v && isSlackAppToken(v) ? undefined : "Must start with xapp-",
+    }),
+  ) as string;
 
-  const deliveryChannelRaw = (
-    await rl.question("SLACK_DELIVERY_CHANNEL (optional, press Enter to skip): ")
-  ).trim();
-  const deliveryChannel = deliveryChannelRaw || undefined;
+  const deliveryChannel = required(
+    await p.text({
+      message: "Delivery channel ID",
+      placeholder: "C0123456789 (press Enter to skip)",
+      defaultValue: "",
+    }),
+  ) as string;
 
-  const allowedUsersRaw = (
-    await rl.question(
-      "SLACK_ALLOWED_USERS (optional comma-separated user IDs, press Enter to skip): "
-    )
-  ).trim();
-  const allowedUsers = allowedUsersRaw || undefined;
+  const allowedUsers = required(
+    await p.text({
+      message: "Allowed user IDs",
+      placeholder: "U0123,U0456 (press Enter to skip)",
+      defaultValue: "",
+    }),
+  ) as string;
 
-  return { botToken, appToken, deliveryChannel, allowedUsers };
+  return {
+    botToken,
+    appToken,
+    deliveryChannel: deliveryChannel || undefined,
+    allowedUsers: allowedUsers || undefined,
+  };
 }
 
 function writeConfig(config: SetupConfig): void {
-  console.log("\n── Step 7: Writing config ─────────────────────────────────");
+  p.log.step(gold("Writing config"));
 
-  // Create secrets/ directory
   try {
     mkdirSync("secrets", { recursive: true });
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EACCES") {
-      console.error("Permission denied creating secrets/ directory.");
+      p.log.error("Permission denied creating secrets/ directory.");
       process.exit(1);
     }
     throw err;
   }
 
-  // Copy PEM to secrets/app.pem
   copyFileSync(config.pemSourcePath, join("secrets", "app.pem"));
   chmodSync(join("secrets", "app.pem"), 0o600);
 
-  // Write .env atomically (build in memory then write once)
   const envContent = buildEnvContent(config);
   writeFileSync(".env", envContent, { encoding: "utf8" });
   chmodSync(".env", 0o600);
 
-  console.log("  .env written (mode 600)");
-  console.log("  secrets/app.pem copied (mode 600)");
+  p.log.success(
+    dim("secrets/app.pem") + " copied " + dim("(mode 600)") + "\n" +
+    "  " + dim(".env") + " written " + dim("(mode 600)")
+  );
 }
 
-async function dockerBuildAndLaunch(
-  rl: ReturnType<typeof createInterface>
-): Promise<void> {
-  console.log("\n── Step 8: Docker ─────────────────────────────────────────");
-  const wantLaunch = await promptYesNo(
-    rl,
-    "Build and launch Last Light with Docker now?",
-    true
+async function dockerBuildAndLaunch(): Promise<void> {
+  p.log.step(gold("Docker"));
+
+  const wantLaunch = required(
+    await p.confirm({
+      message: "Build and launch Last Light now?",
+      initialValue: true,
+    }),
   );
 
   if (!wantLaunch) {
-    console.log("\nWhen ready, run:");
-    console.log("  docker compose --profile build-only build sandbox");
-    console.log("  docker compose up -d");
+    p.log.info("When ready, run:\n" +
+      dim("  docker compose --profile build-only build sandbox\n") +
+      dim("  docker compose up -d"));
     return;
   }
 
-  console.log("\nBuilding sandbox image...");
+  const s = p.spinner();
+
+  s.start("Building sandbox image...");
   try {
     execSync("docker compose --profile build-only build sandbox", {
-      stdio: "inherit",
+      stdio: "pipe",
     });
+    s.stop("Sandbox image built.");
   } catch {
-    console.error(
-      "Build failed. Check the output above and ensure Docker Compose v2 is installed."
-    );
+    s.stop("Sandbox build failed.");
+    p.log.error("Check Docker Compose v2 is installed.");
     process.exit(1);
   }
 
-  console.log("\nStarting services...");
+  s.start("Starting services...");
   try {
-    execSync("docker compose up -d", { stdio: "inherit" });
+    execSync("docker compose up -d", { stdio: "pipe" });
+    s.stop("Services started.");
   } catch {
-    console.error("docker compose up failed. Check the output above.");
+    s.stop("Failed to start services.");
+    p.log.error("Check docker compose logs for details.");
     process.exit(1);
-  }
-
-  // Check status
-  try {
-    execSync("docker compose ps", { stdio: "inherit" });
-  } catch {
-    // Non-fatal — status check is informational
   }
 }
 
 function printSummary(domain: string, webhookSecret: string): void {
-  console.log("\n── Step 9: Done! ──────────────────────────────────────────");
-  console.log(`\nWebhook URL:   https://${domain}/webhook`);
-  console.log(`Dashboard URL: https://${domain}/admin`);
-  console.log(`\nREMINDER: Paste this WEBHOOK_SECRET into your GitHub App settings:`);
-  console.log(`  ${webhookSecret}`);
-  console.log(`\nNext steps:`);
-  console.log(`  - Read agent-context/rules.md to customise bot behaviour`);
-  console.log(`  - Verify webhook delivery in GitHub App settings`);
-  console.log(`  - Check logs: docker compose logs -f\n`);
+  console.log();
+  console.log(gold("  ┌──────────────────────────────────────────────┐"));
+  console.log(gold("  │") + bright("  Setup complete!                              ") + gold("│"));
+  console.log(gold("  └──────────────────────────────────────────────┘"));
+  console.log();
+  console.log("  " + dim("Webhook URL   ") + teal(`https://${domain}/webhook`));
+  console.log("  " + dim("Dashboard     ") + teal(`https://${domain}/admin`));
+  console.log();
+  console.log("  " + orange("Paste this WEBHOOK_SECRET into your GitHub App settings:"));
+  console.log("  " + bright(webhookSecret));
+  console.log();
+  console.log("  " + dim("Next steps:"));
+  console.log("  " + dim("  • Edit agent-context/rules.md to customise bot behaviour"));
+  console.log("  " + dim("  • Verify webhook delivery in GitHub App settings"));
+  console.log("  " + dim("  • Check logs: ") + teal("docker compose logs -f"));
+  console.log();
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
@@ -433,59 +453,41 @@ export async function runSetup(): Promise<void> {
     process.exit(1);
   }
 
-  console.log("\nLast Light Setup Wizard");
-  console.log("=======================");
-  console.log("This wizard will configure Last Light on your server.\n");
+  printBanner();
 
-  // Step 0 — Pre-flight
+  p.intro(dim("This wizard will configure Last Light on your server."));
+
   preflight();
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const { appId, installationId, pemSourcePath } = await collectGitHubApp();
+  const webhookSecret = randomBytes(32).toString("hex");
+  const adminSecret = randomBytes(32).toString("hex");
+  p.log.success("Secrets auto-generated " + dim("(WEBHOOK_SECRET + ADMIN_SECRET)"));
 
-  try {
-    // Step 1 — GitHub App
-    const { appId, installationId, pemSourcePath } = await collectGitHubApp(rl);
+  const { domain, useCaddy } = await collectDomain();
+  const anthropicKey = await collectAnthropicKey();
+  const adminPassword = await collectAdminPassword();
+  const { botToken, appToken, deliveryChannel, allowedUsers } = await collectSlack();
 
-    // Step 2 — Secrets
-    const { webhookSecret, adminSecret } = generateSecrets();
+  const config: SetupConfig = {
+    GITHUB_APP_ID: appId,
+    GITHUB_APP_INSTALLATION_ID: installationId,
+    WEBHOOK_SECRET: webhookSecret,
+    ADMIN_SECRET: adminSecret,
+    DOMAIN: domain,
+    ANTHROPIC_API_KEY: anthropicKey,
+    ADMIN_PASSWORD: adminPassword,
+    SLACK_BOT_TOKEN: botToken,
+    SLACK_APP_TOKEN: appToken,
+    SLACK_DELIVERY_CHANNEL: deliveryChannel,
+    SLACK_ALLOWED_USERS: allowedUsers,
+    useCaddy,
+    pemSourcePath,
+  };
 
-    // Step 3 — Domain + TLS
-    const { domain, useCaddy } = await collectDomain(rl);
+  writeConfig(config);
+  await dockerBuildAndLaunch();
 
-    // Step 4 — Anthropic key
-    const anthropicKey = await collectAnthropicKey(rl);
-
-    // Step 5 — Admin password
-    const adminPassword = await collectAdminPassword(rl);
-
-    // Step 6 — Slack
-    const { botToken, appToken, deliveryChannel, allowedUsers } =
-      await collectSlack(rl);
-
-    // Step 7 — Write config
-    const config: SetupConfig = {
-      GITHUB_APP_ID: appId,
-      GITHUB_APP_INSTALLATION_ID: installationId,
-      WEBHOOK_SECRET: webhookSecret,
-      ADMIN_SECRET: adminSecret,
-      DOMAIN: domain,
-      ANTHROPIC_API_KEY: anthropicKey,
-      ADMIN_PASSWORD: adminPassword,
-      SLACK_BOT_TOKEN: botToken,
-      SLACK_APP_TOKEN: appToken,
-      SLACK_DELIVERY_CHANNEL: deliveryChannel,
-      SLACK_ALLOWED_USERS: allowedUsers,
-      useCaddy,
-      pemSourcePath,
-    };
-    writeConfig(config);
-
-    // Step 8 — Docker
-    await dockerBuildAndLaunch(rl);
-
-    // Step 9 — Summary
-    printSummary(domain, webhookSecret);
-  } finally {
-    rl.close();
-  }
+  p.outro(gold("Last Light is ready."));
+  printSummary(domain, webhookSecret);
 }
