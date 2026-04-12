@@ -10,6 +10,7 @@ import { randomBytes } from "node:crypto";
 import {
   existsSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   mkdirSync,
   chmodSync,
@@ -50,6 +51,26 @@ export interface SetupConfig {
 
 export function isPositiveInt(s: string): boolean {
   return /^\d+$/.test(s) && parseInt(s, 10) > 0;
+}
+
+/**
+ * Try to resolve a PEM path. Checks: as given, relative to cwd, relative
+ * to parent dir (for when the wizard chdir'd into a clone), and with ~ expanded.
+ * Returns the resolved absolute path or null if not found.
+ */
+function resolvePem(input: string): string | null {
+  let expanded = input;
+  if (expanded.startsWith("~/")) {
+    expanded = join(process.env.HOME || "", expanded.slice(2));
+  }
+  const candidates = [
+    resolve(expanded),
+    resolve("..", expanded),
+  ];
+  for (const candidate of candidates) {
+    if (isPemFile(candidate)) return candidate;
+  }
+  return null;
 }
 
 export function isPemFile(filePath: string): boolean {
@@ -137,14 +158,24 @@ function required<T>(value: T | symbol): T {
 // ── Banner ──────────────────────────────────────────────────────────────────
 
 function printBanner(): void {
+  // Inner width = 46 chars between the box-drawing borders
+  const W = 46;
+  const pad = (text: string, styled: string) => {
+    const left = Math.floor((W - text.length) / 2);
+    const right = W - text.length - left;
+    return gold("  │") + " ".repeat(left) + styled + " ".repeat(right) + gold("│");
+  };
+  const empty = gold("  │") + " ".repeat(W) + gold("│");
+  const rule = "─".repeat(W);
+
   console.log();
-  console.log(gold("  ╭──────────────────────────────────────────────╮"));
-  console.log(gold("  │") + "                                              " + gold("│"));
-  console.log(gold("  │") + bright("        ✦  L A S T   L I G H T  ✦           ") + gold("│"));
-  console.log(gold("  │") + "                                              " + gold("│"));
-  console.log(gold("  │") + dim("     GitHub Repository Maintenance Agent     ") + gold("│"));
-  console.log(gold("  │") + "                                              " + gold("│"));
-  console.log(gold("  ╰──────────────────────────────────────────────╯"));
+  console.log(gold(`  ╭${rule}╮`));
+  console.log(empty);
+  console.log(pad("✦  L A S T   L I G H T  ✦", bright("✦  L A S T   L I G H T  ✦")));
+  console.log(empty);
+  console.log(pad("GitHub Repository Maintenance Agent", dim("GitHub Repository Maintenance Agent")));
+  console.log(empty);
+  console.log(gold(`  ╰${rule}╯`));
   console.log();
 }
 
@@ -220,19 +251,63 @@ async function collectGitHubApp(): Promise<{
     }),
   );
 
-  const pemPath = required(
-    await p.text({
-      message: "Path to private key (.pem)",
-      placeholder: "~/downloads/your-app.private-key.pem",
-      validate: (v) =>
-        v && isPemFile(resolve(v)) ? undefined : "File not found or not a valid PEM.",
-    }),
-  );
+  // Search cwd and parent for .pem files to offer as choices
+  const pemCandidates: string[] = [];
+  for (const dir of [process.cwd(), resolve("..")]) {
+    try {
+      for (const f of readdirSync(dir)) {
+        if (f.endsWith(".pem")) {
+          const full = join(dir, f);
+          if (isPemFile(full)) pemCandidates.push(full);
+        }
+      }
+    } catch { /* unreadable dir */ }
+  }
+
+  let pemResolved: string;
+  if (pemCandidates.length > 0) {
+    const choice = required(
+      await p.select({
+        message: "Private key (.pem)",
+        options: [
+          ...pemCandidates.map((f) => ({ value: f, label: f.replace(process.env.HOME || "", "~") })),
+          { value: "__other__", label: dim("Enter a different path...") },
+        ],
+      }),
+    ) as string;
+
+    if (choice === "__other__") {
+      const manual = required(
+        await p.text({
+          message: "Path to private key (.pem)",
+          validate: (v) => {
+            if (!v) return "Enter a file path.";
+            return resolvePem(v) ? undefined : "File not found or not a valid PEM.";
+          },
+        }),
+      );
+      pemResolved = resolvePem(manual as string)!;
+    } else {
+      pemResolved = choice;
+    }
+  } else {
+    const manual = required(
+      await p.text({
+        message: "Path to private key (.pem)",
+        placeholder: "~/downloads/your-app.private-key.pem",
+        validate: (v) => {
+          if (!v) return "Enter a file path.";
+          return resolvePem(v) ? undefined : "File not found or not a valid PEM.";
+        },
+      }),
+    );
+    pemResolved = resolvePem(manual as string)!;
+  }
 
   return {
     appId: appId as string,
     installationId: installationId as string,
-    pemSourcePath: resolve(pemPath as string),
+    pemSourcePath: pemResolved,
   };
 }
 
@@ -384,8 +459,25 @@ function writeConfig(config: SetupConfig): void {
   );
 }
 
+/** Detect whether to use `docker compose` (v2) or `docker-compose` (v1/colima). */
+function composeCmd(): string {
+  try {
+    execSync("docker compose version", { stdio: "ignore" });
+    return "docker compose";
+  } catch {
+    try {
+      execSync("docker-compose version", { stdio: "ignore" });
+      return "docker-compose";
+    } catch {
+      return "docker compose"; // fall through — will error with a clear message
+    }
+  }
+}
+
 async function dockerBuildAndLaunch(): Promise<void> {
   p.log.step(gold("Docker"));
+  const dc = composeCmd();
+  p.log.info(dim(`Using: ${dc}`));
 
   const wantLaunch = required(
     await p.confirm({
@@ -396,8 +488,8 @@ async function dockerBuildAndLaunch(): Promise<void> {
 
   if (!wantLaunch) {
     p.log.info("When ready, run:\n" +
-      dim("  docker compose --profile build-only build sandbox\n") +
-      dim("  docker compose up -d"));
+      dim(`  ${dc} --profile build-only build sandbox\n`) +
+      dim(`  ${dc} up -d`));
     return;
   }
 
@@ -405,7 +497,7 @@ async function dockerBuildAndLaunch(): Promise<void> {
 
   s.start("Building sandbox image...");
   try {
-    execSync("docker compose --profile build-only build sandbox", {
+    execSync(`${dc} --profile build-only build sandbox`, {
       stdio: "pipe",
     });
     s.stop("Sandbox image built.");
@@ -417,7 +509,7 @@ async function dockerBuildAndLaunch(): Promise<void> {
 
   s.start("Starting services...");
   try {
-    execSync("docker compose up -d", { stdio: "pipe" });
+    execSync(`${dc} up -d`, { stdio: "pipe" });
     s.stop("Services started.");
   } catch {
     s.stop("Failed to start services.");
@@ -441,7 +533,7 @@ function printSummary(domain: string, webhookSecret: string): void {
   console.log("  " + dim("Next steps:"));
   console.log("  " + dim("  • Edit agent-context/rules.md to customise bot behaviour"));
   console.log("  " + dim("  • Verify webhook delivery in GitHub App settings"));
-  console.log("  " + dim("  • Check logs: ") + teal("docker compose logs -f"));
+  console.log("  " + dim("  • Check logs: ") + teal("docker compose logs -f") + dim(" (or docker-compose)"));
   console.log();
 }
 

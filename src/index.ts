@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { randomUUID } from "crypto";
 import { loadConfig, generateMcpConfig, resolveModel } from "./config.js";
@@ -18,12 +18,49 @@ import type { RunnerCallbacks } from "./workflows/runner.js";
 import { resumeOrphanedWorkflows } from "./workflows/resume.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
+/**
+ * Pre-flight validation — checks that config is sane before starting any
+ * services. Exits with code 78 (EX_CONFIG) on configuration errors so
+ * Docker's restart policy doesn't loop forever on a misconfigured container.
+ */
+function validateConfig(config: ReturnType<typeof loadConfig>): void {
+  const fatal = (msg: string) => {
+    console.error(`\n[startup] FATAL: ${msg}`);
+    console.error("[startup] Fix your .env and restart.\n");
+    process.exit(78); // EX_CONFIG — sysexits.h convention
+  };
+
+  if (config.githubApp) {
+    const { appId, privateKeyPath, installationId } = config.githubApp;
+    if (!appId || !installationId) {
+      fatal("GITHUB_APP_ID and GITHUB_APP_INSTALLATION_ID are required when the GitHub App is configured.");
+    }
+    if (!existsSync(resolve(privateKeyPath))) {
+      fatal(`GITHUB_APP_PRIVATE_KEY_PATH points to "${privateKeyPath}" which does not exist.`);
+    }
+    try {
+      const content = readFileSync(resolve(privateKeyPath), "utf8");
+      if (!content.startsWith("-----BEGIN")) {
+        fatal(`GITHUB_APP_PRIVATE_KEY_PATH ("${privateKeyPath}") does not look like a PEM file.`);
+      }
+    } catch (err: any) {
+      fatal(`Cannot read GITHUB_APP_PRIVATE_KEY_PATH ("${privateKeyPath}"): ${err.message}`);
+    }
+  }
+
+  if (!config.webhookSecret && config.githubApp) {
+    console.warn("[startup] WEBHOOK_SECRET is not set — webhook signature verification is disabled.");
+  }
+}
+
 async function main() {
   console.log("Last Light v2.0 — Agent SDK Harness");
   console.log("====================================");
 
-  // Load config
+  // Load and validate config before starting anything
   const config = loadConfig();
+  validateConfig(config);
+
   console.log(`[config] Port: ${config.port}, Model: ${config.model}`);
   const modelOverrides = Object.entries(config.models).filter(([k]) => k !== "default");
   if (modelOverrides.length > 0) {
@@ -45,9 +82,9 @@ async function main() {
   writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
   console.log(`[config] MCP config written to: ${mcpConfigPath}`);
 
-  // Configure git with GitHub App credentials — agents can git clone/push natively
-  // Non-fatal: if this fails (e.g., DNS not ready yet), the app still starts.
-  // Git auth is refreshed before each agent execution anyway.
+  // Configure git with GitHub App credentials — agents can git clone/push natively.
+  // Non-fatal: the token is refreshed before each agent execution anyway, so a
+  // transient failure here (DNS, rate limit) doesn't block startup.
   if (config.githubApp) {
     try {
       await configureGitAuth({
@@ -56,7 +93,7 @@ async function main() {
         installationId: config.githubApp.installationId,
       });
     } catch (err: any) {
-      console.warn(`[git-auth] Initial git auth failed (will retry per-execution): ${err.message}`);
+      console.warn(`[git-auth] Initial token mint failed (will retry per-execution): ${err.message}`);
     }
   }
 
@@ -886,5 +923,12 @@ async function main() {
 
 main().catch((err) => {
   console.error("[main] Fatal error:", err);
-  process.exit(1);
+  // Exit 78 (EX_CONFIG) to signal Docker restart policy that looping won't help.
+  // Common causes: bad PEM, wrong App ID, missing env vars.
+  const msg = err?.message || "";
+  const isConfig = msg.includes("could not be decoded") ||
+    msg.includes("not found") ||
+    msg.includes("ENOENT") ||
+    msg.includes("required");
+  process.exit(isConfig ? 78 : 1);
 });
