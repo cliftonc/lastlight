@@ -38,6 +38,13 @@ export interface SimpleWorkflowRequest {
   /** Originating user (or "cli" / "cron" etc.) */
   sender: string;
   /**
+   * Explicit trigger id override. Slack-initiated workflows pass a
+   * `slack:{teamId}:{channel}:{threadTs}` string here so pause/resume uses
+   * the Slack thread as the stable key. When unset, the trigger id is
+   * derived from owner/repo/issueNumber as usual.
+   */
+  triggerId?: string;
+  /**
    * Extra context to merge into the template context. Use this for
    * workflow-specific args like { mode: "scan" } from cron jobs, or the
    * pr-fix workflow's failedChecks/branch/prNumber payload.
@@ -80,19 +87,17 @@ export async function runSimpleWorkflow(
   const notify = callbacks.postComment || (async () => {});
 
   // Identify the trigger uniquely. Issue/PR-scoped workflows include the
-  // number; repo-scoped workflows (e.g. health) just identify by repo+name.
+  // number; repo-scoped workflows (e.g. health) just identify by repo+name;
+  // Slack-initiated runs pass an explicit `slack:*` id for thread scoping.
   const number = issueNumber ?? prNumber;
-  const triggerId = number !== undefined
-    ? `${owner}/${repo}#${number}`
-    : `${owner}/${repo}::${workflowName}`;
+  const triggerId = request.triggerId
+    ?? (number !== undefined
+      ? `${owner}/${repo}#${number}`
+      : `${owner}/${repo}::${workflowName}`);
 
   const branch = number !== undefined
     ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
     : `lastlight/${workflowName}`;
-
-  const issueDir = number !== undefined
-    ? `.lastlight/issue-${number}`
-    : `.lastlight/${workflowName}`;
 
   // ── Resume handling ────────────────────────────────────────────────────────
   //
@@ -107,17 +112,30 @@ export async function runSimpleWorkflow(
   // dedup-scoped executions.
   let workflowId: string;
   let taskId: string;
+  let issueDir: string;
   const existingRun = db.getWorkflowRunByTrigger(triggerId);
   if (existingRun && existingRun.workflowName === workflowName) {
     workflowId = existingRun.id;
     const stored = (existingRun.context || {}) as Record<string, unknown>;
     taskId = (stored.taskId as string | undefined) ||
       workflowScopedTaskId(repo, number, workflowName, workflowId);
+    // Recover issueDir from stored context so resumed runs use the same
+    // workspace path as the original.
+    issueDir = (stored.issueDir as string | undefined)
+      || (number !== undefined
+        ? `.lastlight/issue-${number}`
+        : `.lastlight/${workflowName}-${workflowId.slice(0, 8)}`);
     const handled = await handleExistingRun(existingRun, definition, notify, db);
     if (handled) return handled;
   } else {
     workflowId = randomUUID();
     taskId = workflowScopedTaskId(repo, number, workflowName, workflowId);
+    // Issue-scoped workflows share a dir by issue number; non-issue
+    // workflows (explore, health, etc.) get a run-scoped dir so
+    // concurrent sessions never overlap.
+    issueDir = number !== undefined
+      ? `.lastlight/issue-${number}`
+      : `.lastlight/${workflowName}-${workflowId.slice(0, 8)}`;
     db.createWorkflowRun({
       id: workflowId,
       workflowName,
@@ -128,8 +146,10 @@ export async function runSimpleWorkflow(
       status: "running",
       context: {
         kind: definition.kind,
+        owner,
         branch,
         taskId,
+        issueDir,
         models: models as Record<string, unknown> | undefined,
         ...request.extra,
       },
@@ -159,6 +179,10 @@ export async function runSimpleWorkflow(
     bootstrapLabel,
     contextSnapshot,
     models: models as unknown as Record<string, unknown>,
+    // Slack-initiated runs need the runner to pause/resume on the thread id,
+    // not on owner/repo#N. Passing the override through here keeps the
+    // runner's triggerId derivation in one place.
+    triggerIdOverride: request.triggerId,
     // Extra workflow-specific args (e.g. mode: scan from cron, or the PR fix
     // payload). These become top-level ctx keys so prompt templates can read
     // them directly via {{failedChecks}} etc.
@@ -208,7 +232,13 @@ async function handleExistingRun(
 ): Promise<WorkflowResult | null> {
   // Workflow already completed (currentPhase points past the last real phase
   // — e.g. a set_phase terminal marker like "complete"). Don't re-run.
-  if (run.currentPhase && nextPhaseAfter(definition, run.currentPhase) === null) {
+  // "waiting_approval" is a synthetic phase set when the runner pauses at a
+  // gate — it's NOT a terminal marker, so exclude it from this check.
+  if (
+    run.currentPhase &&
+    run.currentPhase !== "waiting_approval" &&
+    nextPhaseAfter(definition, run.currentPhase) === null
+  ) {
     const exactIdx = definition.phases.findIndex((p) => p.name === run.currentPhase);
     if (exactIdx === -1) {
       await notify(`Workflow \`${run.workflowName}\` is already complete for this trigger.`);
@@ -223,11 +253,23 @@ async function handleExistingRun(
   if (run.status === "paused" && run.currentPhase === "waiting_approval") {
     const pendingApproval = db.getPendingApprovalForWorkflow(run.id);
     if (pendingApproval?.status === "approved") {
-      // The approval gate has been cleared. Walk the definition to find which
-      // phase owned the gate, then update currentPhase to that phase so the
-      // runner's nextPhaseAfter() lands on the phase AFTER it.
-      const owningPhase = findPhaseOwningGate(definition, pendingApproval.gate);
-      if (owningPhase) {
+      // Reply gates are a different shape than approve gates: the runner
+      // needs to RE-ENTER the same phase (to run the next loop iteration)
+      // rather than skip past it. Find the phase that owns the gate, and
+      // set currentPhase to the phase BEFORE it so nextPhaseAfter lands
+      // on the owning phase on resume.
+      const owningPhase = findPhaseOwningLoopGate(definition, pendingApproval.gate)
+        ?? findPhaseOwningGate(definition, pendingApproval.gate);
+      if (owningPhase && pendingApproval.kind === "reply") {
+        const ownIdx = definition.phases.findIndex((p) => p.name === owningPhase);
+        const priorPhase = ownIdx > 0 ? definition.phases[ownIdx - 1].name : "";
+        db.updateWorkflowPhase(run.id, priorPhase || owningPhase, {
+          phase: priorPhase || owningPhase,
+          timestamp: new Date().toISOString(),
+          success: true,
+          summary: `Resumed after reply on gate: ${pendingApproval.gate}`,
+        });
+      } else if (owningPhase) {
         db.updateWorkflowPhase(run.id, owningPhase, {
           phase: owningPhase,
           timestamp: new Date().toISOString(),
@@ -236,10 +278,12 @@ async function handleExistingRun(
         });
       }
       console.log(
-        `[simple] Approval received for gate ${pendingApproval.gate} — resuming ${run.workflowName}`,
+        `[simple] ${pendingApproval.kind === "reply" ? "Reply" : "Approval"} received for gate ${pendingApproval.gate} — resuming ${run.workflowName}`,
       );
       db.resumeWorkflowRun(run.id);
-      await notify(`**Approval received** — resuming \`${run.workflowName}\`.`);
+      if (pendingApproval.kind !== "reply") {
+        await notify(`**Approval received** — resuming \`${run.workflowName}\`.`);
+      }
       return null; // fall through to runWorkflow
     } else if (pendingApproval?.status === "rejected") {
       const reason = pendingApproval.response || "no reason given";
@@ -270,6 +314,22 @@ function findPhaseOwningGate(
   for (const p of definition.phases) {
     if (p.approval_gate === gateName) return p.name;
     if (p.loop?.approval_gate === gateName) return p.name;
+  }
+  return null;
+}
+
+/**
+ * Generic-loop gates are named `${phaseName}_iter_${N}`, so walk the phases
+ * with `generic_loop` set and match by prefix. Used for reply-gate resume
+ * where the gate name isn't declared up front.
+ */
+function findPhaseOwningLoopGate(
+  definition: ReturnType<typeof getWorkflow>,
+  gateName: string,
+): string | null {
+  for (const p of definition.phases) {
+    if (!p.generic_loop) continue;
+    if (gateName.startsWith(`${p.name}_iter_`)) return p.name;
   }
   return null;
 }

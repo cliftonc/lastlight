@@ -129,6 +129,49 @@ describe("renderTemplate — conditional blocks", () => {
   });
 });
 
+describe("renderTemplate — deep dotted access (scratch.a.b)", () => {
+  it("resolves three-level dotted paths via walkKey", () => {
+    const ctx = {
+      ...BASE_CTX,
+      scratch: { socratic: { qa: [{ q: "q1", a: "a1" }] } },
+    };
+    const result = renderTemplate("{{scratch.socratic.qa}}", ctx);
+    expect(result).toBe(JSON.stringify([{ q: "q1", a: "a1" }]));
+  });
+
+  it("returns empty string for missing intermediate", () => {
+    const ctx = { ...BASE_CTX, scratch: {} };
+    const result = renderTemplate("{{scratch.socratic.qa}}", ctx);
+    expect(result).toBe("");
+  });
+
+  it("resolves scratch scalar values", () => {
+    const ctx = {
+      ...BASE_CTX,
+      scratch: { socratic: { ready: true } },
+    };
+    const result = renderTemplate("{{scratch.socratic.ready}}", ctx);
+    expect(result).toBe("true");
+  });
+});
+
+describe("renderTemplate — deep conditional blocks", () => {
+  it("includes block when deep dotted path is truthy", () => {
+    const ctx = {
+      ...BASE_CTX,
+      scratch: { socratic: { qa: [{ q: "q1", a: "a1" }] } },
+    };
+    const result = renderTemplate("{{#if scratch.socratic.qa}}has qa{{/if}}", ctx);
+    expect(result).toBe("has qa");
+  });
+
+  it("excludes block when deep dotted path is undefined", () => {
+    const ctx = { ...BASE_CTX, scratch: {} };
+    const result = renderTemplate("{{#if scratch.socratic.qa}}has qa{{/if}}", ctx);
+    expect(result).toBe("");
+  });
+});
+
 describe("renderTemplate — order of processing", () => {
   it("processes conditionals before variable substitution", () => {
     const ctx = { ...BASE_CTX, ciSection: "some failures" };

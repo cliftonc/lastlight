@@ -3,7 +3,7 @@ import type { EventEnvelope } from '../connectors/types.js';
 
 // Mock the classifier before importing router
 vi.mock('./classifier.js', () => ({
-  classifyComment: vi.fn().mockResolvedValue('action'),
+  classifyComment: vi.fn().mockResolvedValue({ intent: 'chat' }),
 }));
 
 import { routeEvent } from './router.js';
@@ -60,7 +60,7 @@ describe('routeEvent — PR events', () => {
 
 describe('routeEvent — comment.created', () => {
   beforeEach(() => {
-    mockClassifyComment.mockResolvedValue('action');
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
   });
 
   it('ignores comment without bot mention', async () => {
@@ -98,7 +98,7 @@ describe('routeEvent — comment.created', () => {
   });
 
   it('routes maintainer build intent on issue to github-orchestrator', async () => {
-    mockClassifyComment.mockResolvedValue('build');
+    mockClassifyComment.mockResolvedValue({ intent: 'build' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light implement this feature',
@@ -112,7 +112,7 @@ describe('routeEvent — comment.created', () => {
   });
 
   it('routes maintainer action intent on issue to issue-comment', async () => {
-    mockClassifyComment.mockResolvedValue('action');
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light please close this issue',
@@ -126,7 +126,7 @@ describe('routeEvent — comment.created', () => {
   });
 
   it('routes maintainer build intent on PR to pr-fix', async () => {
-    mockClassifyComment.mockResolvedValue('build');
+    mockClassifyComment.mockResolvedValue({ intent: 'build' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light fix the failing tests',
@@ -140,7 +140,7 @@ describe('routeEvent — comment.created', () => {
   });
 
   it('routes maintainer action intent on PR to issue-comment', async () => {
-    mockClassifyComment.mockResolvedValue('action');
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
       body: '@last-light please approve this',
@@ -154,25 +154,19 @@ describe('routeEvent — comment.created', () => {
   });
 });
 
-describe('routeEvent — message events', () => {
-  it('routes /new to chat-reset', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/new' }));
+describe('routeEvent — message events (classifier-driven)', () => {
+  it('routes reset intent to chat-reset', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'reset' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'start over' }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('chat-reset');
     }
   });
 
-  it('routes /reset to chat-reset', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/reset' }));
-    expect(result.action).toBe('skill');
-    if (result.action === 'skill') {
-      expect(result.skill).toBe('chat-reset');
-    }
-  });
-
-  it('routes /build with managed repo to github-orchestrator', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/build cliftonc/drizzle-cube#42' }));
+  it('routes build intent with managed repo to github-orchestrator', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'build', repo: 'cliftonc/drizzle-cube', issueNumber: 42 });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'build cliftonc/drizzle-cube#42' }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('github-orchestrator');
@@ -181,39 +175,65 @@ describe('routeEvent — message events', () => {
     }
   });
 
-  it('routes /build with unmanaged repo to reply with error', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/build unknown/repo#1' }));
+  it('routes build intent with unmanaged repo to reply', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'build', repo: 'unknown/repo' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'build unknown/repo' }));
     expect(result.action).toBe('reply');
     if (result.action === 'reply') {
       expect(result.message).toContain('unknown/repo');
     }
   });
 
-  it('routes /triage with managed repo to issue-triage', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/triage cliftonc/drizby' }));
+  it('routes triage intent with managed repo to issue-triage', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'triage', repo: 'cliftonc/drizby' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'triage cliftonc/drizby' }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('issue-triage');
     }
   });
 
-  it('routes /review with managed repo to pr-review', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/review cliftonc/lastlight' }));
+  it('routes review intent with managed repo to pr-review', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'review', repo: 'cliftonc/lastlight' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'review cliftonc/lastlight' }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('pr-review');
     }
   });
 
-  it('routes /status to status-report', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/status' }));
+  it('routes status intent to status-report', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'status' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: "what's running?" }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('status-report');
     }
   });
 
-  it('routes plain text to chat', async () => {
+  it('routes approve intent to approval-response', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'approve' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'approve' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('approved');
+    }
+  });
+
+  it('routes reject intent with reason to approval-response', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'reject', reason: 'too complex' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'reject, too complex' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('approval-response');
+      expect(result.context.decision).toBe('rejected');
+      expect(result.context.reason).toBe('too complex');
+    }
+  });
+
+  it('routes chat intent to chat', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
     const result = await routeEvent(makeEnvelope({ type: 'message', body: 'Hello there!' }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
@@ -284,43 +304,67 @@ describe('routeEvent — approval commands in comment.created', () => {
   });
 });
 
-describe('routeEvent — approval commands in message events', () => {
-  it('routes /approve to approval-response with approved decision', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/approve' }));
+// Slack approval routing is now tested in the classifier-driven message
+// events section above (approve/reject intent tests).
+
+describe('routeEvent — explore intent', () => {
+  it('routes maintainer explore intent on issue to explore', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'explore' });
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light help me think through this idea',
+      authorAssociation: 'OWNER',
+      issueNumber: 10,
+    }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
-      expect(result.skill).toBe('approval-response');
-      expect(result.context.decision).toBe('approved');
+      expect(result.skill).toBe('explore');
     }
   });
 
-  it('routes /approve with workflow ID', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/approve abc-123' }));
+  it('routes explore intent with repo to explore', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'explore', repo: 'cliftonc/drizzle-cube', issueNumber: 42 });
+    const result = await routeEvent(makeEnvelope({
+      type: 'message',
+      body: 'explore cliftonc/drizzle-cube#42',
+    }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
-      expect(result.skill).toBe('approval-response');
-      expect(result.context.decision).toBe('approved');
-      expect(result.context.workflowRunId).toBe('abc-123');
+      expect(result.skill).toBe('explore');
+      expect(result.context.repo).toBe('cliftonc/drizzle-cube');
+      expect(result.context.issueNumber).toBe(42);
     }
   });
+});
 
-  it('routes /reject to approval-response with rejected decision', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/reject' }));
+describe('routeEvent — reply-gate short-circuit', () => {
+  it('routes comment on issue with pending reply gate to explore-reply', async () => {
+    const mockDb = {
+      getPendingReplyGateByTrigger: vi.fn().mockReturnValue({
+        id: 'gate-1',
+        workflowRunId: 'run-1',
+        gate: 'socratic_iter_1',
+        summary: 'test',
+        status: 'pending',
+        kind: 'reply',
+        createdAt: new Date().toISOString(),
+      }),
+    };
+    const result = await routeEvent(
+      makeEnvelope({
+        type: 'comment.created',
+        body: '@last-light my answers are here',
+        authorAssociation: 'OWNER',
+        issueNumber: 10,
+        repo: 'cliftonc/drizzle-cube',
+      }),
+      { db: mockDb as any },
+    );
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
-      expect(result.skill).toBe('approval-response');
-      expect(result.context.decision).toBe('rejected');
-    }
-  });
-
-  it('routes /reject with workflow ID and reason', async () => {
-    const result = await routeEvent(makeEnvelope({ type: 'message', body: '/reject abc-123 too risky' }));
-    expect(result.action).toBe('skill');
-    if (result.action === 'skill') {
-      expect(result.skill).toBe('approval-response');
-      expect(result.context.decision).toBe('rejected');
-      expect(result.context.workflowRunId).toBe('abc-123');
-      expect(result.context.reason).toBe('too risky');
+      expect(result.skill).toBe('explore-reply');
+      expect(result.context.workflowRunId).toBe('run-1');
+      expect(result.context.reply).toContain('my answers are here');
     }
   });
 });

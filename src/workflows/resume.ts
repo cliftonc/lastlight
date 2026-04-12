@@ -13,13 +13,17 @@ export interface ResumeOptions {
   models?: ModelConfig;
   approvalConfig?: ApprovalGateConfig;
   bootstrapLabel?: string;
+  /** Post a message to a Slack channel/thread. Used to resume Slack-originated workflows. */
+  slackPoster?: (channelId: string, threadId: string, msg: string) => Promise<void>;
 }
 
 /**
  * Parse `cliftonc/drizby#18` (or `cliftonc/drizby::workflow-name`) into
- * its components. Returns null when the trigger isn't issue/PR scoped.
+ * its components. Returns null for Slack/chat-originated trigger ids —
+ * those runs resume via the messaging connector, not GitHub refetch.
  */
-function parseTriggerId(triggerId: string): { owner: string; repo: string } | null {
+export function parseTriggerId(triggerId: string): { owner: string; repo: string } | null {
+  if (triggerId.startsWith("slack:")) return null;
   const slashIdx = triggerId.indexOf("/");
   if (slashIdx < 0) return null;
   const hashIdx = triggerId.indexOf("#");
@@ -29,6 +33,22 @@ function parseTriggerId(triggerId: string): { owner: string; repo: string } | nu
   const repo = triggerId.slice(slashIdx + 1, end);
   if (!owner || !repo) return null;
   return { owner, repo };
+}
+
+/**
+ * Parse a Slack trigger id of the form `slack:{teamId}:{channel}:{thread}`.
+ * Returns null for anything else. Used by the runner bridge to reconstruct
+ * channel/thread coordinates when resuming a Slack-initiated explore run.
+ */
+export function parseSlackTriggerId(
+  triggerId: string,
+): { teamId: string; channelId: string; threadTs: string } | null {
+  if (!triggerId.startsWith("slack:")) return null;
+  const parts = triggerId.slice("slack:".length).split(":");
+  if (parts.length !== 3) return null;
+  const [teamId, channelId, threadTs] = parts;
+  if (!teamId || !channelId || !threadTs) return null;
+  return { teamId, channelId, threadTs };
 }
 
 function workflowScopedTaskId(
@@ -113,13 +133,20 @@ function makeCallbacks(
  * one and let the runner's per-phase dedup handle "what's already done".
  */
 async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<void> {
+  const stored = (run.context || {}) as Record<string, unknown>;
+
+  // Derive owner/repo: GitHub trigger ids encode it as owner/repo#N;
+  // Slack-originated runs store owner in context and repo on the row.
   const parsed = parseTriggerId(run.triggerId);
-  if (!parsed) {
-    console.warn(`[resume] Skipping ${run.id}: cannot parse triggerId ${run.triggerId}`);
+  const owner = parsed?.owner ?? (stored.owner as string | undefined) ?? "";
+  const repo = parsed?.repo ?? run.repo ?? "";
+  const issueNumber = run.issueNumber;
+  const isSlack = run.triggerId.startsWith("slack:");
+
+  if (!owner && !repo && !isSlack) {
+    console.warn(`[resume] Skipping ${run.id}: cannot derive owner/repo from triggerId ${run.triggerId}`);
     return;
   }
-  const { owner, repo } = parsed;
-  const issueNumber = run.issueNumber;
 
   let definition;
   try {
@@ -131,21 +158,21 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
     return;
   }
 
-  const issue = issueNumber
+  const issue = issueNumber && owner && repo
     ? await refetchIssue(opts.github, owner, repo, issueNumber)
     : { title: "", body: "", labels: [] as string[] };
 
   // Reconstruct the template context using the bits we stored on creation +
-  // refreshed issue data. taskId/branch were saved on the original row, fall
-  // back to deterministic defaults if the row is older than that change.
-  const stored = (run.context || {}) as Record<string, unknown>;
+  // refreshed issue data. taskId/branch/issueDir were saved on the original
+  // row, fall back to deterministic defaults if the row is older.
   const taskId = (stored.taskId as string | undefined) ??
     workflowScopedTaskId(repo, issueNumber, run.workflowName, run.id);
   const branch = (stored.branch as string | undefined) ??
     (issueNumber
       ? `lastlight/${issueNumber}-${slugify(issue.title || `issue-${issueNumber}`)}`
       : `lastlight/${run.workflowName}`);
-  const issueDir = issueNumber ? `.lastlight/issue-${issueNumber}` : `.lastlight/${run.workflowName}`;
+  const issueDir = (stored.issueDir as string | undefined)
+    ?? (issueNumber ? `.lastlight/issue-${issueNumber}` : `.lastlight/${run.workflowName}`);
 
   const ctx: TemplateContext = {
     owner,
@@ -162,18 +189,43 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
     bootstrapLabel: opts.bootstrapLabel || "lastlight:bootstrap",
     contextSnapshot: "",
     models: opts.models as unknown as Record<string, unknown>,
+    triggerIdOverride: isSlack ? run.triggerId : undefined,
   };
 
   console.log(
     `[resume] Re-dispatching ${run.workflowName} for ${run.triggerId} (was on phase=${run.currentPhase})`,
   );
 
+  // For Slack-originated runs, post progress to the Slack thread instead
+  // of GitHub. The channelId/threadId were stored in context by the
+  // original dispatch.
+  let slackCallbacks: RunnerCallbacks | null = null;
+  if (isSlack && opts.slackPoster) {
+    const ch = stored.channelId as string | undefined;
+    const th = stored.threadId as string | undefined;
+    if (ch && th) {
+      const poster = opts.slackPoster;
+      slackCallbacks = {
+        postComment: async (msg: string) => {
+          try { await poster(ch, th, msg); }
+          catch (err: unknown) {
+            const m = err instanceof Error ? err.message : String(err);
+            console.warn(`[resume] Failed to post to Slack thread: ${m}`);
+          }
+        },
+        onPhaseStart: async (phase) => console.log(`[resume] ▶ ${run.workflowName}/${phase}`),
+        onPhaseEnd: async (phase, result) =>
+          console.log(`[resume] ◀ ${run.workflowName}/${phase}: ${result.success ? "OK" : "FAILED"}`),
+      };
+    }
+  }
+
   try {
     const result = await runWorkflow(
       definition,
       ctx,
       opts.config,
-      makeCallbacks(opts.github, owner, repo, issueNumber, run.workflowName),
+      slackCallbacks || makeCallbacks(opts.github, owner, repo, issueNumber, run.workflowName),
       opts.db,
       opts.models,
       opts.approvalConfig,

@@ -154,7 +154,11 @@ export async function executeAgent(
 
     try {
       const permissions = access ? GITHUB_PERMISSION_PROFILES[access.profile] : undefined;
-      const repositories = access ? [access.repo] : undefined;
+      const repositories = access?.repo ? [access.repo] : undefined;
+      console.log(
+        `[executor] Minting git token: profile=${access?.profile ?? "default"}, ` +
+        `repo=${access?.repo || "(unscoped)"}, permissions=${permissions ? Object.keys(permissions).join(",") : "all"}`,
+      );
       const { token } = await refreshGitAuth({
         appId: process.env.GITHUB_APP_ID,
         privateKeyPath: process.env.GITHUB_APP_PRIVATE_KEY_PATH || "",
@@ -167,7 +171,10 @@ export async function executeAgent(
       // MCP GitHub server static-token mode
       env.GITHUB_TOKEN = token;
     } catch (err: any) {
-      console.warn(`[executor] Could not generate git token: ${err.message}`);
+      console.warn(
+        `[executor] Could not generate git token (repo=${access?.repo || "none"}, ` +
+        `profile=${access?.profile ?? "default"}): ${err.message}`,
+      );
     }
   }
 

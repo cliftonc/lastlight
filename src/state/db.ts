@@ -16,6 +16,12 @@ export interface WorkflowApproval {
   gate: string;
   summary: string;
   status: 'pending' | 'approved' | 'rejected';
+  /**
+   * Gate flavor. `approve` gates resolve only on an explicit approve/reject
+   * command; `reply` gates resolve on any free-form reply in the same
+   * thread (used by the socratic explore loop).
+   */
+  kind: 'approve' | 'reply';
   requestedBy?: string;
   respondedBy?: string;
   response?: string;
@@ -33,6 +39,13 @@ export interface WorkflowRun {
   phaseHistory: PhaseHistoryEntry[];
   status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
   context?: Record<string, unknown>;
+  /**
+   * Mutable phase-to-phase state, merged at the top level by
+   * `updateWorkflowRunScratch`. Distinct from `context` (which is the
+   * immutable trigger input) — used by features like the socratic explore
+   * loop to accumulate Q&A across reply-gate pauses.
+   */
+  scratch?: Record<string, unknown>;
   nodeStatuses?: Record<string, "pending" | "running" | "succeeded" | "failed" | "skipped">;
   startedAt: string;
   updatedAt: string;
@@ -163,6 +176,23 @@ export class StateDb {
     // Add node_statuses column for DAG parallelism (safe for existing DBs)
     try {
       this.db.exec(`ALTER TABLE workflow_runs ADD COLUMN node_statuses TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Mutable phase-to-phase state for features like the socratic explore
+    // loop that accumulate data across reply-gate pauses.
+    try {
+      this.db.exec(`ALTER TABLE workflow_runs ADD COLUMN scratch TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Gate flavor: 'approve' (explicit approve/reject) vs 'reply' (resolves
+    // on any free-form reply in the same thread — used by the socratic
+    // explore loop).
+    try {
+      this.db.exec(`ALTER TABLE workflow_approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'approve'`);
     } catch {
       // Column already exists — ignore
     }
@@ -851,8 +881,8 @@ export class StateDb {
   createWorkflowRun(run: Omit<WorkflowRun, "phaseHistory" | "updatedAt">): void {
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO workflow_runs (id, workflow_name, trigger_id, repo, issue_number, current_phase, phase_history, status, context, started_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)
+      INSERT INTO workflow_runs (id, workflow_name, trigger_id, repo, issue_number, current_phase, phase_history, status, context, scratch, started_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)
     `).run(
       run.id,
       run.workflowName,
@@ -862,9 +892,28 @@ export class StateDb {
       run.currentPhase,
       run.status,
       run.context ? JSON.stringify(run.context) : null,
+      run.scratch ? JSON.stringify(run.scratch) : null,
       run.startedAt,
       now,
     );
+  }
+
+  /**
+   * Top-level merge of `patch` into the workflow run's scratch state.
+   * Loop iterations can append to `scratch.socratic.qa` without clobbering
+   * other keys.
+   */
+  updateWorkflowRunScratch(id: string, patch: Record<string, unknown>): void {
+    const now = new Date().toISOString();
+    const row = this.db
+      .prepare(`SELECT scratch FROM workflow_runs WHERE id = ?`)
+      .get(id) as { scratch: string | null } | undefined;
+    if (!row) return;
+    const current = row.scratch ? (JSON.parse(row.scratch) as Record<string, unknown>) : {};
+    const merged = { ...current, ...patch };
+    this.db
+      .prepare(`UPDATE workflow_runs SET scratch = ?, updated_at = ? WHERE id = ?`)
+      .run(JSON.stringify(merged), now, id);
   }
 
   /** Update the current phase and append to phase history */
@@ -1012,11 +1061,64 @@ export class StateDb {
   // ── Workflow Approvals ─────────────────────────────────────────
 
   /** Create a new pending approval request */
-  createApproval(approval: Omit<WorkflowApproval, 'status' | 'respondedBy' | 'response' | 'respondedAt'>): void {
-    this.db.prepare(`
-      INSERT INTO workflow_approvals (id, workflow_run_id, gate, summary, status, requested_by, created_at)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?)
-    `).run(approval.id, approval.workflowRunId, approval.gate, approval.summary, approval.requestedBy ?? null, approval.createdAt);
+  createApproval(
+    approval: Omit<WorkflowApproval, "status" | "respondedBy" | "response" | "respondedAt" | "kind"> & {
+      kind?: WorkflowApproval["kind"];
+    },
+  ): void {
+    this.db
+      .prepare(
+        `
+      INSERT INTO workflow_approvals (id, workflow_run_id, gate, summary, status, kind, requested_by, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+    `,
+      )
+      .run(
+        approval.id,
+        approval.workflowRunId,
+        approval.gate,
+        approval.summary,
+        approval.kind ?? "approve",
+        approval.requestedBy ?? null,
+        approval.createdAt,
+      );
+  }
+
+  /**
+   * Resolve a reply gate: marks the approval row as approved (reply gates
+   * don't have approve/reject semantics — any reply is a "go") and stores
+   * the reply text as the `response`. Used by the socratic explore loop.
+   */
+  resolveReplyGate(id: string, replyText: string, responder: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE workflow_approvals
+           SET status = 'approved',
+               responded_by = ?,
+               response = ?,
+               responded_at = ?
+         WHERE id = ? AND kind = 'reply'`,
+      )
+      .run(responder, replyText, now, id);
+  }
+
+  /**
+   * Find the most recent pending reply gate for a given trigger id. Used by
+   * the router to short-circuit free-form replies on a paused socratic
+   * explore loop without re-running classifier logic.
+   */
+  getPendingReplyGateByTrigger(triggerId: string): WorkflowApproval | null {
+    const row = this.db
+      .prepare(
+        `SELECT wa.* FROM workflow_approvals wa
+         JOIN workflow_runs wr ON wa.workflow_run_id = wr.id
+         WHERE wr.trigger_id = ? AND wa.status = 'pending' AND wa.kind = 'reply'
+         ORDER BY wa.created_at DESC
+         LIMIT 1`,
+      )
+      .get(triggerId) as Record<string, unknown> | undefined;
+    return row ? this.deserializeApproval(row) : null;
   }
 
   /** Get a single approval by ID */
@@ -1082,6 +1184,7 @@ export class StateDb {
       gate: row.gate as string,
       summary: row.summary as string,
       status: row.status as WorkflowApproval['status'],
+      kind: ((row.kind as string | undefined) || "approve") as WorkflowApproval["kind"],
       requestedBy: row.requested_by as string | undefined || undefined,
       respondedBy: row.responded_by as string | undefined || undefined,
       response: row.response as string | undefined || undefined,
@@ -1101,6 +1204,7 @@ export class StateDb {
       phaseHistory: JSON.parse(row.phase_history as string) as PhaseHistoryEntry[],
       status: row.status as WorkflowRun["status"],
       context: row.context ? JSON.parse(row.context as string) as Record<string, unknown> : undefined,
+      scratch: row.scratch ? JSON.parse(row.scratch as string) as Record<string, unknown> : undefined,
       nodeStatuses: row.node_statuses ? JSON.parse(row.node_statuses as string) as Record<string, "pending" | "running" | "succeeded" | "failed" | "skipped"> : undefined,
       startedAt: row.started_at as string,
       updatedAt: row.updated_at as string,

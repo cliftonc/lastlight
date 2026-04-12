@@ -51,6 +51,33 @@ describe("evalUntilExpression — inequality (!=)", () => {
   });
 });
 
+describe("evalUntilExpression — dotted paths (scratch.*)", () => {
+  it("resolves a two-level dotted path", () => {
+    const ctx = { output: "", scratch: { socratic: { ready: true } } };
+    expect(evalUntilExpression("scratch.socratic.ready == true", ctx)).toBe(true);
+  });
+
+  it("resolves a dotted path with string value", () => {
+    const ctx = { output: "", scratch: { socratic: { status: "done" } } };
+    expect(evalUntilExpression("scratch.socratic.status == 'done'", ctx)).toBe(true);
+  });
+
+  it("returns false for a missing intermediate", () => {
+    const ctx = { output: "", scratch: {} };
+    expect(evalUntilExpression("scratch.socratic.ready == true", ctx)).toBe(false);
+  });
+
+  it("returns false when the leaf value is false", () => {
+    const ctx = { output: "", scratch: { socratic: { ready: false } } };
+    expect(evalUntilExpression("scratch.socratic.ready == true", ctx)).toBe(false);
+  });
+
+  it("handles bare boolean != comparison", () => {
+    const ctx = { output: "", scratch: { socratic: { ready: true } } };
+    expect(evalUntilExpression("scratch.socratic.ready != false", ctx)).toBe(true);
+  });
+});
+
 describe("evalUntilExpression — invalid / unrecognised expressions", () => {
   it("returns false for an empty string", () => {
     expect(evalUntilExpression("", { output: "anything" })).toBe(false);

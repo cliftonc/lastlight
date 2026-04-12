@@ -1,0 +1,57 @@
+kind: explore
+name: explore
+description: |
+  Socratic idea-shaping loop: read the existing issue/thread for context, ask
+  clarifying questions in a reply-gated loop until the shape is clear, then
+  synthesize a detailed spec and publish it (as a comment on the originating
+  issue for GitHub-initiated runs, or as a new issue in EXPLORE_DEFAULT_REPO
+  for Slack-initiated runs).
+
+trigger: explore
+
+phases:
+  - name: phase_0
+    label: Context
+    type: context
+
+  - name: read_context
+    label: Read existing context
+    prompt: prompts/explore-read.md
+    model: "{{models.explore}}"
+    output_var: baseline
+    messages:
+      on_start: "Cloning `{{owner}}/{{repo}}` and reading the codebase..."
+
+  - name: socratic
+    label: Socratic questioning
+    prompt: prompts/explore-ask.md
+    model: "{{models.explore}}"
+    generic_loop:
+      max_iterations: 8
+      until: "output.contains('READY')"
+      interactive: true
+      gate_kind: reply
+      scratch_key: socratic
+      gate_message: |
+        _Reply in this thread with your answer. I'll keep going until we have enough to write this up._
+        _You can say `we're done` at any point to jump straight to the spec draft._
+
+  - name: synthesize
+    label: Synthesize spec
+    prompt: prompts/explore-synthesize.md
+    model: "{{models.architect}}"
+    output_var: spec
+    messages:
+      on_start: "Writing up the spec from our conversation..."
+
+  - name: publish
+    label: Publish spec
+    prompt: prompts/explore-publish.md
+    model: "{{models.executor}}"
+    output_var: publishResult
+    on_success:
+      set_phase: complete
+    messages:
+      on_start: "Publishing the spec..."
+      on_success: "{{publishResult}}"
+      on_failure: "Failed to publish the spec — see the logs for details."

@@ -55,6 +55,22 @@ export interface TemplateContext {
   // {{phaseName.field}} for nested access and ${phaseName.output} for strings.
   phaseOutputs?: Record<string, unknown>;
 
+  /**
+   * Mutable phase-to-phase state surfaced from `workflow_runs.scratch`.
+   * Used by the socratic explore loop to accumulate Q&A across reply-gate
+   * pauses. Templates can read {{scratch.socratic.qa}} etc. via the
+   * existing two-level dot notation in renderTemplate.
+   */
+  scratch?: Record<string, unknown>;
+
+  /**
+   * Non-GitHub trigger id (currently only `slack:{teamId}:{channel}:{thread}`).
+   * When set, the runner uses this instead of deriving one from
+   * owner/repo/issueNumber — that gives Slack-initiated workflows a stable
+   * key to pause/resume on.
+   */
+  triggerIdOverride?: string;
+
   // Arbitrary extra context
   [key: string]: unknown;
 }
@@ -84,25 +100,26 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
     });
   }
 
-  // 1. Conditional blocks: {{#if varName}}...{{/if}} (supports dot notation for
-  //    two-level lookups into ctx or ctx.phaseOutputs).
+  // Walk a dotted key like `scratch.socratic.ready` through ctx, falling
+  // back to ctx.phaseOutputs for the first segment. Returns undefined on
+  // any missing intermediate.
+  const walkKey = (key: string): unknown => {
+    const parts = key.split(".");
+    if (parts.length === 1) return ctx[key];
+    let cur: unknown = ctx[parts[0]];
+    if (cur === undefined || cur === null) cur = ctx.phaseOutputs?.[parts[0]];
+    for (let i = 1; i < parts.length; i++) {
+      if (cur === null || typeof cur !== "object") return undefined;
+      cur = (cur as Record<string, unknown>)[parts[i]];
+    }
+    return cur;
+  };
+
+  // 1. Conditional blocks: {{#if varName}}...{{/if}} (supports dot notation).
   result = result.replace(
     /\{\{#if\s+(!?)(\w+(?:\.\w+)*)\}\}([\s\S]*?)\{\{\/if\}\}/g,
     (_match, negate, varName, body) => {
-      const parts = varName.split(".");
-      let val: unknown;
-      if (parts.length === 1) {
-        val = ctx[varName];
-      } else {
-        const [parent, child] = parts;
-        let parentVal: unknown = ctx[parent];
-        if (parentVal === undefined || parentVal === null) {
-          parentVal = ctx.phaseOutputs?.[parent];
-        }
-        val = parentVal && typeof parentVal === "object"
-          ? (parentVal as Record<string, unknown>)[child]
-          : undefined;
-      }
+      const val = walkKey(varName);
       // Truthy: non-empty string, non-zero number, non-empty array, true boolean
       const truthy =
         val !== undefined &&
@@ -129,26 +146,16 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
     return `https://github.com/${ctx.owner}/${ctx.repo}/blob/${encoded}/${ctx.issueDir}/${file}`;
   });
 
-  // 4. Simple variable substitution: {{varName}} and {{nested.key}} (single level)
-  //    Two-level access (`{{parent.child}}`) first checks top-level ctx, then
-  //    falls back to ctx.phaseOutputs[parent] so YAML phases can emit structured
-  //    output via `output_var` and downstream prompts can read it directly.
+  // 4. Simple variable substitution: {{varName}} and {{a.b.c...}}.
+  //    Dotted access first checks top-level ctx, then falls back to
+  //    ctx.phaseOutputs[parent] for the first segment so YAML phases can
+  //    emit structured output via `output_var` and downstream prompts can
+  //    read it directly — and the socratic explore loop can read
+  //    {{scratch.socratic.qa}}.
   result = result.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key) => {
-    const parts = key.split(".");
-    if (parts.length === 1) {
-      const val = ctx[key];
-      if (val === undefined || val === null) return "";
-      return typeof val === "object" ? JSON.stringify(val) : String(val);
-    }
-    const [parent, child] = parts;
-    let parentVal: unknown = ctx[parent];
-    if (parentVal === undefined || parentVal === null) {
-      parentVal = ctx.phaseOutputs?.[parent];
-    }
-    if (parentVal === null || typeof parentVal !== "object") return "";
-    const nested = (parentVal as Record<string, unknown>)[child];
-    if (nested === undefined || nested === null) return "";
-    return typeof nested === "object" ? JSON.stringify(nested) : String(nested);
+    const val = walkKey(key);
+    if (val === undefined || val === null) return "";
+    return typeof val === "object" ? JSON.stringify(val) : String(val);
   });
 
   return result;

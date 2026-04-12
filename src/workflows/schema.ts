@@ -54,6 +54,21 @@ const GenericLoopSchema = z
     interactive: z.boolean().default(false),
     /** Message shown at the interactive gate */
     gate_message: z.string().optional(),
+    /**
+     * Gate flavor for interactive loops. `approve` (default when absent)
+     * pauses until the user sends an explicit approve/reject command;
+     * `reply` pauses until the user sends *any* free-form message in the
+     * same thread — the reply body is merged into `scratch` and passed
+     * into the next iteration. Used by the socratic explore loop.
+     */
+    gate_kind: z.enum(["approve", "reply"]).optional(),
+    /**
+     * Dotted key into `scratch` that the loop writes the current
+     * iteration state under (e.g. `socratic`). Only meaningful when
+     * `gate_kind: reply` — the runner reads it back on resume to continue
+     * from the right iteration instead of restarting from 1.
+     */
+    scratch_key: z.string().optional(),
     /** Reset agent context each iteration (don't pass previousOutput) */
     fresh_context: z.boolean().default(false),
   })

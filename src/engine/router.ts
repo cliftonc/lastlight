@@ -1,12 +1,18 @@
 import type { EventEnvelope } from "../connectors/types.js";
 import { classifyComment } from "./classifier.js";
 import { isManagedRepo, MANAGED_REPOS } from "../managed-repos.js";
+import type { StateDb } from "../state/db.js";
 
 /** Skill name that should handle this event */
 export type RoutingResult =
   | { action: "skill"; skill: string; context: Record<string, unknown> }
   | { action: "reply"; message: string }
   | { action: "ignore"; reason: string };
+
+/** Optional dependencies the router needs to short-circuit paused runs. */
+export interface RouterDeps {
+  db?: StateDb;
+}
 
 /** Friendly reply when a Slack/CLI command targets an unmanaged repo. */
 function unmanagedRepoReply(repo: string): string {
@@ -27,7 +33,10 @@ const BOT_MENTION = /@last-light\b/i;
  * Event routing — deterministic for most events, LLM-classified for comments.
  * Maps normalized events to the skill that should handle them.
  */
-export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult> {
+export async function routeEvent(
+  envelope: EventEnvelope,
+  deps: RouterDeps = {},
+): Promise<RoutingResult> {
   switch (envelope.type) {
     case "issue.opened":
       return {
@@ -90,6 +99,29 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
         };
       }
 
+      // Reply-gate short-circuit: if a paused socratic explore run is
+      // waiting for any free-form message on this issue, feed the comment
+      // body through as the next turn's input without re-running the
+      // classifier. Must sit ABOVE the approve/reject check so replies
+      // never get treated as approvals.
+      if (deps.db && envelope.issueNumber) {
+        const triggerId = `${envelope.repo}#${envelope.issueNumber}`;
+        const pendingReply = deps.db.getPendingReplyGateByTrigger(triggerId);
+        if (pendingReply) {
+          return {
+            action: "skill",
+            skill: "explore-reply",
+            context: {
+              repo: envelope.repo,
+              issueNumber: envelope.issueNumber,
+              sender: envelope.sender,
+              reply: envelope.body,
+              workflowRunId: pendingReply.workflowRunId,
+            },
+          };
+        }
+      }
+
       // Check for approval commands before LLM classification
       const approveMatch = envelope.body.match(/@last-light\s+approve\b/i);
       const rejectMatch = envelope.body.match(/@last-light\s+reject\b(.*)/i);
@@ -108,11 +140,12 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
       }
 
       // Classify intent: is this a build/fix request or a lightweight action?
-      const intent = await classifyComment(envelope.body);
+      const { intent } = await classifyComment(envelope.body);
       console.log(`[router] Comment classified as: ${intent}`);
 
       if (envelope.prNumber) {
-        // PR comments: build intent → pr-fix, otherwise → issue-comment
+        // PR comments: build → pr-fix; explore is not meaningful on PRs
+        // (the code already exists) so collapse it to issue-comment.
         return {
           action: "skill",
           skill: intent === "build" ? "pr-fix" : "issue-comment",
@@ -128,10 +161,16 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
         };
       }
 
-      // Issue comments: build intent → full build cycle, otherwise → issue-comment
+      // Issue comments: build → full build cycle, explore → socratic
+      // explore workflow, otherwise → issue-comment.
+      const issueSkill = intent === "build"
+        ? "github-orchestrator"
+        : intent === "explore"
+        ? "explore"
+        : "issue-comment";
       return {
         action: "skill",
-        skill: intent === "build" ? "github-orchestrator" : "issue-comment",
+        skill: issueSkill,
         context: {
           repo: envelope.repo,
           issueNumber: envelope.issueNumber,
@@ -150,131 +189,173 @@ export async function routeEvent(envelope: EventEnvelope): Promise<RoutingResult
     case "message": {
       const text = envelope.body.trim();
       const raw = envelope.raw as Record<string, unknown> | undefined;
+      const channelId = raw?.channelId as string | undefined;
+      const threadId = raw?.threadId as string | undefined;
+      const teamId = (raw?.team as string | undefined) || (raw?.team_id as string | undefined) || "slack";
+      const slackTriggerId = channelId && threadId
+        ? `slack:${teamId}:${channelId}:${threadId}`
+        : undefined;
 
-      // Command: /new or /reset — session reset (handled by connector)
-      if (text === "/new" || text === "/reset") {
-        return {
-          action: "skill",
-          skill: "chat-reset",
-          context: {
-            sessionId: raw?.sessionId,
-            sender: envelope.sender,
-            source: envelope.source,
-          },
-        };
-      }
-
-      // Command: /build owner/repo#N — trigger build cycle
-      const buildMatch = text.match(/^\/build\s+(.+?)(?:#(\d+))?$/i);
-      if (buildMatch) {
-        const repo = buildMatch[1];
-        const issueNumber = buildMatch[2] ? parseInt(buildMatch[2], 10) : undefined;
-        if (!isManagedRepo(repo)) {
-          return { action: "reply", message: unmanagedRepoReply(repo) };
+      // Reply-gate short-circuit: if a paused socratic explore run is
+      // waiting on this Slack thread, feed the message body through as
+      // the next reply — this must sit above all slash-command handling
+      // so replies don't get mis-parsed as commands.
+      if (deps.db && slackTriggerId) {
+        const pendingReply = deps.db.getPendingReplyGateByTrigger(slackTriggerId);
+        if (pendingReply) {
+          return {
+            action: "skill",
+            skill: "explore-reply",
+            context: {
+              sender: envelope.sender,
+              reply: text,
+              workflowRunId: pendingReply.workflowRunId,
+              source: envelope.source,
+              triggerId: slackTriggerId,
+              channelId,
+              threadId,
+            },
+          };
         }
-        return {
-          action: "skill",
-          skill: "github-orchestrator",
-          context: {
-            repo,
-            issueNumber,
-            sender: envelope.sender,
-            commentBody: text,
-            source: envelope.source,
-          },
-        };
       }
 
-      // Command: /triage owner/repo — trigger triage
-      const triageMatch = text.match(/^\/triage\s+(.+)$/i);
-      if (triageMatch) {
-        const repo = triageMatch[1];
-        if (!isManagedRepo(repo)) {
-          return { action: "reply", message: unmanagedRepoReply(repo) };
+      // Classify all Slack messages via the LLM classifier — no regex
+      // commands. The classifier extracts intent, repo, issue number, and
+      // reject reason from natural language.
+      const {
+        intent,
+        repo: classifiedRepo,
+        issueNumber: classifiedIssue,
+        reason: classifiedReason,
+      } = await classifyComment(text);
+      console.log(
+        `[router] Slack message classified as: ${intent}` +
+        `${classifiedRepo ? ` (repo: ${classifiedRepo})` : ""}` +
+        `${classifiedIssue ? ` (#${classifiedIssue})` : ""}`,
+      );
+
+      switch (intent) {
+        case "reset":
+          return {
+            action: "skill",
+            skill: "chat-reset",
+            context: { sessionId: raw?.sessionId, sender: envelope.sender, source: envelope.source },
+          };
+
+        case "status":
+          return {
+            action: "skill",
+            skill: "status-report",
+            context: { sender: envelope.sender, source: envelope.source },
+          };
+
+        case "approve":
+          return {
+            action: "skill",
+            skill: "approval-response",
+            context: { sender: envelope.sender, decision: "approved", source: envelope.source },
+          };
+
+        case "reject":
+          return {
+            action: "skill",
+            skill: "approval-response",
+            context: {
+              sender: envelope.sender,
+              decision: "rejected",
+              reason: classifiedReason,
+              source: envelope.source,
+            },
+          };
+
+        case "build": {
+          if (!classifiedRepo) {
+            return { action: "reply", message: "Which repo should I build against? e.g. `build cliftonc/repo#42`" };
+          }
+          if (!isManagedRepo(classifiedRepo)) {
+            return { action: "reply", message: unmanagedRepoReply(classifiedRepo) };
+          }
+          return {
+            action: "skill",
+            skill: "github-orchestrator",
+            context: {
+              repo: classifiedRepo,
+              issueNumber: classifiedIssue,
+              sender: envelope.sender,
+              commentBody: text,
+              source: envelope.source,
+            },
+          };
         }
-        return {
-          action: "skill",
-          skill: "issue-triage",
-          context: {
-            repo,
-            sender: envelope.sender,
-            source: envelope.source,
-          },
-        };
-      }
 
-      // Command: /review owner/repo — trigger PR review
-      const reviewMatch = text.match(/^\/review\s+(.+)$/i);
-      if (reviewMatch) {
-        const repo = reviewMatch[1];
-        if (!isManagedRepo(repo)) {
-          return { action: "reply", message: unmanagedRepoReply(repo) };
+        case "triage": {
+          if (!classifiedRepo) {
+            return { action: "reply", message: "Which repo should I triage? e.g. `triage cliftonc/repo`" };
+          }
+          if (!isManagedRepo(classifiedRepo)) {
+            return { action: "reply", message: unmanagedRepoReply(classifiedRepo) };
+          }
+          return {
+            action: "skill",
+            skill: "issue-triage",
+            context: { repo: classifiedRepo, sender: envelope.sender, source: envelope.source },
+          };
         }
-        return {
-          action: "skill",
-          skill: "pr-review",
-          context: {
-            repo,
-            sender: envelope.sender,
-            source: envelope.source,
-          },
-        };
-      }
 
-      // Command: /status — report on running tasks
-      if (text === "/status") {
-        return {
-          action: "skill",
-          skill: "status-report",
-          context: {
-            sender: envelope.sender,
-            source: envelope.source,
-          },
-        };
-      }
+        case "review": {
+          if (!classifiedRepo) {
+            return { action: "reply", message: "Which repo should I review PRs for? e.g. `review cliftonc/repo`" };
+          }
+          if (!isManagedRepo(classifiedRepo)) {
+            return { action: "reply", message: unmanagedRepoReply(classifiedRepo) };
+          }
+          return {
+            action: "skill",
+            skill: "pr-review",
+            context: { repo: classifiedRepo, sender: envelope.sender, source: envelope.source },
+          };
+        }
 
-      // Command: /approve [workflow_run_id] — approve pending gate
-      const approveSlash = text.match(/^\/approve(?:\s+(\S+))?$/i);
-      if (approveSlash) {
-        return {
-          action: "skill",
-          skill: "approval-response",
-          context: {
-            workflowRunId: approveSlash[1] || undefined,
-            sender: envelope.sender,
-            decision: "approved",
-            source: envelope.source,
-          },
-        };
-      }
+        case "explore": {
+          if (!classifiedRepo || !isManagedRepo(classifiedRepo)) {
+            return {
+              action: "reply",
+              message: classifiedRepo
+                ? unmanagedRepoReply(classifiedRepo)
+                : "I'd love to help explore that idea, but I need to know which repo to work against. " +
+                  "Could you restate your request and include the repo? For example: " +
+                  "\"let's explore adding webhooks to cliftonc/lastlight\"",
+            };
+          }
+          return {
+            action: "skill",
+            skill: "explore",
+            context: {
+              repo: classifiedRepo,
+              issueNumber: classifiedIssue,
+              sender: envelope.sender,
+              commentBody: text,
+              source: envelope.source,
+              triggerId: slackTriggerId,
+              channelId,
+              threadId,
+            },
+          };
+        }
 
-      // Command: /reject [workflow_run_id] [reason] — reject pending gate
-      const rejectSlash = text.match(/^\/reject(?:\s+(\S+))?(?:\s+(.+))?$/i);
-      if (rejectSlash) {
-        return {
-          action: "skill",
-          skill: "approval-response",
-          context: {
-            workflowRunId: rejectSlash[1] || undefined,
-            sender: envelope.sender,
-            decision: "rejected",
-            reason: rejectSlash[2] || undefined,
-            source: envelope.source,
-          },
-        };
+        default:
+          // chat — conversational reply
+          return {
+            action: "skill",
+            skill: "chat",
+            context: {
+              sessionId: raw?.sessionId,
+              message: text,
+              sender: envelope.sender,
+              source: envelope.source,
+            },
+          };
       }
-
-      // Default: conversational chat
-      return {
-        action: "skill",
-        skill: "chat",
-        context: {
-          sessionId: raw?.sessionId,
-          message: text,
-          sender: envelope.sender,
-          source: envelope.source,
-        },
-      };
     }
 
     default:

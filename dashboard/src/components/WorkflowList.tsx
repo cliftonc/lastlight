@@ -52,6 +52,143 @@ interface DetailPanelProps {
   onApprovalResponded: () => void;
 }
 
+// ── Resizable pipeline + detail panels ──────────────────────────────────
+
+interface ResizablePipelineProps {
+  run: WorkflowRun;
+  definition: WorkflowDefinition | null;
+  definitionError: string | null;
+  executions: WorkflowRunExecution[];
+  selectedPhase: string | null;
+  onPhaseClick: (phase: string | null) => void;
+  selectedExecution: WorkflowRunExecution | null;
+  selectedExecutions: WorkflowRunExecution[];
+  feedOrder: MessageOrder;
+  onFeedOrderChange: (o: MessageOrder) => void;
+}
+
+/**
+ * Renders the pipeline visualization and the detail panels below it with a
+ * draggable divider. The pipeline section is capped at 50% of the available
+ * height and can be resized down further by dragging the divider bar.
+ */
+function ResizablePipeline({
+  run,
+  definition,
+  definitionError,
+  executions,
+  selectedPhase,
+  onPhaseClick,
+  selectedExecution,
+  selectedExecutions,
+  feedOrder,
+  onFeedOrderChange,
+}: ResizablePipelineProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [pipelineHeight, setPipelineHeight] = useState<number | null>(null);
+  const dragging = useRef(false);
+  const startY = useRef(0);
+  const startH = useRef(0);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startY.current = e.clientY;
+    startH.current = pipelineHeight ?? containerRef.current?.querySelector("[data-pipeline]")?.clientHeight ?? 180;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current || !containerRef.current) return;
+      const containerH = containerRef.current.clientHeight;
+      const maxH = Math.floor(containerH * 0.7);
+      const minH = 80;
+      const delta = ev.clientY - startY.current;
+      setPipelineHeight(Math.max(minH, Math.min(maxH, startH.current + delta)));
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [pipelineHeight]);
+
+  return (
+    <div ref={containerRef} className="flex flex-col flex-1 min-h-0">
+      {/* Pipeline section — capped at 50% by default */}
+      <div
+        data-pipeline
+        className="shrink-0 overflow-auto"
+        style={{ maxHeight: pipelineHeight ?? "50%", height: pipelineHeight ?? undefined }}
+      >
+        <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
+          Pipeline
+        </div>
+        {definitionError ? (
+          <div className="p-4 text-sm text-error border border-error/40 bg-error/5 rounded">
+            {definitionError}
+          </div>
+        ) : (
+          <WorkflowPipeline
+            run={run}
+            definition={definition}
+            executions={executions}
+            height={180}
+            selectedPhase={selectedPhase}
+            onPhaseClick={onPhaseClick}
+          />
+        )}
+      </div>
+
+      {/* Draggable divider */}
+      <div
+        className="shrink-0 flex items-center justify-center cursor-row-resize group py-0.5"
+        onMouseDown={onDragStart}
+      >
+        <div className="w-12 h-1 rounded-full bg-base-300 group-hover:bg-primary/50 transition-colors" />
+      </div>
+
+      {/* Detail panels */}
+      {selectedPhase ? (
+        <div className="flex flex-1 gap-4 min-h-0 border-t border-base-300 pt-3">
+          <div className="w-80 shrink-0 overflow-y-auto border border-base-300/60 rounded bg-base-200/30">
+            <PhaseDetailPanel
+              phaseName={selectedPhase}
+              run={run}
+              definition={definition}
+              execution={selectedExecution}
+              totalExecutions={selectedExecutions.length}
+            />
+          </div>
+          <div className="flex-1 overflow-hidden flex flex-col border border-base-300/60 rounded bg-base-100">
+            {selectedExecution?.sessionId ? (
+              <MessageFeed
+                key={selectedExecution.sessionId}
+                sessionId={selectedExecution.sessionId}
+                order={feedOrder}
+                onOrderChange={onFeedOrderChange}
+                searchQuery=""
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-base-content/40 text-sm p-6 text-center">
+                {selectedExecution
+                  ? "Session not captured for this run."
+                  : "No execution recorded for this phase yet."}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-base-content/30 text-xs border-t border-base-300 pt-3">
+          click a phase above to inspect it
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Detail panel ────────────────────────────────────────────────────────
+
 function DetailPanel({ run, approvals, onCancel, onApprovalResponded }: DetailPanelProps) {
   const runApprovals = approvals.filter((a) => a.workflowRunId === run.id);
   const canCancel = run.status === "running" || run.status === "paused";
@@ -179,60 +316,18 @@ function DetailPanel({ run, approvals, onCancel, onApprovalResponded }: DetailPa
 
       <ApprovalBanner approvals={runApprovals} onResponded={onApprovalResponded} />
 
-      <div className="shrink-0">
-        <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
-          Pipeline
-        </div>
-        {definitionError ? (
-          <div className="p-4 text-sm text-error border border-error/40 bg-error/5 rounded">
-            {definitionError}
-          </div>
-        ) : (
-          <WorkflowPipeline
-            run={run}
-            definition={definition}
-            executions={executions}
-            height={180}
-            selectedPhase={selectedPhase}
-            onPhaseClick={setSelectedPhase}
-          />
-        )}
-      </div>
-
-      {selectedPhase ? (
-        <div className="flex flex-1 gap-4 min-h-0 border-t border-base-300 pt-4">
-          <div className="w-80 shrink-0 overflow-y-auto border border-base-300/60 rounded bg-base-200/30">
-            <PhaseDetailPanel
-              phaseName={selectedPhase}
-              run={run}
-              definition={definition}
-              execution={selectedExecution}
-              totalExecutions={selectedExecutions.length}
-            />
-          </div>
-          <div className="flex-1 overflow-hidden flex flex-col border border-base-300/60 rounded bg-base-100">
-            {selectedExecution?.sessionId ? (
-              <MessageFeed
-                key={selectedExecution.sessionId}
-                sessionId={selectedExecution.sessionId}
-                order={feedOrder}
-                onOrderChange={setFeedOrder}
-                searchQuery=""
-              />
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-base-content/40 text-sm p-6 text-center">
-                {selectedExecution
-                  ? "Session not captured for this run."
-                  : "No execution recorded for this phase yet."}
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-base-content/30 text-xs border-t border-base-300 pt-4">
-          click a phase above to inspect it
-        </div>
-      )}
+      <ResizablePipeline
+        run={run}
+        definition={definition}
+        definitionError={definitionError}
+        executions={executions}
+        selectedPhase={selectedPhase}
+        onPhaseClick={setSelectedPhase}
+        selectedExecution={selectedExecution}
+        selectedExecutions={selectedExecutions}
+        feedOrder={feedOrder}
+        onFeedOrderChange={setFeedOrder}
+      />
     </div>
   );
 }

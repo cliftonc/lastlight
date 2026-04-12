@@ -12,7 +12,36 @@
 
 export interface LoopEvalContext {
   output: string;
-  [key: string]: string;
+  /**
+   * Flattened key/value store. Values are serialized to strings for the
+   * quoted-literal comparison; the `true`/`false` bare-literal path
+   * special-cases boolean-ish values ("true", "false", "1", "0").
+   * Dotted keys (e.g. `scratch.socratic.ready`) are resolved by reading
+   * the first segment from top level and walking the rest through nested
+   * objects.
+   */
+  [key: string]: unknown;
+}
+
+/** Walk a dotted path through the eval context. */
+function readPath(ctx: LoopEvalContext, path: string): unknown {
+  const parts = path.split(".");
+  let cur: unknown = ctx[parts[0]];
+  for (let i = 1; i < parts.length; i++) {
+    if (cur === null || cur === undefined || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[parts[i]];
+  }
+  return cur;
+}
+
+function coerceBool(v: unknown): boolean {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string") {
+    const lower = v.toLowerCase();
+    return lower === "true" || lower === "1" || lower === "yes";
+  }
+  return false;
 }
 
 /**
@@ -25,22 +54,33 @@ export function evalUntilExpression(expr: string, ctx: LoopEvalContext): boolean
   // output.contains('text') or output.contains("text")
   const containsMatch = trimmed.match(/^output\.contains\(['"](.+)['"]\)$/);
   if (containsMatch) {
-    return ctx.output.includes(containsMatch[1]);
+    return String(ctx.output ?? "").includes(containsMatch[1]);
   }
 
-  // variable == 'value' or variable == "value"
-  const eqMatch = trimmed.match(/^(\w+)\s*==\s*['"](.+)['"]$/);
+  // dotted.path == true / == false / != true / != false (bare boolean literal)
+  const boolMatch = trimmed.match(/^([\w.]+)\s*(==|!=)\s*(true|false)$/);
+  if (boolMatch) {
+    const [, key, op, lit] = boolMatch;
+    const actual = coerceBool(readPath(ctx, key));
+    const expected = lit === "true";
+    return op === "==" ? actual === expected : actual !== expected;
+  }
+
+  // dotted.path == 'value' or dotted.path == "value"
+  const eqMatch = trimmed.match(/^([\w.]+)\s*==\s*['"](.+)['"]$/);
   if (eqMatch) {
     const [, key, value] = eqMatch;
-    return ctx[key] === value;
+    const v = readPath(ctx, key);
+    return String(v ?? "") === value;
   }
 
-  // variable != 'value' or variable != "value"
-  const neqMatch = trimmed.match(/^(\w+)\s*!=\s*['"](.+)['"]$/);
+  // dotted.path != 'value' or dotted.path != "value"
+  const neqMatch = trimmed.match(/^([\w.]+)\s*!=\s*['"](.+)['"]$/);
   if (neqMatch) {
     const [, key, value] = neqMatch;
-    if (!(key in ctx)) return false; // absent variable — safe default
-    return ctx[key] !== value;
+    const v = readPath(ctx, key);
+    if (v === undefined) return false; // absent variable — safe default
+    return String(v) !== value;
   }
 
   // Unrecognised — safe default

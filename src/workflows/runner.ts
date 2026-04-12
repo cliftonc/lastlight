@@ -140,6 +140,7 @@ function gitAccessProfileForWorkflow(workflowName: string): GitAccessProfile {
       return "review-write";
     case "issue-triage":
     case "issue-comment":
+    case "explore":
       return "issues-write";
     default:
       return "read";
@@ -334,7 +335,17 @@ export async function runWorkflow(
   const phases: PhaseResult[] = [];
   const phaseOutputs: Record<string, unknown> = {};
   const { taskId } = ctx;
-  const triggerId = `${ctx.owner}/${ctx.repo}#${ctx.issueNumber}`;
+  // Slack-originated runs carry an explicit `slack:` trigger id — everything
+  // else (GitHub webhook, CLI) uses the legacy owner/repo#N shape.
+  const triggerId = (ctx.triggerIdOverride as string | undefined)
+    || `${ctx.owner}/${ctx.repo}#${ctx.issueNumber}`;
+
+  // Load scratch state from the workflow run so generic loops can resume
+  // iteration at the right index and templates can read {{scratch.*}}.
+  const scratch: Record<string, unknown> = ctx.scratch
+    ? { ...(ctx.scratch as Record<string, unknown>) }
+    : (db && workflowId ? { ...(db.getWorkflowRun(workflowId)?.scratch ?? {}) } : {});
+  ctx.scratch = scratch;
   const githubAccess = gitSandboxAccessForWorkflow(definition.name, ctx.owner, ctx.repo);
   const notify = callbacks.postComment || (async () => {});
   const onStart = callbacks.onPhaseStart || (async () => {});
@@ -625,9 +636,21 @@ export async function runWorkflow(
         continue;
       }
 
-      let iteration = 0;
+      // Reply-gate loops resume mid-flight: read the saved iteration out
+      // of scratch[scratch_key] so we pick up at N+1 instead of 1 and
+      // don't re-run iterations whose dedup rows are already "done".
+      const scratchKey = loop.scratch_key;
+      const scratchSlot = (scratchKey
+        ? (scratch[scratchKey] as Record<string, unknown> | undefined) ?? {}
+        : {}) as Record<string, unknown>;
+      const resumeFromIter =
+        loop.gate_kind === "reply" && typeof scratchSlot.iteration === "number"
+          ? Math.min(scratchSlot.iteration as number, MAX_ITER)
+          : 0;
+
+      let iteration = resumeFromIter;
       let complete = false;
-      let previousOutput = "";
+      let previousOutput = (scratchSlot.lastOutput as string | undefined) ?? "";
 
       while (!complete && iteration < MAX_ITER) {
         iteration++;
@@ -641,6 +664,7 @@ export async function runWorkflow(
           maxIterations: MAX_ITER,
           previousOutput: loop.fresh_context ? "" : previousOutput,
           phaseOutputs,
+          scratch,
         };
         const prompt = buildPhasePrompt(phase, ctx, iterCtx);
 
@@ -695,9 +719,15 @@ export async function runWorkflow(
         // Evaluate until expression
         let conditionMet = false;
         if (loop.until) {
-          conditionMet = evalUntilExpression(loop.until, { output: iterOutput, ...Object.fromEntries(
-            Object.entries(ctx).filter(([, v]) => typeof v === "string").map(([k, v]) => [k, v as string])
-          )});
+          conditionMet = evalUntilExpression(loop.until, {
+            output: iterOutput,
+            scratch,
+            ...Object.fromEntries(
+              Object.entries(ctx)
+                .filter(([, v]) => typeof v === "string")
+                .map(([k, v]) => [k, v as string]),
+            ),
+          });
         }
 
         // Evaluate until_bash
@@ -712,21 +742,47 @@ export async function runWorkflow(
 
         if (conditionMet) {
           complete = true;
+          if (scratchKey && db && workflowId) {
+            db.updateWorkflowRunScratch(workflowId, {
+              [scratchKey]: { ...scratchSlot, iteration, ready: true, lastOutput: iterOutput },
+            });
+            scratch[scratchKey] = {
+              ...(scratch[scratchKey] as Record<string, unknown> | undefined),
+              iteration,
+              ready: true,
+              lastOutput: iterOutput,
+            };
+          }
           persistPhase(iterLabel, `iteration ${iteration} — condition met`);
           break;
         }
 
         // Interactive gate between iterations
         if (loop.interactive && !complete && db && workflowId) {
+          const isReply = loop.gate_kind === "reply";
           const gateMsg = loop.gate_message
-            ? loop.gate_message
-            : `Loop iteration ${iteration}/${MAX_ITER} complete. Approve to continue.`;
+            ? renderTemplate(loop.gate_message, { ...ctx, phaseOutputs, iteration, maxIterations: MAX_ITER, scratch })
+            : `Loop iteration ${iteration}/${MAX_ITER} complete.`;
+
+          // Persist iteration + last output into scratch BEFORE pausing so
+          // the resume path can pick up at N+1 instead of re-running from 1.
+          if (scratchKey) {
+            const slot = {
+              ...(scratch[scratchKey] as Record<string, unknown> | undefined),
+              iteration,
+              lastOutput: iterOutput,
+            };
+            scratch[scratchKey] = slot;
+            db.updateWorkflowRunScratch(workflowId, { [scratchKey]: slot });
+          }
+
           const approvalId = randomUUID();
           db.createApproval({
             id: approvalId,
             workflowRunId: workflowId,
             gate: `${phaseName}_iter_${iteration}`,
             summary: gateMsg,
+            kind: isReply ? "reply" : "approve",
             requestedBy: ctx.sender,
             createdAt: new Date().toISOString(),
           });
@@ -734,15 +790,24 @@ export async function runWorkflow(
             phase: "waiting_approval",
             timestamp: new Date().toISOString(),
             success: true,
-            summary: `Waiting for approval: ${phaseName}_iter_${iteration} (${approvalId})`,
+            summary: `Waiting for ${isReply ? "reply" : "approval"}: ${phaseName}_iter_${iteration} (${approvalId})`,
           });
           db.pauseWorkflowRun(workflowId);
-          await notify(
-            `**${phaseName} iteration ${iteration}/${MAX_ITER} complete** — approval required to continue.\n\n` +
-              `${gateMsg}\n\n` +
-              `**To continue:** comment \`@last-light approve\`\n` +
-              `**To abort:** comment \`@last-light reject [reason]\``,
-          );
+
+          if (isReply) {
+            // Post the agent's message (the questions) and a tiny hint —
+            // the user just replies in the thread to resume. No approve/
+            // reject commands here.
+            if (iterOutput.trim()) await notify(iterOutput);
+            if (gateMsg.trim()) await notify(gateMsg);
+          } else {
+            await notify(
+              `**${phaseName} iteration ${iteration}/${MAX_ITER} complete** — approval required to continue.\n\n` +
+                `${gateMsg}\n\n` +
+                `**To continue:** comment \`@last-light approve\`\n` +
+                `**To abort:** comment \`@last-light reject [reason]\``,
+            );
+          }
           return { success: true, phases, paused: true };
         }
 

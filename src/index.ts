@@ -79,15 +79,26 @@ async function main() {
   const dispatchWorkflow = async (
     workflowName: string,
     context: Record<string, unknown>,
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{ success: boolean; error?: string; paused?: boolean }> => {
+    // Slack-initiated workflows (explore, /explore) carry a
+    // `slack:{team}:{channel}:{thread}` triggerId and don't require a
+    // managed `repo` — their postComment goes back to the Slack thread.
+    const slackTriggerId = typeof context.triggerId === "string" && context.triggerId.startsWith("slack:")
+      ? (context.triggerId as string)
+      : undefined;
+
     const repoStr = context.repo as string | undefined;
-    if (!repoStr) {
+    if (!repoStr && !slackTriggerId) {
       const msg = `dispatchWorkflow(${workflowName}): missing 'repo' in context`;
       console.error(`[dispatch] ${msg}`);
       return { success: false, error: msg };
     }
-    const [owner, repo] = repoStr.includes("/") ? repoStr.split("/") : ["", repoStr];
-    if (!owner || !repo) {
+    const [owner, repo] = repoStr && repoStr.includes("/")
+      ? repoStr.split("/")
+      : repoStr
+      ? ["", repoStr]
+      : ["", ""];
+    if (repoStr && (!owner || !repo)) {
       const msg = `dispatchWorkflow(${workflowName}): invalid repo format '${repoStr}'`;
       console.error(`[dispatch] ${msg}`);
       return { success: false, error: msg };
@@ -105,8 +116,18 @@ async function main() {
       labels,
       sender,
       commentBody,
+      triggerId: _triggerId,
+      channelId,
+      threadId,
       ...rest
     } = context;
+
+    // Preserve channelId/threadId in extra so they're stored on the
+    // workflow run context — needed by boot-time resume to rebuild the
+    // Slack postComment callback after a harness restart.
+    const extra: Record<string, unknown> = { ...(rest as Record<string, unknown>) };
+    if (typeof channelId === "string") extra.channelId = channelId;
+    if (typeof threadId === "string") extra.threadId = threadId;
 
     const request: SimpleWorkflowRequest = {
       owner,
@@ -118,21 +139,42 @@ async function main() {
       issueLabels: Array.isArray(labels) ? (labels as string[]) : undefined,
       commentBody: typeof commentBody === "string" ? commentBody : undefined,
       sender: typeof sender === "string" ? sender : "unknown",
-      extra: rest as Record<string, unknown>,
+      triggerId: slackTriggerId,
+      extra,
     };
 
-    const callbacks: RunnerCallbacks = {
-      postComment: github && issueNumber
-        ? async (msg) => {
-            try {
-              await github.postComment(owner, repo, issueNumber as number, msg);
-            } catch (err: unknown) {
-              const m = err instanceof Error ? err.message : String(err);
-              console.warn(`[dispatch] Failed to post comment: ${m}`);
-            }
+    const slackPost = slackTriggerId && slackConnector && typeof channelId === "string" && typeof threadId === "string"
+      ? async (msg: string) => {
+          try {
+            await slackConnector!.sendMessage(channelId, threadId, msg);
+          } catch (err: unknown) {
+            const m = err instanceof Error ? err.message : String(err);
+            console.warn(`[dispatch] Failed to post to Slack thread: ${m}`);
           }
-        : undefined,
-      onPhaseStart: async (phase) => console.log(`[dispatch] ▶ ${workflowName}/${phase}`),
+        }
+      : undefined;
+
+    const callbacks: RunnerCallbacks = {
+      postComment: slackPost
+        ?? (github && issueNumber
+          ? async (msg) => {
+              try {
+                await github.postComment(owner, repo, issueNumber as number, msg);
+              } catch (err: unknown) {
+                const m = err instanceof Error ? err.message : String(err);
+                console.warn(`[dispatch] Failed to post comment: ${m}`);
+              }
+            }
+          : undefined),
+      onPhaseStart: async (phase) => {
+        console.log(`[dispatch] ▶ ${workflowName}/${phase}`);
+        // Refresh the Slack thinking indicator so long-running phases
+        // don't leave the thread looking dead. threadId doubles as both
+        // the message anchor and the thread root for DM threads.
+        if (slackPost && slackConnector && typeof channelId === "string" && typeof threadId === "string") {
+          slackConnector.showTyping(channelId as string, threadId as string, threadId as string).catch(() => {});
+        }
+      },
       onPhaseEnd: async (phase, result) =>
         console.log(`[dispatch] ◀ ${workflowName}/${phase}: ${result.success ? "OK" : "FAILED"}`),
     };
@@ -155,12 +197,14 @@ async function main() {
         config.bootstrapLabel,
       );
       const summary = result.phases.map((p) => `${p.phase}=${p.success ? "ok" : "fail"}`).join(", ");
-      if (result.success) {
+      if (result.paused) {
+        console.log(`[dispatch] ${workflowName} paused (${summary})`);
+      } else if (result.success) {
         console.log(`[dispatch] ${workflowName} completed (${summary})`);
       } else {
         console.warn(`[dispatch] ${workflowName} failed (${summary})`);
       }
-      return { success: result.success };
+      return { success: result.success, paused: result.paused };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[dispatch] ${workflowName} threw: ${msg}`);
@@ -333,7 +377,7 @@ async function main() {
   registry.onEvent(async (envelope: EventEnvelope) => {
     console.log(`[event] ${envelope.source}:${envelope.type} from ${envelope.sender}${envelope.repo ? ` on ${envelope.repo}` : ""}`);
 
-    const route = await routeEvent(envelope);
+    const route = await routeEvent(envelope, { db });
 
     if (route.action === "ignore") {
       console.log(`[event] Ignored: ${route.reason}`);
@@ -514,6 +558,91 @@ async function main() {
       return;
     }
 
+    // Explore reply: free-form user reply on a paused socratic explore
+    // run. Resolve the reply gate with the message body, merge it into
+    // scratch.socratic.qa so the next iteration sees the answer, and
+    // re-dispatch the workflow to continue the loop.
+    if (skill === "explore-reply") {
+      const workflowRunId = context.workflowRunId as string;
+      const replyText = (context.reply as string) || "";
+      const sender = (context.sender as string) || "unknown";
+
+      const run = db.getWorkflowRun(workflowRunId);
+      if (!run) {
+        console.warn(`[event] explore-reply: run ${workflowRunId} not found`);
+        return;
+      }
+      const pending = db.getPendingApprovalForWorkflow(workflowRunId);
+      if (!pending || pending.kind !== "reply") {
+        console.warn(`[event] explore-reply: no pending reply gate on ${workflowRunId}`);
+        return;
+      }
+      db.resolveReplyGate(pending.id, replyText, sender);
+
+      // Append the QA entry to scratch.socratic.qa. The runner reads this
+      // via {{scratch.socratic.qa}} on the next iteration.
+      const prevScratch = (run.scratch || {}) as Record<string, unknown>;
+      const prevSocratic = (prevScratch.socratic || {}) as Record<string, unknown>;
+      const qaList = Array.isArray(prevSocratic.qa) ? [...(prevSocratic.qa as unknown[])] : [];
+      qaList.push({
+        question: prevSocratic.lastOutput ?? "",
+        answer: replyText,
+        sender,
+        at: new Date().toISOString(),
+      });
+      db.updateWorkflowRunScratch(workflowRunId, {
+        socratic: { ...prevSocratic, qa: qaList },
+      });
+
+      // Set currentPhase to the phase BEFORE the loop owner so the
+      // runner's nextPhaseAfter lands back on the loop phase for the
+      // next iteration. Walk the workflow definition to find it.
+      try {
+        const { getWorkflow } = await import("./workflows/loader.js");
+        const def = getWorkflow(run.workflowName);
+        // Find the phase that owns this gate (pattern: socratic_iter_N)
+        const gateParts = pending.gate.match(/^(.+)_iter_\d+$/);
+        const owningPhaseName = gateParts ? gateParts[1] : null;
+        if (owningPhaseName) {
+          const ownIdx = def.phases.findIndex((p) => p.name === owningPhaseName);
+          const priorPhase = ownIdx > 0 ? def.phases[ownIdx - 1].name : owningPhaseName;
+          db.updateWorkflowPhase(workflowRunId, priorPhase, {
+            phase: priorPhase,
+            timestamp: new Date().toISOString(),
+            success: true,
+            summary: `Resumed after reply on gate: ${pending.gate}`,
+          });
+        }
+      } catch (err) {
+        console.warn(`[event] explore-reply: could not resolve owning phase:`, err);
+      }
+      db.resumeWorkflowRun(workflowRunId);
+
+      // Re-dispatch. Use channelId/threadId from the current event context
+      // (the router captured them from the reply envelope), not from stored
+      // workflow context — they were never persisted there.
+      const isSlack = run.triggerId.startsWith("slack:");
+      const replyChannelId = context.channelId as string | undefined;
+      const replyThreadId = context.threadId as string | undefined;
+      // Reconstruct owner/repo from the stored workflow context.
+      const storedCtx = (run.context || {}) as Record<string, unknown>;
+      const storedOwner = storedCtx.owner as string | undefined;
+      const resumeRepo = storedOwner && run.repo
+        ? `${storedOwner}/${run.repo}`
+        : run.repo || undefined;
+      console.log(`[event] explore-reply: resuming ${workflowRunId} after reply from ${sender}`);
+      dispatchWorkflow("explore", {
+        repo: resumeRepo || (isSlack ? undefined : run.triggerId.split("#")[0]),
+        issueNumber: run.issueNumber,
+        sender,
+        _triggerType: envelope.type === "message" ? "chat" : "webhook",
+        triggerId: isSlack ? run.triggerId : undefined,
+        channelId: replyChannelId,
+        threadId: replyThreadId,
+      }).catch((err) => console.error(`[event] explore-reply resume failed:`, err));
+      return;
+    }
+
     // Approval responses
     if (skill === "approval-response") {
       const decision = context.decision as "approved" | "rejected";
@@ -661,7 +790,10 @@ async function main() {
     if (envelope.type === "message") {
       await envelope.reply(`Starting *${skill}*... I'll report back when it's done.`);
       dispatchWorkflow(skill, { ...context, _triggerType: "chat" }).then(async (result) => {
-        if (result.success) {
+        if (result.paused) {
+          // Workflow paused at a gate (approval or reply) — don't say
+          // "completed", the workflow itself already posted instructions.
+        } else if (result.success) {
           await envelope.reply(`*${skill}* completed.`);
         } else {
           await envelope.reply(`*${skill}* failed${result.error ? `: ${result.error}` : ""}.`);
@@ -732,6 +864,9 @@ async function main() {
     models: config.models,
     approvalConfig: config.approval,
     bootstrapLabel: config.bootstrapLabel,
+    slackPoster: slackConnector
+      ? (channelId, threadId, msg) => slackConnector!.sendMessage(channelId, threadId, msg).then(() => {})
+      : undefined,
   }).catch((err) => console.error("[main] Resume sweep failed:", err));
 
   console.log("[main] Ready to receive events");

@@ -89,6 +89,13 @@ export interface LastLightConfig {
   approval?: Record<string, boolean>;
   /** Label applied to issues that exist solely to set up missing guardrails. */
   bootstrapLabel: string;
+  /**
+   * Destination for Slack-initiated socratic explore runs. `owner/name` of
+   * the repo that should receive the synthesized spec as a new issue.
+   * Optional — only required when a Slack explore run reaches the publish
+   * phase without a target repo identified earlier in the flow.
+   */
+  exploreDefaultRepo?: string;
 }
 
 /**
@@ -136,6 +143,7 @@ export function loadConfig(): LastLightConfig {
     slack,
     approval: parseApprovalGates(),
     bootstrapLabel: process.env.BOOTSTRAP_LABEL || "lastlight:bootstrap",
+    exploreDefaultRepo: process.env.EXPLORE_DEFAULT_REPO || undefined,
   };
 }
 
