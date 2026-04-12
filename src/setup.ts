@@ -160,20 +160,27 @@ async function promptYesNo(
 // ── Setup steps ─────────────────────────────────────────────────────────────
 
 function preflight(): void {
-  // Check for docker-compose.yml; clone if not present
+  // Check for docker-compose.yml; clone if not present, then cd into it
   if (!existsSync("docker-compose.yml")) {
-    console.log("\nNo docker-compose.yml found in current directory.");
-    console.log("Cloning cliftonc/lastlight into ./lastlight ...");
-    try {
-      execSync("git clone https://github.com/cliftonc/lastlight.git lastlight", {
-        stdio: "inherit",
-      });
-      console.log("\nCloned. Please run:\n  cd lastlight && npx lastlight setup\n");
-    } catch {
-      console.error("Failed to clone repository. Please clone it manually:");
-      console.error("  git clone https://github.com/cliftonc/lastlight.git");
+    // Maybe we're one level up and a `lastlight/` clone already exists
+    if (existsSync("lastlight/docker-compose.yml")) {
+      console.log("\nFound existing lastlight/ directory — continuing setup there.\n");
+      process.chdir("lastlight");
+    } else {
+      console.log("\nNo docker-compose.yml found in current directory.");
+      console.log("Cloning cliftonc/lastlight into ./lastlight ...\n");
+      try {
+        execSync("git clone https://github.com/cliftonc/lastlight.git lastlight", {
+          stdio: "inherit",
+        });
+      } catch {
+        console.error("Failed to clone repository. Please clone it manually:");
+        console.error("  git clone https://github.com/cliftonc/lastlight.git");
+        process.exit(1);
+      }
+      process.chdir("lastlight");
+      console.log(`\nContinuing setup in ${process.cwd()}\n`);
     }
-    process.exit(0);
   }
 
   // Check Docker is available
