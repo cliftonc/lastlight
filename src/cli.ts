@@ -30,6 +30,7 @@ if (args.length === 0) {
 Last Light CLI
 
 Usage:
+  tsx src/cli.ts setup                 Interactive setup wizard (run before first launch)
   tsx src/cli.ts <github-url>          Triage that one issue (default — cheap)
   tsx src/cli.ts <owner/repo#number>   Same, shorthand
   tsx src/cli.ts triage <owner/repo>   Scan repo for issues to triage
@@ -76,6 +77,13 @@ async function authenticate(): Promise<void> {
 }
 
 async function main() {
+  // Setup wizard — runs before server health check (no server needed)
+  if (args[0] === "setup") {
+    const { runSetup } = await import("./setup.js");
+    await runSetup();
+    process.exit(0);
+  }
+
   // Check server is running
   try {
     const healthRes = await fetch(`${SERVER_URL}/health`);
