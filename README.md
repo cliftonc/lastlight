@@ -13,6 +13,33 @@ An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, 
 
 Built on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management.
 
+## Production Setup (Clean Server)
+
+The fastest way to go from a bare server to a running Last Light instance:
+
+```bash
+npx lastlight setup
+```
+
+The setup wizard walks you through:
+
+1. **GitHub App** — enter your App ID, Installation ID, and PEM key path
+2. **Anthropic API key** — for the Claude Agent SDK
+3. **Webhook secret** — auto-generated if you don't have one
+4. **Domain & TLS** — optional Caddy config for automatic HTTPS
+5. **Slack** — optional bot token and app token for Slack integration
+6. **Admin dashboard** — optional password protection
+
+It writes `.env`, copies your PEM into the secrets directory, generates
+`docker-compose.yml` and (optionally) a `Caddyfile`, then offers to build
+and start the containers. When it's done you have a running instance ready
+to receive webhooks.
+
+> **Requires:** Node.js 20+, Docker, and a GitHub App already created
+> (see [Create a GitHub App](#1-create-a-github-app) below).
+
+---
+
 ## Quick Start (Local Dev)
 
 ### Prerequisites
