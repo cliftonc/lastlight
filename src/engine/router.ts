@@ -81,29 +81,11 @@ export async function routeEvent(
       };
 
     case "comment.created": {
-      // Only act on @last-light mentions
-      if (!BOT_MENTION.test(envelope.body)) {
-        return { action: "ignore", reason: "no bot mention in comment" };
-      }
-
-      // Only maintainers (OWNER, MEMBER, COLLABORATOR) can trigger builds.
-      // For non-maintainers we reply directly via the connector — no agent
-      // invocation needed.
-      if (!MAINTAINER_ROLES.has(envelope.authorAssociation || "")) {
-        return {
-          action: "reply",
-          message:
-            `Thanks for the report, @${envelope.sender}! ` +
-            `I only act on requests from repository maintainers — a maintainer ` +
-            `(owner / member / collaborator) needs to mention me to trigger a build.`,
-        };
-      }
-
       // Reply-gate short-circuit: if a paused socratic explore run is
       // waiting for any free-form message on this issue, feed the comment
-      // body through as the next turn's input without re-running the
-      // classifier. Must sit ABOVE the approve/reject check so replies
-      // never get treated as approvals.
+      // body through without requiring an @mention or maintainer check.
+      // Must sit ABOVE both the mention and role checks so plain replies
+      // resume the conversation naturally.
       if (deps.db && envelope.issueNumber) {
         const triggerId = `${envelope.repo}#${envelope.issueNumber}`;
         const pendingReply = deps.db.getPendingReplyGateByTrigger(triggerId);
@@ -120,6 +102,24 @@ export async function routeEvent(
             },
           };
         }
+      }
+
+      // Only act on @last-light mentions
+      if (!BOT_MENTION.test(envelope.body)) {
+        return { action: "ignore", reason: "no bot mention in comment" };
+      }
+
+      // Only maintainers (OWNER, MEMBER, COLLABORATOR) can trigger builds.
+      // For non-maintainers we reply directly via the connector — no agent
+      // invocation needed.
+      if (!MAINTAINER_ROLES.has(envelope.authorAssociation || "")) {
+        return {
+          action: "reply",
+          message:
+            `Thanks for the report, @${envelope.sender}! ` +
+            `I only act on requests from repository maintainers — a maintainer ` +
+            `(owner / member / collaborator) needs to mention me to trigger a build.`,
+        };
       }
 
       // Check for approval commands before LLM classification

@@ -33,8 +33,8 @@ phases:
       gate_kind: reply
       scratch_key: socratic
       gate_message: |
-        _Reply in this thread with your answer. I'll keep going until we have enough to write this up._
-        _You can say `we're done` at any point to jump straight to the spec draft._
+        _Just reply to this thread with your answers — no need to @mention me. I'll keep going until we have enough to write this up._
+        _Say `we're done` at any point to jump straight to the spec draft._
 
   - name: synthesize
     label: Synthesize spec

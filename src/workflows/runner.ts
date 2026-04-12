@@ -795,11 +795,10 @@ export async function runWorkflow(
           db.pauseWorkflowRun(workflowId);
 
           if (isReply) {
-            // Post the agent's message (the questions) and a tiny hint —
-            // the user just replies in the thread to resume. No approve/
-            // reject commands here.
-            if (iterOutput.trim()) await notify(iterOutput);
-            if (gateMsg.trim()) await notify(gateMsg);
+            // Combine the agent's questions + gate hint into one message
+            // so it reads as a single comment on GitHub / Slack.
+            const parts = [iterOutput.trim(), gateMsg.trim()].filter(Boolean);
+            if (parts.length > 0) await notify(parts.join("\n\n---\n\n"));
           } else {
             await notify(
               `**${phaseName} iteration ${iteration}/${MAX_ITER} complete** — approval required to continue.\n\n` +

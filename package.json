@@ -1,12 +1,36 @@
 {
   "name": "lastlight",
-  "version": "2.0.0",
+  "version": "0.1.0",
   "description": "GitHub repository maintenance agent — Agent SDK harness",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "lastlight": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "workflows",
+    "skills",
+    "agent-context",
+    "mcp-github-app",
+    "deploy",
+    "sandbox.Dockerfile",
+    "docker-compose.yml"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cliftonc/lastlight.git"
+  },
+  "keywords": [
+    "github",
+    "agent",
+    "claude",
+    "anthropic",
+    "maintenance",
+    "workflow"
+  ],
+  "author": "Clifton Cunningham",
+  "license": "MIT",
   "workspaces": [
     "dashboard"
   ],
