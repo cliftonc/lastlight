@@ -319,6 +319,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [slackOAuth, setSlackOAuth] = useState(false);
+  const [githubOAuth, setGithubOAuth] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -335,9 +336,10 @@ export default function App() {
           window.history.replaceState(null, "", newUrl);
         }
 
-        const { required, slackOAuth: oauthEnabled } = await api.authRequired();
+        const { required, slackOAuth: oauthEnabled, githubOAuth: githubOauthEnabled } = await api.authRequired();
         if (cancelled) return;
         if (!cancelled) setSlackOAuth(oauthEnabled);
+        if (!cancelled) setGithubOAuth(githubOauthEnabled);
         if (!required) {
           setAuthState("ok");
           return;
@@ -371,7 +373,7 @@ export default function App() {
     );
   }
   if (authState === "required") {
-    return <Login onAuthed={() => setAuthState("ok")} slackOAuth={slackOAuth} />;
+    return <Login onAuthed={() => setAuthState("ok")} slackOAuth={slackOAuth} githubOAuth={githubOAuth} />;
   }
   return (
     <Dashboard

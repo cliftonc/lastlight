@@ -220,6 +220,10 @@ async function main() {
       slackOAuthClientSecret: process.env.SLACK_OAUTH_CLIENT_SECRET,
       slackOAuthRedirectUri: process.env.SLACK_OAUTH_REDIRECT_URI,
       slackAllowedWorkspace: process.env.SLACK_ALLOWED_WORKSPACE,
+      githubOAuthClientId: process.env.GITHUB_OAUTH_CLIENT_ID,
+      githubOAuthClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET,
+      githubOAuthRedirectUri: process.env.GITHUB_OAUTH_REDIRECT_URI,
+      githubAllowedOrg: process.env.GITHUB_ALLOWED_ORG,
       adminNotifier: slackConnector
         ? (msg: string) => slackConnector!.sendToDeliveryChannel(msg)
         : undefined,
