@@ -52,3 +52,33 @@ npx tsc --noEmit
 ## Deviations from plan
 
 None. All 8 steps from the architect plan were implemented as specified. The `gitAccessProfileForWorkflow` function was exported (not previously exported) to enable direct unit testing.
+
+## Fix Cycle 1
+
+### Issue fixed
+
+**semgrep inaccessible to agent user at runtime** (`sandbox.Dockerfile:10-17`)
+
+Changed `pipx install semgrep` to use `PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep` so the semgrep binary lands at `/usr/local/bin/semgrep` (world-executable) instead of `/root/.local/bin/semgrep` (behind the `700`-permission `/root` directory). Removed the `ENV PATH="/root/.local/bin:${PATH}"` line that was only needed for the old install path.
+
+### Test results
+
+```
+ RUN  v4.1.4 /home/agent/workspace/lastlight
+
+ Test Files  14 passed (14)
+      Tests  289 passed | 1 todo (290)
+   Start at  22:50:57
+   Duration  2.48s (transform 404ms, setup 0ms, import 695ms, tests 315ms, environment 1ms)
+```
+
+### Lint results
+
+No linter configured (non-blocking).
+
+### Typecheck results
+
+```
+npx tsc --noEmit
+(exit 0 — no output, no errors)
+```

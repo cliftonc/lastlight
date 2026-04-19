@@ -9,12 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip pipx \
-    && pipx install semgrep \
+    && PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep \
     && curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
        | tar -xz -C /usr/local/bin gitleaks \
     && apt-get purge -y python3-pip \
     && rm -rf /var/lib/apt/lists/*
-ENV PATH="/root/.local/bin:${PATH}"
 
 # Create non-root agent user
 RUN useradd -m -s /bin/bash agent
