@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import type { SessionManager } from "../connectors/messaging/session-manager.js";
 import type { ExecutorConfig } from "./executor.js";
+import { wrapUntrusted } from "./screen.js";
 
 const AGENT_CONTEXT_DIR = resolve("agent-context");
 
@@ -153,7 +154,17 @@ export async function handleChatMessage(
     let cacheReadInputTokens: number | undefined;
     let outputTokens: number | undefined;
 
-    for await (const msg of query({ prompt: message, options })) {
+    // Wrap the user-supplied message in untrusted-content markers so the
+    // agent treats it as data per agent-context/security.md. The router has
+    // already prefixed any flagged messages with `[lastlight-flag: ...]`,
+    // which stays inside the wrapper. We don't double-wrap if the caller
+    // already produced wrapped content (e.g. tests).
+    const wrappedMessage = wrapUntrusted(message, {
+      source: "messaging-user",
+      author: sender,
+    });
+
+    for await (const msg of query({ prompt: wrappedMessage, options })) {
       const m = msg as Record<string, unknown>;
       if (m.type === "system" && m.subtype === "init" && typeof m.session_id === "string") {
         agentSessionId = m.session_id;

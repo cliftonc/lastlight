@@ -1,5 +1,6 @@
 import type { EventEnvelope } from "../connectors/types.js";
 import { classifyComment } from "./classifier.js";
+import { screenForInjection, flagPrefix } from "./screen.js";
 import { isManagedRepo, MANAGED_REPOS } from "../managed-repos.js";
 import type { StateDb } from "../state/db.js";
 
@@ -139,9 +140,29 @@ export async function routeEvent(
         };
       }
 
-      // Classify intent: is this a build/fix request or a lightweight action?
-      const { intent } = await classifyComment(envelope.body);
-      console.log(`[router] Comment classified as: ${intent}`);
+      // Classify intent + screen for injection in parallel. Both run on the
+      // same comment text and have similar latency (single haiku call); doing
+      // them in parallel keeps overall router latency at max(classifier, screener)
+      // rather than their sum.
+      const [{ intent }, screen] = await Promise.all([
+        classifyComment(envelope.body, {
+          issueTitle: envelope.title,
+          isPullRequest: !!envelope.prNumber,
+        }),
+        screenForInjection(envelope.body),
+      ]);
+      console.log(
+        `[router] Comment classified as: ${intent}` +
+        (screen.flagged ? ` [screener flagged: ${screen.reason || "no reason"}]` : ""),
+      );
+
+      // When the screener flags, prefix the commentBody with a one-line
+      // warning. Downstream agents anchored by agent-context/security.md
+      // treat flagged content skeptically. Never refuse — false positives
+      // shouldn't break legitimate comments.
+      const commentBody = screen.flagged
+        ? `${flagPrefix(screen.reason)}${envelope.body}`
+        : envelope.body;
 
       if (envelope.prNumber) {
         // PR comments: build → pr-fix; explore is not meaningful on PRs
@@ -156,7 +177,7 @@ export async function routeEvent(
             title: envelope.title,
             body: envelope.body,
             sender: envelope.sender,
-            commentBody: envelope.body,
+            commentBody,
           },
         };
       }
@@ -177,7 +198,7 @@ export async function routeEvent(
           title: envelope.title,
           body: envelope.body,
           sender: envelope.sender,
-          commentBody: envelope.body,
+          commentBody,
         },
       };
     }
@@ -221,18 +242,27 @@ export async function routeEvent(
 
       // Classify all Slack messages via the LLM classifier — no regex
       // commands. The classifier extracts intent, repo, issue number, and
-      // reject reason from natural language.
+      // reject reason from natural language. Screen for injection in parallel
+      // (Slack messages are user-supplied text and reach the chat skill or a
+      // workflow, both of which need the flag annotation).
+      const [classification, screen] = await Promise.all([
+        classifyComment(text),
+        screenForInjection(text),
+      ]);
       const {
         intent,
         repo: classifiedRepo,
         issueNumber: classifiedIssue,
         reason: classifiedReason,
-      } = await classifyComment(text);
+      } = classification;
       console.log(
         `[router] Slack message classified as: ${intent}` +
         `${classifiedRepo ? ` (repo: ${classifiedRepo})` : ""}` +
-        `${classifiedIssue ? ` (#${classifiedIssue})` : ""}`,
+        `${classifiedIssue ? ` (#${classifiedIssue})` : ""}` +
+        (screen.flagged ? ` [screener flagged: ${screen.reason || "no reason"}]` : ""),
       );
+
+      const slackText = screen.flagged ? `${flagPrefix(screen.reason)}${text}` : text;
 
       switch (intent) {
         case "reset":
@@ -282,7 +312,7 @@ export async function routeEvent(
               repo: classifiedRepo,
               issueNumber: classifiedIssue,
               sender: envelope.sender,
-              commentBody: text,
+              commentBody: slackText,
               source: envelope.source,
             },
           };
@@ -334,7 +364,7 @@ export async function routeEvent(
               repo: classifiedRepo,
               issueNumber: classifiedIssue,
               sender: envelope.sender,
-              commentBody: text,
+              commentBody: slackText,
               source: envelope.source,
               triggerId: slackTriggerId,
               channelId,
@@ -350,7 +380,7 @@ export async function routeEvent(
             skill: "chat",
             context: {
               sessionId: raw?.sessionId,
-              message: text,
+              message: slackText,
               sender: envelope.sender,
               source: envelope.source,
             },

@@ -12,6 +12,7 @@ import {
 } from "./runner.js";
 import type { TemplateContext } from "./templates.js";
 import { slugify } from "./templates.js";
+import { wrapUntrusted } from "../engine/screen.js";
 
 /**
  * Lightweight invocation request for any agent workflow. The runner handles
@@ -159,9 +160,36 @@ export async function runSimpleWorkflow(
   }
 
   // ── Build template context ─────────────────────────────────────────────────
+  //
+  // The context snapshot is the agent's primary view of the task. All
+  // user-provided text (issue body, triggering comment, full thread) is
+  // wrapped in <<<USER_CONTENT_UNTRUSTED>>> markers so the agent — anchored
+  // by agent-context/security.md — treats them as data rather than
+  // instructions. The trigger metadata (sender, branch, issue ref) sits
+  // outside the wrappers so identity is established out-of-band.
 
-  const contextSnapshot = request.issueBody
-    ? `Task: ${request.commentBody || request.issueBody}\nIssue: ${owner}/${repo}${issueNumber ? `#${issueNumber}` : ""} — ${request.issueTitle || ""}\nRequested by: ${request.sender}\nBranch: ${branch}`
+  const commentThread = (request.extra?.commentThread as string | undefined) || "";
+  const issueRef = `${owner}/${repo}${issueNumber ? `#${issueNumber}` : ""}`;
+  const hasAnyUserContent = !!(request.issueBody || request.commentBody || commentThread);
+
+  const contextSnapshot = hasAnyUserContent
+    ? [
+        `Repo: ${issueRef}`,
+        `Issue title: ${request.issueTitle || "(none)"}`,
+        request.issueBody
+          ? `Issue body:\n${wrapUntrusted(request.issueBody, { source: "github-issue-body" })}`
+          : "",
+        request.commentBody
+          ? `Triggering comment:\n${wrapUntrusted(request.commentBody, { source: "github-comment", author: request.sender })}`
+          : "",
+        `Requested by: ${request.sender}`,
+        `Branch: ${branch}`,
+        commentThread
+          ? `Full issue thread (oldest → newest):\n${wrapUntrusted(commentThread, { source: "github-comment-thread" })}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n")
     : "";
 
   const ctx: TemplateContext = {

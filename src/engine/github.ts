@@ -63,6 +63,43 @@ export class GitHubClient {
     return data;
   }
 
+  /**
+   * Fetch the issue body. Used by the dispatch path so build/explore/pr-fix
+   * workflows always see the real issue body, even when triggered from a
+   * comment (where the EventEnvelope.body field is the comment, not the
+   * issue body).
+   */
+  async getIssueBody(owner: string, repo: string, issueNumber: number): Promise<string> {
+    const { data } = await this.octokit.rest.issues.get({
+      owner,
+      repo,
+      issue_number: issueNumber,
+    });
+    return data.body || "";
+  }
+
+  /**
+   * List all comments on an issue/PR, oldest first. Used by the dispatch path
+   * to inject the full conversation thread into the architect's context — the
+   * spec the bot writes during an `explore` run lives here, and the build
+   * cycle needs to see it to implement the agreed design.
+   */
+  async listIssueComments(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+  ): Promise<Array<{ user: string; body: string; createdAt: string }>> {
+    const data = await this.octokit.paginate(
+      this.octokit.rest.issues.listComments,
+      { owner, repo, issue_number: issueNumber, per_page: 100 },
+    );
+    return data.map((c) => ({
+      user: c.user?.login || "unknown",
+      body: c.body || "",
+      createdAt: c.created_at,
+    }));
+  }
+
   async getPullRequest(owner: string, repo: string, pullNumber: number) {
     const { data } = await this.octokit.rest.pulls.get({
       owner,

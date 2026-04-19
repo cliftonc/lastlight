@@ -27,6 +27,14 @@ export interface ClassificationResult {
   reason?: string;
 }
 
+/** Optional surrounding context for a comment classification. */
+export interface ClassifierContext {
+  /** Title of the issue/PR the comment is on (when applicable). */
+  issueTitle?: string;
+  /** True when the comment is on a PR rather than an issue. */
+  isPullRequest?: boolean;
+}
+
 const CLASSIFIER_PROMPT = `You are a router for messages directed at a GitHub/Slack bot.
 Classify the user's message into exactly one category, and extract any repository or issue references.
 
@@ -45,6 +53,13 @@ When ambiguous between EXPLORE and CHAT, prefer CHAT. Only pick EXPLORE when the
 When ambiguous between BUILD and CHAT, prefer CHAT.
 When ambiguous between APPROVE/REJECT and CHAT, prefer CHAT — only classify as APPROVE/REJECT when the intent is clearly about a pending workflow gate.
 
+When the message is a reply on an existing issue/PR, the issue title is provided
+as ISSUE TITLE. Short imperative replies like "lets build this", "build it",
+"go ahead", "ship it", "do it", "implement this", "make it so" classify as
+BUILD when an issue title is present — the implicit object is the issue itself.
+The "prefer CHAT when ambiguous" rule does NOT apply when the comment is a
+clear imperative directed at the issue's subject.
+
 Respond in exactly this format (each on its own line, no extra text):
 INTENT: BUILD|EXPLORE|TRIAGE|REVIEW|APPROVE|REJECT|STATUS|RESET|CHAT
 REPO: owner/name or NONE
@@ -54,6 +69,8 @@ REASON: text or NONE
 Examples:
 "explore adding webhooks to cliftonc/drizby" → INTENT: EXPLORE, REPO: cliftonc/drizby, ISSUE: NONE, REASON: NONE
 "build cliftonc/drizzle-cube#42" → INTENT: BUILD, REPO: cliftonc/drizzle-cube, ISSUE: 42, REASON: NONE
+"lets build this!" with ISSUE TITLE "Security Review" → INTENT: BUILD, REPO: NONE, ISSUE: NONE, REASON: NONE
+"go ahead" with ISSUE TITLE "Add CSV export" → INTENT: BUILD, REPO: NONE, ISSUE: NONE, REASON: NONE
 "approve" → INTENT: APPROVE, REPO: NONE, ISSUE: NONE, REASON: NONE
 "reject, the plan is too complex" → INTENT: REJECT, REPO: NONE, ISSUE: NONE, REASON: the plan is too complex
 "what's running?" → INTENT: STATUS, REPO: NONE, ISSUE: NONE, REASON: NONE`;
@@ -64,14 +81,19 @@ Examples:
  */
 export async function classifyComment(
   commentBody: string,
+  context?: ClassifierContext,
   model?: string,
 ): Promise<ClassificationResult> {
   try {
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
+    const userPrompt = context?.issueTitle
+      ? `Classify this comment (replying on an existing ${context.isPullRequest ? "PR" : "issue"}):\n\nISSUE TITLE: ${context.issueTitle}\n\nCOMMENT: ${commentBody}`
+      : `Classify this comment:\n\n${commentBody}`;
+
     let output = "";
     for await (const msg of query({
-      prompt: `Classify this comment:\n\n${commentBody}`,
+      prompt: userPrompt,
       options: {
         model: model || "claude-haiku-4-5-20251001",
         systemPrompt: CLASSIFIER_PROMPT,

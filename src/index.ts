@@ -13,6 +13,7 @@ import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
+import { screenForInjection, flagPrefix } from "./engine/screen.js";
 import { runSimpleWorkflow, type SimpleWorkflowRequest } from "./workflows/simple.js";
 import type { RunnerCallbacks } from "./workflows/runner.js";
 import { resumeOrphanedWorkflows } from "./workflows/resume.js";
@@ -179,6 +180,72 @@ async function main() {
       triggerId: slackTriggerId,
       extra,
     };
+
+    // For workflows where the architect/agent needs to see the full issue
+    // history (e.g. a build greenlit by "@last-light lets build this!" needs
+    // the spec the explore phase wrote in earlier comments), fetch the real
+    // issue body and the comment thread, then screen each piece for
+    // prompt-injection signals before stitching them into the prompt context.
+    //
+    // For comment-triggered builds the envelope's `body` field is the
+    // triggering comment, not the issue body — we explicitly restore the
+    // real issue body here so the architect doesn't see the trigger comment
+    // duplicated under the "Issue body" heading.
+    const ENRICH_WORKFLOWS = new Set(["build", "pr-fix", "explore"]);
+    if (
+      github &&
+      ENRICH_WORKFLOWS.has(workflowName) &&
+      request.issueNumber &&
+      owner && repo
+    ) {
+      try {
+        const [trueIssueBody, comments] = await Promise.all([
+          github.getIssueBody(owner, repo, request.issueNumber),
+          github.listIssueComments(owner, repo, request.issueNumber),
+        ]);
+
+        // Screen the issue body and each comment in parallel; comments are
+        // typically short and the screener already short-circuits text under
+        // 60 chars, so this stays cheap on quiet threads.
+        const [bodyScreen, commentScreens] = await Promise.all([
+          screenForInjection(trueIssueBody),
+          Promise.all(comments.map((c) => screenForInjection(c.body))),
+        ]);
+
+        if (trueIssueBody) {
+          request.issueBody = bodyScreen.flagged
+            ? `${flagPrefix(bodyScreen.reason)}${trueIssueBody}`
+            : trueIssueBody;
+        }
+
+        const formattedComments = comments
+          .map((c, i) => ({ comment: c, screen: commentScreens[i] }))
+          .filter(({ comment }) => comment.body.trim())
+          .map(({ comment, screen }) => {
+            const annotated = screen.flagged
+              ? `${flagPrefix(screen.reason)}${comment.body}`
+              : comment.body;
+            return `--- @${comment.user} (${comment.createdAt}) ---\n${annotated}`;
+          });
+
+        if (formattedComments.length > 0) {
+          (request.extra ||= {}).commentThread = formattedComments.join("\n\n");
+        }
+
+        const flaggedCount =
+          (bodyScreen.flagged ? 1 : 0) +
+          commentScreens.filter((s) => s.flagged).length;
+        if (flaggedCount > 0) {
+          console.warn(
+            `[dispatch] Screener flagged ${flaggedCount} item(s) in issue context for ${owner}/${repo}#${request.issueNumber}`,
+          );
+        }
+      } catch (err: unknown) {
+        const m = err instanceof Error ? err.message : String(err);
+        console.warn(`[dispatch] Failed to fetch/screen issue context: ${m}`);
+        // Non-fatal — workflow proceeds with whatever context the envelope had.
+      }
+    }
 
     const slackPost = slackTriggerId && slackConnector && typeof channelId === "string" && typeof threadId === "string"
       ? async (msg: string) => {
