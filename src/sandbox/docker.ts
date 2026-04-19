@@ -25,6 +25,13 @@ export interface SandboxConfig {
   env: Record<string, string>;
   /** Timeout in seconds (default: 1800 = 30 min) */
   timeoutSeconds?: number;
+  /**
+   * Per-sandbox memory cap, in Docker's `--memory` format (e.g. "2g", "512m").
+   * Default: 2g — enough headroom for `npm install`, vite build, and a Claude
+   * agent loop, but small enough that several concurrent sandboxes can't
+   * exhaust a 16 GB host. Override via the `SANDBOX_MEMORY_LIMIT` env var.
+   */
+  memoryLimit?: string;
 }
 
 export interface SandboxInfo {
@@ -82,11 +89,19 @@ export class DockerSandbox {
     // Env flags — passed to entrypoint for MCP config template expansion
     const envFlags = Object.entries(this.config.env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
 
+    // Per-sandbox memory cap. Without this, a runaway agent (or a hot
+    // `npm install` / vite build inside the workspace) can OOM the host
+    // and take every other container with it. We set --memory-swap to the
+    // same value so swap can't be used to silently exceed the cap.
+    const memoryLimit = this.config.memoryLimit || "2g";
+
     // The entrypoint runs as root to fix permissions, then drops to agent via gosu.
     // No --user flag needed.
     const args = [
       "run", "-d",
       "--name", containerName,
+      "--memory", memoryLimit,
+      "--memory-swap", memoryLimit,
       ...envFlags,
       ...volumes.flatMap(v => ["-v", v]),
       "-w", WORKSPACE_DIR,

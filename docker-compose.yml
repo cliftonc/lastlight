@@ -13,6 +13,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock   # spawn sandbox containers
     env_file:
       - .env
+    # Steady-state ~150 MB; bursts during webhook fan-out + cron jobs.
+    # 1 GB cap leaves headroom for traffic spikes while preventing a runaway
+    # leak from taking the host down.
+    mem_limit: 1g
+    memswap_limit: 1g
     networks:
       - internal
 
@@ -37,6 +42,9 @@ services:
       - caddy-config:/config
     environment:
       - DOMAIN=${DOMAIN:-localhost}
+    # Caddy's memory footprint is tiny (typically <50 MB even under load).
+    mem_limit: 256m
+    memswap_limit: 256m
     networks:
       - internal
 

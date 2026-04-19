@@ -166,6 +166,7 @@ export async function createTaskSandbox(opts: {
   const sandbox = new DockerSandbox({
     imageName: SANDBOX_IMAGE,
     env: opts.env || {},
+    memoryLimit: process.env.SANDBOX_MEMORY_LIMIT || undefined,
   });
 
   try {
