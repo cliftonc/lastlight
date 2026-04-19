@@ -53,3 +53,9 @@ Then remove the `ENV PATH="/root/.local/bin:${PATH}"` line (no longer needed for
 ```
 
 TypeScript: `npx tsc --noEmit` exits 0 with no errors.
+
+## Re-review after Fix Cycle 1
+
+VERDICT: APPROVED
+
+The one Important issue raised — semgrep being installed to `/root/.local/bin` and inaccessible to the `agent` user at runtime — is correctly fixed. The fix commit changes the install invocation to `PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install semgrep`, placing the binary at `/usr/local/bin/semgrep` (world-executable), and removes the now-redundant `ENV PATH="/root/.local/bin:${PATH}"` line. Only `sandbox.Dockerfile` and the tracking files changed; no regressions are possible. Tests remain 289/289 passing, typecheck clean.
