@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { createSign } from "crypto";
 import { readFileSync } from "fs";
 import { resolve } from "path";
@@ -65,12 +65,12 @@ export async function configureGitAuth(config: {
 
   // Set up credential helper — git will call this for any github.com URL
   const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token.token}"; }; f`;
-  exec(`git config --global credential.helper '${credHelper}'`);
+  execGit(["config", "--global", "credential.helper", credHelper]);
 
   // Bot identity
   const botName = config.botName || "last-light";
-  exec(`git config --global user.name "${botName}[bot]"`);
-  exec(`git config --global user.email "${botName}[bot]@users.noreply.github.com"`);
+  execGit(["config", "--global", "user.name", `${botName}[bot]`]);
+  execGit(["config", "--global", "user.email", `${botName}[bot]@users.noreply.github.com`]);
 
   console.log(`[git-auth] Configured git with GitHub App token (expires: ${token.expiresAt})`);
 
@@ -104,7 +104,7 @@ export async function refreshGitAuth(config: {
   }
 
   const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token.token}"; }; f`;
-  exec(`git config --global credential.helper '${credHelper}'`);
+  execGit(["config", "--global", "credential.helper", credHelper]);
 
   console.log(`[git-auth] Refreshed token (expires: ${token.expiresAt})`);
   return token;
@@ -162,6 +162,6 @@ async function getInstallationToken(config: {
   return { token: data.token, expiresAt: data.expires_at };
 }
 
-function exec(cmd: string): void {
-  execSync(cmd, { stdio: "pipe" });
+function execGit(args: string[]): void {
+  execFileSync("git", args, { stdio: "pipe" });
 }

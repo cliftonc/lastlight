@@ -176,21 +176,23 @@ export class DockerSandbox {
     const model = opts?.model || "claude-sonnet-4-6";
     const timeout = this.config.timeoutSeconds || 1800;
 
-    const escapedPrompt = prompt.replace(/'/g, "'\\''");
     const cmd = [
       "claude",
       "--print", "--verbose",
       "--dangerously-skip-permissions",
       "--output-format", "stream-json",
       "--model", model,
-      "-p", `'${escapedPrompt}'`,
+      "-p", "-",
     ].join(" ");
 
     // Run as agent user — Claude Code blocks --dangerously-skip-permissions as root
-    const args = ["exec", "--user", "agent", "-w", WORKSPACE_DIR, info.containerName, "sh", "-c", cmd];
+    // -i connects stdin so the prompt can be written to the container process
+    const args = ["exec", "-i", "--user", "agent", "-w", WORKSPACE_DIR, info.containerName, "sh", "-c", cmd];
 
     return await new Promise<string>((resolvePromise, reject) => {
-      const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
+      child.stdin.write(prompt);
+      child.stdin.end();
       let stdout = "";
       let stderr = "";
       let buf = "";

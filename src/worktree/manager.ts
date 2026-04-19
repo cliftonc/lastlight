@@ -1,5 +1,5 @@
-import { execSync, type ExecSyncOptions } from "child_process";
-import { existsSync, rmSync } from "fs";
+import { execFileSync, type ExecSyncOptions } from "child_process";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { join, resolve } from "path";
 
 const WORKTREE_DIR = ".worktrees";
@@ -26,8 +26,8 @@ export class WorktreeManager {
     this.baseDir = baseDir || resolve(WORKTREE_DIR);
   }
 
-  private exec(cmd: string, opts?: ExecSyncOptions): string {
-    return execSync(cmd, { encoding: "utf-8", stdio: "pipe", ...opts }) as string;
+  private execGit(args: string[], opts?: ExecSyncOptions): string {
+    return execFileSync("git", args, { encoding: "utf-8", stdio: "pipe", ...opts }) as string;
   }
 
   /**
@@ -50,7 +50,7 @@ export class WorktreeManager {
 
     // Ensure base directory exists
     if (!existsSync(this.baseDir)) {
-      execSync(`mkdir -p ${this.baseDir}`);
+      mkdirSync(this.baseDir, { recursive: true });
     }
 
     // We need a bare/normal repo to create worktrees from.
@@ -60,10 +60,10 @@ export class WorktreeManager {
 
     if (!existsSync(bareDir)) {
       console.log(`[worktree] Bare clone: ${repoUrl}`);
-      this.exec(`git clone --bare ${repoUrl} ${bareDir}`);
+      this.execGit(["clone", "--bare", repoUrl, bareDir]);
     } else {
       // Fetch latest
-      this.exec(`git -C ${bareDir} fetch --all --prune`);
+      this.execGit(["-C", bareDir, "fetch", "--all", "--prune"]);
     }
 
     // Create worktree with new branch from base
@@ -73,7 +73,7 @@ export class WorktreeManager {
     // Check if branch already exists remotely
     let branchExists = false;
     try {
-      this.exec(`git -C ${bareDir} rev-parse --verify origin/${branch}`);
+      this.execGit(["-C", bareDir, "rev-parse", "--verify", `origin/${branch}`]);
       branchExists = true;
     } catch {
       // Branch doesn't exist remotely — that's fine
@@ -82,12 +82,12 @@ export class WorktreeManager {
     if (branchExists) {
       // Resume existing branch
       console.log(`[worktree] Resuming branch: ${branch}`);
-      this.exec(`git -C ${bareDir} worktree add ${worktreePath} origin/${branch}`);
-      this.exec(`git -C ${worktreePath} checkout -B ${branch} origin/${branch}`);
+      this.execGit(["-C", bareDir, "worktree", "add", worktreePath, `origin/${branch}`]);
+      this.execGit(["-C", worktreePath, "checkout", "-B", branch, `origin/${branch}`]);
     } else {
       // Create new branch from base
       console.log(`[worktree] New branch: ${branch} from ${baseRef}`);
-      this.exec(`git -C ${bareDir} worktree add -b ${branch} ${worktreePath} ${baseRef}`);
+      this.execGit(["-C", bareDir, "worktree", "add", "-b", branch, worktreePath, baseRef]);
     }
 
     const info: WorktreeInfo = {
@@ -122,14 +122,14 @@ export class WorktreeManager {
     try {
       // Remove worktree
       if (existsSync(info.path)) {
-        this.exec(`git -C ${bareDir} worktree remove --force ${info.path}`);
+        this.execGit(["-C", bareDir, "worktree", "remove", "--force", info.path]);
       }
     } catch (err) {
       // Force cleanup if git worktree remove fails
       if (existsSync(info.path)) {
         rmSync(info.path, { recursive: true, force: true });
         try {
-          this.exec(`git -C ${bareDir} worktree prune`);
+          this.execGit(["-C", bareDir, "worktree", "prune"]);
         } catch { /* best effort */ }
       }
     }
@@ -137,7 +137,7 @@ export class WorktreeManager {
     // Optionally delete the branch
     if (opts?.deleteBranch) {
       try {
-        this.exec(`git -C ${bareDir} branch -D ${info.branch}`);
+        this.execGit(["-C", bareDir, "branch", "-D", info.branch]);
       } catch { /* branch may not exist locally */ }
     }
 
