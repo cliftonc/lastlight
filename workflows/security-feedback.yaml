@@ -1,0 +1,15 @@
+kind: health
+name: security-feedback
+description: |
+  Process maintainer feedback on a security issue — classify intent
+  (accept-risk, false-positive, discuss) and update SECURITY.md via PR
+  when appropriate.
+
+  Triggered by:
+    - @last-light mention on issues labelled "security"
+
+phases:
+  - name: feedback
+    label: Security feedback
+    skill: security-feedback
+    model: "{{models.security}}"

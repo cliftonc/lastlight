@@ -139,10 +139,10 @@ async function main() {
   //   - <owner/repo#N> → single-issue / single-PR action
   // `health` only takes a repo (it's always a repo-level report).
 
-  if (["triage", "review", "health"].includes(firstArg)) {
+  if (["triage", "review", "health", "security"].includes(firstArg)) {
     const target = args[1];
     if (!target) {
-      console.error(`Usage: tsx src/cli.ts ${firstArg} <owner/repo>${firstArg !== "health" ? " | <owner/repo#N>" : ""}`);
+      console.error(`Usage: tsx src/cli.ts ${firstArg} <owner/repo>${firstArg !== "health" && firstArg !== "security" ? " | <owner/repo#N>" : ""}`);
       process.exit(1);
     }
 
@@ -150,11 +150,12 @@ async function main() {
       triage: "issue-triage",
       review: "pr-review",
       health: "repo-health",
+      security: "security-review",
     };
     const skill = skillMap[firstArg];
 
     // Detect single-issue/PR form (allowed for triage and review only)
-    const parsed = firstArg !== "health" ? parseGitHubRef(target) : null;
+    const parsed = firstArg !== "health" && firstArg !== "security" ? parseGitHubRef(target) : null;
 
     let context: Record<string, unknown>;
     if (parsed) {

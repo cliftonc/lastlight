@@ -27,7 +27,7 @@ vi.mock("child_process", () => ({
 import { execSync } from "child_process";
 import { executeAgent } from "../engine/executor.js";
 import { loadPromptTemplate } from "./loader.js";
-import { runWorkflow } from "./runner.js";
+import { runWorkflow, gitAccessProfileForWorkflow } from "./runner.js";
 
 const mockExecuteAgent = vi.mocked(executeAgent);
 const mockLoadPromptTemplate = vi.mocked(loadPromptTemplate);
@@ -1045,5 +1045,19 @@ describe("runWorkflow — DAG unexpected throws", () => {
     // merge depends on both executor_a and executor_b — executor_a failed, so merge is skipped
     const mergePhase = result.phases.find((p) => p.phase === "merge");
     expect(mergePhase?.output).toContain("Skipped");
+  });
+});
+
+describe("gitAccessProfileForWorkflow — security workflows", () => {
+  it("returns issues-write for security-review", () => {
+    expect(gitAccessProfileForWorkflow("security-review")).toBe("issues-write");
+  });
+
+  it("returns repo-write for security-feedback", () => {
+    expect(gitAccessProfileForWorkflow("security-feedback")).toBe("repo-write");
+  });
+
+  it("returns read for unknown workflow", () => {
+    expect(gitAccessProfileForWorkflow("unknown-workflow")).toBe("read");
   });
 });

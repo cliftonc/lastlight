@@ -1,0 +1,19 @@
+kind: health
+name: security-review
+description: |
+  Scan the target repository for security issues using open-source tools
+  (npm audit, semgrep, gitleaks) plus Claude code review. File findings
+  as GitHub issues, honouring SECURITY.md for known false positives and
+  accepted risks.
+
+  Triggered by:
+    - weekly cron (Monday 10:00)
+    - manual CLI: tsx src/cli.ts security owner/repo
+    - @last-light security-review in a GitHub comment
+    - Slack: "security review cliftonc/repo"
+
+phases:
+  - name: scan
+    label: Security scan
+    skill: security-review
+    model: "{{models.security}}"

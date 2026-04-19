@@ -11,6 +11,7 @@ export type CommentIntent =
   | "explore"
   | "triage"
   | "review"
+  | "security"
   | "approve"
   | "reject"
   | "status"
@@ -43,6 +44,7 @@ BUILD — The user wants code changes NOW: implement a feature, fix a bug, write
 EXPLORE — The user has a half-formed idea and wants help thinking it through BEFORE code: "help me think through X", "brainstorm Y", "spec this out", "explore an idea for Z".
 TRIAGE — The user wants to scan/triage issues on a repo: "triage cliftonc/repo", "scan for new issues".
 REVIEW — The user wants to review PRs on a repo: "review cliftonc/repo", "check PRs".
+SECURITY — The user wants a security scan/review of a repo: "security review cliftonc/repo", "scan for vulnerabilities", "check security".
 APPROVE — The user is approving a pending gate: "approve", "go ahead", "looks good, continue", "yes proceed".
 REJECT — The user is rejecting a pending gate: "reject", "abort", "cancel this", "no don't proceed". Extract any reason given.
 STATUS — The user wants to know what's running: "status", "what's running", "any tasks active?".
@@ -61,7 +63,7 @@ The "prefer CHAT when ambiguous" rule does NOT apply when the comment is a
 clear imperative directed at the issue's subject.
 
 Respond in exactly this format (each on its own line, no extra text):
-INTENT: BUILD|EXPLORE|TRIAGE|REVIEW|APPROVE|REJECT|STATUS|RESET|CHAT
+INTENT: BUILD|EXPLORE|TRIAGE|REVIEW|SECURITY|APPROVE|REJECT|STATUS|RESET|CHAT
 REPO: owner/name or NONE
 ISSUE: number or NONE
 REASON: text or NONE
@@ -73,7 +75,8 @@ Examples:
 "go ahead" with ISSUE TITLE "Add CSV export" → INTENT: BUILD, REPO: NONE, ISSUE: NONE, REASON: NONE
 "approve" → INTENT: APPROVE, REPO: NONE, ISSUE: NONE, REASON: NONE
 "reject, the plan is too complex" → INTENT: REJECT, REPO: NONE, ISSUE: NONE, REASON: the plan is too complex
-"what's running?" → INTENT: STATUS, REPO: NONE, ISSUE: NONE, REASON: NONE`;
+"what's running?" → INTENT: STATUS, REPO: NONE, ISSUE: NONE, REASON: NONE
+"run a security review on cliftonc/lastlight" → INTENT: SECURITY, REPO: cliftonc/lastlight, ISSUE: NONE, REASON: NONE`;
 
 /**
  * Classify a GitHub/Slack comment's intent and extract a repo reference.
@@ -116,6 +119,7 @@ export async function classifyComment(
       EXPLORE: "explore",
       TRIAGE: "triage",
       REVIEW: "review",
+      SECURITY: "security",
       APPROVE: "approve",
       REJECT: "reject",
       STATUS: "status",
