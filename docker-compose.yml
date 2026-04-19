@@ -13,11 +13,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock   # spawn sandbox containers
     env_file:
       - .env
-    # Steady-state ~150 MB; bursts during webhook fan-out + cron jobs.
-    # 1 GB cap leaves headroom for traffic spikes while preventing a runaway
-    # leak from taking the host down.
-    mem_limit: 1g
-    memswap_limit: 1g
+    # Steady-state ~150 MB; bursts during webhook fan-out, the in-process
+    # chat skill (full Agent SDK), and the dispatch screening call. 2 GB
+    # gives headroom for those bursts while still preventing a runaway leak
+    # from taking the host down.
+    mem_limit: 2g
+    memswap_limit: 2g
     networks:
       - internal
 

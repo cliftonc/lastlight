@@ -162,30 +162,33 @@ export async function runSimpleWorkflow(
   // ── Build template context ─────────────────────────────────────────────────
   //
   // The context snapshot is the agent's primary view of the task. All
-  // user-provided text (issue body, triggering comment, full thread) is
-  // wrapped in <<<USER_CONTENT_UNTRUSTED>>> markers so the agent — anchored
-  // by agent-context/security.md — treats them as data rather than
-  // instructions. The trigger metadata (sender, branch, issue ref) sits
-  // outside the wrappers so identity is established out-of-band.
+  // user-provided text is wrapped in <<<USER_CONTENT_UNTRUSTED>>> markers so
+  // the agent — anchored by agent-context/security.md — treats them as data
+  // rather than instructions. The trigger metadata (sender, branch, issue
+  // ref) sits outside the wrappers so identity is established out-of-band.
+  //
+  // For build/pr-fix/explore workflows the dispatch path (src/index.ts)
+  // pre-fetches the real issue body + full comment thread and stitches them
+  // into request.extra.combinedContext (one screening call). For everything
+  // else we fall back to whatever the envelope carried.
 
-  const commentThread = (request.extra?.commentThread as string | undefined) || "";
+  const combinedContext = (request.extra?.combinedContext as string | undefined) || "";
   const issueRef = `${owner}/${repo}${issueNumber ? `#${issueNumber}` : ""}`;
-  const hasAnyUserContent = !!(request.issueBody || request.commentBody || commentThread);
+  const hasAnyUserContent = !!(combinedContext || request.issueBody || request.commentBody);
 
   const contextSnapshot = hasAnyUserContent
     ? [
         `Repo: ${issueRef}`,
         `Issue title: ${request.issueTitle || "(none)"}`,
-        request.issueBody
-          ? `Issue body:\n${wrapUntrusted(request.issueBody, { source: "github-issue-body" })}`
-          : "",
         request.commentBody
           ? `Triggering comment:\n${wrapUntrusted(request.commentBody, { source: "github-comment", author: request.sender })}`
           : "",
         `Requested by: ${request.sender}`,
         `Branch: ${branch}`,
-        commentThread
-          ? `Full issue thread (oldest → newest):\n${wrapUntrusted(commentThread, { source: "github-comment-thread" })}`
+        combinedContext
+          ? `Issue body and full thread:\n${wrapUntrusted(combinedContext, { source: "github-issue-thread" })}`
+          : request.issueBody
+          ? `Issue body:\n${wrapUntrusted(request.issueBody, { source: "github-issue-body" })}`
           : "",
       ]
         .filter(Boolean)

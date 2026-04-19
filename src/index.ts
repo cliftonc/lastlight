@@ -184,13 +184,18 @@ async function main() {
     // For workflows where the architect/agent needs to see the full issue
     // history (e.g. a build greenlit by "@last-light lets build this!" needs
     // the spec the explore phase wrote in earlier comments), fetch the real
-    // issue body and the comment thread, then screen each piece for
-    // prompt-injection signals before stitching them into the prompt context.
+    // issue body and the comment thread, combine them into a single context
+    // blob, and screen the combined text in ONE SDK call.
+    //
+    // Why single-shot: screening per-comment fans out N concurrent SDK calls,
+    // and on a busy issue (16+ comments) that exhausts memory and trips the
+    // EventEmitter listener cap. The combined-context approach keeps screen
+    // cost at exactly one haiku call regardless of thread length.
     //
     // For comment-triggered builds the envelope's `body` field is the
-    // triggering comment, not the issue body — we explicitly restore the
-    // real issue body here so the architect doesn't see the trigger comment
-    // duplicated under the "Issue body" heading.
+    // triggering comment, not the issue body — we explicitly fetch the
+    // real issue body here so the architect sees both the spec (issue body
+    // + thread) and the trigger (commentBody) cleanly separated.
     const ENRICH_WORKFLOWS = new Set(["build", "pr-fix", "explore"]);
     if (
       github &&
@@ -204,41 +209,33 @@ async function main() {
           github.listIssueComments(owner, repo, request.issueNumber),
         ]);
 
-        // Screen the issue body and each comment in parallel; comments are
-        // typically short and the screener already short-circuits text under
-        // 60 chars, so this stays cheap on quiet threads.
-        const [bodyScreen, commentScreens] = await Promise.all([
-          screenForInjection(trueIssueBody),
-          Promise.all(comments.map((c) => screenForInjection(c.body))),
-        ]);
-
-        if (trueIssueBody) {
-          request.issueBody = bodyScreen.flagged
-            ? `${flagPrefix(bodyScreen.reason)}${trueIssueBody}`
-            : trueIssueBody;
-        }
-
         const formattedComments = comments
-          .map((c, i) => ({ comment: c, screen: commentScreens[i] }))
-          .filter(({ comment }) => comment.body.trim())
-          .map(({ comment, screen }) => {
-            const annotated = screen.flagged
-              ? `${flagPrefix(screen.reason)}${comment.body}`
-              : comment.body;
-            return `--- @${comment.user} (${comment.createdAt}) ---\n${annotated}`;
-          });
+          .filter((c) => c.body.trim())
+          .map((c) => `--- @${c.user} (${c.createdAt}) ---\n${c.body}`)
+          .join("\n\n");
 
-        if (formattedComments.length > 0) {
-          (request.extra ||= {}).commentThread = formattedComments.join("\n\n");
-        }
+        const combinedContext = [
+          trueIssueBody ? `# Issue body\n\n${trueIssueBody}` : "",
+          formattedComments ? `# Issue thread (oldest → newest)\n\n${formattedComments}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
 
-        const flaggedCount =
-          (bodyScreen.flagged ? 1 : 0) +
-          commentScreens.filter((s) => s.flagged).length;
-        if (flaggedCount > 0) {
-          console.warn(
-            `[dispatch] Screener flagged ${flaggedCount} item(s) in issue context for ${owner}/${repo}#${request.issueNumber}`,
-          );
+        if (combinedContext) {
+          // Single screening call over the entire combined context.
+          const screen = await screenForInjection(combinedContext);
+          const annotated = screen.flagged
+            ? `${flagPrefix(screen.reason)}${combinedContext}`
+            : combinedContext;
+          (request.extra ||= {}).combinedContext = annotated;
+          // Clear individual issueBody so simple.ts uses combinedContext
+          // exclusively (avoids double-rendering the body).
+          request.issueBody = "";
+          if (screen.flagged) {
+            console.warn(
+              `[dispatch] Screener flagged combined issue context for ${owner}/${repo}#${request.issueNumber}: ${screen.reason || "no reason"}`,
+            );
+          }
         }
       } catch (err: unknown) {
         const m = err instanceof Error ? err.message : String(err);
