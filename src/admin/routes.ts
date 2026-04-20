@@ -29,7 +29,12 @@ export interface AdminConfig {
   githubOAuthClientId?: string;
   githubOAuthClientSecret?: string;
   githubOAuthRedirectUri?: string;
-  /** Restrict login to members of this GitHub organization (requires read:org scope) */
+  /**
+   * Required when GitHub OAuth is configured. Either a GitHub org slug
+   * (restricts login to confirmed members — needs read:org scope) or the
+   * literal "*" to explicitly allow any authenticated GitHub user. If
+   * client id/secret are set but this is empty, GitHub OAuth is disabled.
+   */
   githubAllowedOrg?: string;
 }
 
@@ -207,7 +212,16 @@ export function createAdminRoutes(
   const app = new Hono();
 
   const slackOAuthEnabled = Boolean(config.slackOAuthClientId && config.slackOAuthClientSecret);
-  const githubOAuthEnabled = Boolean(config.githubOAuthClientId && config.githubOAuthClientSecret);
+  const githubCredsSet = Boolean(config.githubOAuthClientId && config.githubOAuthClientSecret);
+  const githubOAuthEnabled = githubCredsSet && Boolean(config.githubAllowedOrg);
+  if (githubCredsSet && !config.githubAllowedOrg) {
+    console.error(
+      "[oauth] GitHub OAuth client id/secret are set but GITHUB_ALLOWED_ORG is empty. " +
+      "Set it to a GitHub org slug to restrict login to that org, or to \"*\" to " +
+      "explicitly allow any GitHub user. GitHub OAuth is disabled until this is set.",
+    );
+  }
+  const githubAllowAnyUser = config.githubAllowedOrg === "*";
 
   // Auth middleware
   app.use("/*", authMiddleware(config.adminPassword, config.adminSecret));
@@ -343,7 +357,10 @@ export function createAdminRoutes(
       path: "/",
       maxAge: 600, // 10 minutes
     });
-    const url = github.createAuthorizationURL(state, ["read:user", "read:org"]);
+    // `login` on GET /user needs no scope; read:org is only needed for the
+    // org-membership check, so skip it when the allowlist is "*".
+    const scopes = githubAllowAnyUser ? [] : ["read:org"];
+    const url = github.createAuthorizationURL(state, scopes);
     return c.redirect(url.toString());
   });
 
@@ -385,9 +402,10 @@ export function createAdminRoutes(
       }
       const login = userInfo.login;
 
-      // Org membership restriction check
-      if (config.githubAllowedOrg) {
-        const org = config.githubAllowedOrg;
+      // Org membership restriction check — skipped when allowlist is "*"
+      // (explicit opt-in for "allow any GitHub user").
+      if (!githubAllowAnyUser) {
+        const org = config.githubAllowedOrg!;
         const memberRes = await fetch(
           `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(login)}`,
           {

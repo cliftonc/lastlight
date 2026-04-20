@@ -236,14 +236,26 @@ describe("GET /auth-required (GitHub OAuth)", () => {
     expect(body.githubOAuth).toBe(false);
   });
 
-  it("returns githubOAuth: true when client ID and secret are configured", async () => {
+  it("returns githubOAuth: true when client ID, secret, and allowed org are configured", async () => {
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
+      githubAllowedOrg: "acme",
     }));
     const res = await request(app, "/auth-required");
     const body = await res.json() as { githubOAuth: boolean };
     expect(res.status).toBe(200);
+    expect(body.githubOAuth).toBe(true);
+  });
+
+  it("returns githubOAuth: true when allowed org is \"*\" (allow any user)", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      githubOAuthClientId: "GH_CLIENT",
+      githubOAuthClientSecret: "GH_SECRET",
+      githubAllowedOrg: "*",
+    }));
+    const res = await request(app, "/auth-required");
+    const body = await res.json() as { githubOAuth: boolean };
     expect(body.githubOAuth).toBe(true);
   });
 
@@ -255,6 +267,19 @@ describe("GET /auth-required (GitHub OAuth)", () => {
     const body = await res.json() as { githubOAuth: boolean };
     expect(body.githubOAuth).toBe(false);
   });
+
+  it("returns githubOAuth: false when id+secret set but allowed org is missing", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      githubOAuthClientId: "GH_CLIENT",
+      githubOAuthClientSecret: "GH_SECRET",
+    }));
+    const res = await request(app, "/auth-required");
+    const body = await res.json() as { githubOAuth: boolean };
+    expect(body.githubOAuth).toBe(false);
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
 });
 
 describe("GET /oauth/github/authorize", () => {
@@ -264,11 +289,23 @@ describe("GET /oauth/github/authorize", () => {
     expect(res.status).toBe(404);
   });
 
-  it("redirects to GitHub when configured", async () => {
+  it("returns 404 when id+secret set but allowed org is missing", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
+      githubOAuthClientId: "GH_CLIENT",
+      githubOAuthClientSecret: "GH_SECRET",
+    }));
+    const res = await request(app, "/oauth/github/authorize");
+    expect(res.status).toBe(404);
+    errSpy.mockRestore();
+  });
+
+  it("redirects to GitHub when configured with an allowed org", async () => {
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
       githubOAuthRedirectUri: "http://localhost/callback",
+      githubAllowedOrg: "acme",
     }));
     const res = await request(app, "/oauth/github/authorize");
     expect(res.status).toBe(302);
@@ -281,6 +318,7 @@ describe("GET /oauth/github/authorize", () => {
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
       githubOAuthRedirectUri: "http://localhost/callback",
+      githubAllowedOrg: "acme",
     }));
     const res = await request(app, "/oauth/github/authorize");
     const setCookie = res.headers.get("set-cookie") ?? "";
@@ -318,6 +356,7 @@ describe("GET /oauth/github/callback", () => {
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
       githubOAuthRedirectUri: "http://localhost/callback",
+      githubAllowedOrg: "acme",
     }));
     // No cookie set → state mismatch
     const res = await request(app, "/oauth/github/callback?code=abc&state=bad-state");
@@ -328,6 +367,7 @@ describe("GET /oauth/github/callback", () => {
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
+      githubAllowedOrg: "acme",
     }));
     const state = "teststate000";
     const req = new Request(`http://localhost/oauth/github/callback?state=${state}`, {
@@ -337,14 +377,16 @@ describe("GET /oauth/github/callback", () => {
     expect(res.status).toBe(400);
   });
 
-  it("redirects with token when no org restriction set", async () => {
+  it("redirects with token and skips org fetch when allowlist is \"*\"", async () => {
     const originalFetch = global.fetch;
-    global.fetch = mockGithubFetch({ userLogin: "alice" });
+    const fetchMock = mockGithubFetch({ userLogin: "alice" });
+    global.fetch = fetchMock;
 
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
       githubOAuthRedirectUri: "http://localhost/callback",
+      githubAllowedOrg: "*",
     }));
 
     const state = "teststate111";
@@ -354,6 +396,12 @@ describe("GET /oauth/github/callback", () => {
     const res = await app.fetch(req);
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("/admin/?token=");
+    // Must not have called the /orgs/ membership endpoint under "*"
+    const calls = fetchMock.mock.calls.map((c) => {
+      const u = c[0];
+      return typeof u === "string" ? u : u instanceof URL ? u.href : u.url;
+    });
+    expect(calls.some((u) => u.includes("/orgs/"))).toBe(false);
 
     global.fetch = originalFetch;
   });
