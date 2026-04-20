@@ -110,6 +110,8 @@ Assign `item` numbers 1-based, top-to-bottom, across the **kept** findings (so i
 
 `overflow` = total findings that survived filtering minus kept findings. The dropped items are counted in `overflow` and surfaced in the overflow note. Re-running the scan after `SECURITY.md` is tightened is the way to dig into them — we don't bloat one issue with everything.
 
+**Note on unbounded high counts:** the cap above intentionally puts no ceiling on `p0-critical` or `p1-high` — those need to be visible regardless of count. On a repo where a noisy scanner (e.g. a misconfigured semgrep that maps every match to `ERROR`) emits hundreds of highs, the issue body can still exceed the 65,536-char GitHub limit. If that happens, raise the severity floor in `SECURITY.md` (`floor: high` keeps only criticals on the visible list) or tune the scanner's rule severities — both adjust at the source rather than papering over with a cap that hides real findings.
+
 ### 8. Early exit: no findings
 
 If the filtered-and-capped list is empty, **do not** create the summary issue. Write the run summary file (§ 10) and emit the all-clear Slack line (§ 11) if requested.
