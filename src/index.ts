@@ -930,8 +930,103 @@ async function main() {
       return;
     }
 
-    // Run workflow asynchronously (webhook triggers)
-    dispatchWorkflow(skill, { ...context, _triggerType: "webhook" }).catch((err: unknown) => {
+    // Run workflow asynchronously (webhook triggers).
+    //
+    // Special case: when REVIEW_POSTS_CHECK=1, the pr-review workflow on a
+    // pr.opened event posts a `last-light/review` Check Run on the PR's
+    // head SHA so branch protection can gate the merge on its conclusion.
+    // The check goes `in_progress` here and is completed below from the
+    // workflow's terminal result.
+    const wantReviewCheck =
+      config.reviewPostsCheck &&
+      envelope.type === "pr.opened" &&
+      skill === "pr-review" &&
+      !!github &&
+      !!envelope.repo &&
+      typeof envelope.prNumber === "number";
+
+    let prCheckRunId: number | undefined;
+    let prHeadSha: string | undefined;
+    let prOwner = "";
+    let prRepoName = "";
+    let prNumberForCheck = 0;
+    if (wantReviewCheck) {
+      [prOwner, prRepoName] = envelope.repo!.split("/");
+      prNumberForCheck = envelope.prNumber as number;
+      try {
+        prHeadSha = await github!.getPullRequestHeadSha(prOwner, prRepoName, prNumberForCheck);
+        prCheckRunId = await github!.createCheckRun(
+          prOwner,
+          prRepoName,
+          prHeadSha,
+          "last-light/review",
+          {
+            output: {
+              title: "Review in progress",
+              summary: "Last Light is reviewing this PR. The conclusion will land here when the review completes.",
+            },
+          },
+        );
+        console.log(
+          `[check] Posted in-progress check ${prCheckRunId} for ${prOwner}/${prRepoName}#${prNumberForCheck} on ${prHeadSha.slice(0, 7)}`,
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[check] failed to create in-progress check: ${msg}`);
+      }
+    }
+
+    const workflowPromise = dispatchWorkflow(skill, { ...context, _triggerType: "webhook" });
+
+    if (prCheckRunId !== undefined) {
+      // Capture local copies so the closure doesn't depend on the loop
+      // variables changing between invocations.
+      const checkId = prCheckRunId;
+      const owner = prOwner;
+      const repo = prRepoName;
+      const prNumber = prNumberForCheck;
+      workflowPromise
+        .then(async (result) => {
+          try {
+            // Re-fetch head SHA in case the PR was rebased mid-review — the
+            // bot's review is keyed off the SHA at submit time, so matching
+            // on the latest SHA correctly skips stale reviews.
+            const headSha = await github!.getPullRequestHeadSha(owner, repo, prNumber);
+            const review = await github!.getLatestBotReview(owner, repo, prNumber, headSha);
+            const conclusion: "success" | "failure" | "neutral" = !result.success
+              ? "neutral"
+              : review?.state === "APPROVED"
+              ? "success"
+              : review?.state === "CHANGES_REQUESTED"
+              ? "failure"
+              : "neutral";
+            await github!.updateCheckRun(owner, repo, checkId, {
+              status: "completed",
+              conclusion,
+              output: {
+                title: `Review ${conclusion === "success" ? "approved" : conclusion === "failure" ? "requested changes" : "completed"}`,
+                summary: review?.body?.slice(0, 65000) || "Review complete.",
+              },
+            });
+            console.log(`[check] Completed check ${checkId} → ${conclusion}`);
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[check] failed to complete check ${checkId}: ${msg}`);
+          }
+        })
+        .catch(async (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          try {
+            await github!.updateCheckRun(owner, repo, checkId, {
+              status: "completed",
+              conclusion: "neutral",
+              output: { title: "Review errored", summary: `Workflow threw: ${msg.slice(0, 1000)}` },
+            });
+          } catch { /* ignore — best effort */ }
+        });
+    }
+
+    workflowPromise.catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[event] Unhandled error in workflow ${skill}: ${msg}`);
     });
