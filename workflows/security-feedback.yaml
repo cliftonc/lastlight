@@ -1,9 +1,19 @@
 kind: health
 name: security-feedback
 description: |
-  Process maintainer feedback on a security issue — classify intent
-  (accept-risk, false-positive, discuss) and update SECURITY.md via PR
-  when appropriate.
+  Process maintainer feedback on a security-labelled issue (usually a
+  per-run scan summary). Classifies the comment and acts:
+
+    - create-issues — break selected findings out into individual issues
+      that can later be fed to the `build` skill (the primary flow)
+    - accept-risk / false-positive — update SECURITY.md via PR to
+      suppress the finding in future scans
+    - reopen — ask the maintainer to re-run `@last-light security-review`
+    - discuss / ignore — reply conversationally or do nothing
+
+  The scan-summary issue grammar is defined in
+  `skills/security-review/SKILL.md § Issue format`; this skill's parser
+  mirrors it (version-checked on entry).
 
   Triggered by:
     - @last-light mention on issues labelled "security"

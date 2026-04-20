@@ -2,12 +2,21 @@ kind: health
 name: security-review
 description: |
   Scan the target repository for security issues using open-source tools
-  (npm audit, semgrep, gitleaks) plus Claude code review. File findings
-  as GitHub issues, honouring SECURITY.md for known false positives and
-  accepted risks.
+  (npm audit, semgrep, gitleaks) plus Claude code review. Files ONE summary
+  issue per run (Renovate-style) containing a GitHub task list of every
+  finding grouped by Critical / High / Medium / Low. Honours SECURITY.md
+  for known false positives and accepted risks.
+
+  Maintainers break findings out into individual issues by commenting on
+  the summary issue (see the `security-feedback` skill — which handles
+  `@last-light create issues for the criticals`, per-item accept-risk /
+  false-positive commands, and conversational follow-ups).
+
+  Each invocation scans exactly ONE repo. The weekly cron fans out into
+  one independent run per managed repo.
 
   Triggered by:
-    - weekly cron (Monday 10:00)
+    - weekly cron (Monday 10:00, fans out over every managed repo)
     - manual CLI: tsx src/cli.ts security owner/repo
     - @last-light security-review in a GitHub comment
     - Slack: "security review cliftonc/repo"
