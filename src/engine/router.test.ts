@@ -471,3 +471,128 @@ describe('routeEvent — unhandled events', () => {
     expect(result.action).toBe('ignore');
   });
 });
+
+describe('routeEvent — security-review structured match', () => {
+  beforeEach(() => {
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
+    mockScreen.mockResolvedValue({ flagged: false });
+  });
+
+  it('routes @last-light security-review comment to security-review skill', async () => {
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light security-review',
+      authorAssociation: 'OWNER',
+      issueNumber: 10,
+      repo: 'cliftonc/lastlight',
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('security-review');
+      expect(result.context.repo).toBe('cliftonc/lastlight');
+    }
+  });
+
+  it('routes @last-light security-review with trailing text to security-review skill', async () => {
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light security-review please scan this',
+      authorAssociation: 'MEMBER',
+      issueNumber: 5,
+      repo: 'cliftonc/drizzle-cube',
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('security-review');
+    }
+  });
+});
+
+describe('routeEvent — security-labeled issue routing', () => {
+  beforeEach(() => {
+    mockScreen.mockResolvedValue({ flagged: false });
+  });
+
+  it('routes chat comment on security-labeled issue to security-feedback', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light accept-risk: we handle this upstream',
+      authorAssociation: 'OWNER',
+      issueNumber: 42,
+      repo: 'cliftonc/lastlight',
+      labels: ['security', 'p1-high'],
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('security-feedback');
+      expect(result.context.issueNumber).toBe(42);
+    }
+  });
+
+  it('does not route to security-feedback when issue has no security label', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'chat' });
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light please triage this',
+      authorAssociation: 'OWNER',
+      issueNumber: 7,
+      repo: 'cliftonc/lastlight',
+      labels: ['bug'],
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('issue-comment');
+    }
+  });
+
+  it('routes build intent on security-labeled issue to github-orchestrator, not security-feedback', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'build' });
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light build this fix',
+      authorAssociation: 'OWNER',
+      issueNumber: 42,
+      repo: 'cliftonc/lastlight',
+      labels: ['security'],
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('github-orchestrator');
+    }
+  });
+});
+
+describe('routeEvent — security Slack intent', () => {
+  beforeEach(() => {
+    mockScreen.mockResolvedValue({ flagged: false });
+  });
+
+  it('routes security intent with managed repo to security-review', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'security', repo: 'cliftonc/lastlight' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'security review cliftonc/lastlight' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('security-review');
+      expect(result.context.repo).toBe('cliftonc/lastlight');
+    }
+  });
+
+  it('routes security intent without repo to reply', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'security' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'run a security scan' }));
+    expect(result.action).toBe('reply');
+    if (result.action === 'reply') {
+      expect(result.message).toMatch(/which repo/i);
+    }
+  });
+
+  it('routes security intent with unmanaged repo to reply', async () => {
+    mockClassifyComment.mockResolvedValue({ intent: 'security', repo: 'unknown/repo' });
+    const result = await routeEvent(makeEnvelope({ type: 'message', body: 'security review unknown/repo' }));
+    expect(result.action).toBe('reply');
+    if (result.action === 'reply') {
+      expect(result.message).toContain('unknown/repo');
+    }
+  });
+});

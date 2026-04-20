@@ -131,7 +131,7 @@ function pickResult(r: ExecutionResult): Pick<ExecutionResult, "success" | "outp
   return { success: r.success, output: r.output, error: r.error };
 }
 
-function gitAccessProfileForWorkflow(workflowName: string): GitAccessProfile {
+export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProfile {
   switch (workflowName) {
     case "build":
     case "pr-fix":
@@ -141,7 +141,10 @@ function gitAccessProfileForWorkflow(workflowName: string): GitAccessProfile {
     case "issue-triage":
     case "issue-comment":
     case "explore":
+    case "security-review":
       return "issues-write";
+    case "security-feedback":
+      return "repo-write";
     default:
       return "read";
   }

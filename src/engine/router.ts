@@ -140,6 +140,16 @@ export async function routeEvent(
         };
       }
 
+      // Structured match for security-review before LLM classification
+      const securityMatch = envelope.body.match(/@last-light\s+security-review\b/i);
+      if (securityMatch) {
+        return {
+          action: "skill",
+          skill: "security-review",
+          context: { repo: envelope.repo, sender: envelope.sender, source: envelope.source },
+        };
+      }
+
       // Classify intent + screen for injection in parallel. Both run on the
       // same comment text and have similar latency (single haiku call); doing
       // them in parallel keeps overall router latency at max(classifier, screener)
@@ -183,7 +193,23 @@ export async function routeEvent(
       }
 
       // Issue comments: build → full build cycle, explore → socratic
-      // explore workflow, otherwise → issue-comment.
+      // explore workflow, security-labeled issues → security-feedback,
+      // otherwise → issue-comment.
+      const hasSecurityLabel = (envelope.labels || []).includes("security");
+      if (hasSecurityLabel && !["build", "approve", "reject"].includes(intent)) {
+        return {
+          action: "skill",
+          skill: "security-feedback",
+          context: {
+            repo: envelope.repo,
+            issueNumber: envelope.issueNumber,
+            title: envelope.title,
+            body: envelope.body,
+            sender: envelope.sender,
+            commentBody,
+          },
+        };
+      }
       const issueSkill = intent === "build"
         ? "github-orchestrator"
         : intent === "explore"
@@ -342,6 +368,20 @@ export async function routeEvent(
           return {
             action: "skill",
             skill: "pr-review",
+            context: { repo: classifiedRepo, sender: envelope.sender, source: envelope.source },
+          };
+        }
+
+        case "security": {
+          if (!classifiedRepo) {
+            return { action: "reply", message: "Which repo should I scan? e.g. `security review cliftonc/repo`" };
+          }
+          if (!isManagedRepo(classifiedRepo)) {
+            return { action: "reply", message: unmanagedRepoReply(classifiedRepo) };
+          }
+          return {
+            action: "skill",
+            skill: "security-review",
             context: { repo: classifiedRepo, sender: envelope.sender, source: envelope.source },
           };
         }

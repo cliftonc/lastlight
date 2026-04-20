@@ -245,3 +245,72 @@ describe("loader — missing workflow directory", () => {
     expect(jobs).toHaveLength(0);
   });
 });
+
+describe("loader — security workflow YAML files", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir();
+    setWorkflowDir(dir);
+    clearWorkflowCache();
+  });
+
+  it("parses security-review.yaml without errors", () => {
+    writeFileSync(
+      join(dir, "security-review.yaml"),
+      `kind: health
+name: security-review
+description: "Scan repo for security issues."
+phases:
+  - name: scan
+    label: Security scan
+    skill: security-review
+    model: "{{models.security}}"
+`.trim(),
+    );
+    const wf = getWorkflow("security-review");
+    expect(wf.name).toBe("security-review");
+    expect(wf.kind).toBe("health");
+    expect(wf.phases).toHaveLength(1);
+    expect(wf.phases[0].name).toBe("scan");
+  });
+
+  it("parses security-feedback.yaml without errors", () => {
+    writeFileSync(
+      join(dir, "security-feedback.yaml"),
+      `kind: health
+name: security-feedback
+description: "Process maintainer feedback on security issues."
+phases:
+  - name: feedback
+    label: Security feedback
+    skill: security-feedback
+    model: "{{models.security}}"
+`.trim(),
+    );
+    const wf = getWorkflow("security-feedback");
+    expect(wf.name).toBe("security-feedback");
+    expect(wf.kind).toBe("health");
+    expect(wf.phases).toHaveLength(1);
+    expect(wf.phases[0].name).toBe("feedback");
+  });
+
+  it("parses cron-security.yaml without errors", () => {
+    writeFileSync(
+      join(dir, "cron-security.yaml"),
+      `kind: cron
+name: weekly-security-scan
+schedule: "0 10 * * 1"
+workflow: security-review
+context:
+  mode: scan
+  deliverSlackSummary: true
+`.trim(),
+    );
+    const jobs = getCronWorkflows();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].name).toBe("weekly-security-scan");
+    expect(jobs[0].schedule).toBe("0 10 * * 1");
+    expect(jobs[0].workflow).toBe("security-review");
+  });
+});

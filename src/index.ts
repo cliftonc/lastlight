@@ -9,6 +9,7 @@ import { configureGitAuth } from "./engine/git-auth.js";
 import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
+import { dispatchCronWorkflow } from "./cron/fanout.js";
 import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { authMiddleware } from "./admin/auth.js";
@@ -914,9 +915,22 @@ async function main() {
     });
   });
 
-  // Set up cron scheduler — each cron tick dispatches an agent workflow by name
+  // Set up cron scheduler — each cron tick dispatches an agent workflow by
+  // name. When the job context carries `repos: string[]` (weekly health /
+  // security / polling scans), fan out into one independent dispatch per
+  // repo with bounded concurrency. Each per-repo run becomes its own
+  // workflow_runs row so failures are isolated and resume works unchanged.
   const cron = new CronScheduler(db, async (workflowName, context) => {
-    await dispatchWorkflow(workflowName, { ...context, _triggerType: "cron" });
+    const { dispatched, failures } = await dispatchCronWorkflow(
+      workflowName,
+      context,
+      dispatchWorkflow,
+    );
+    if (failures > 0) {
+      console.warn(
+        `[cron] ${workflowName}: ${failures}/${dispatched} dispatches failed`,
+      );
+    }
   });
 
   const webhooksEnabled = !!(config.webhookSecret && config.githubApp);
