@@ -435,6 +435,23 @@ export async function runWorkflow(
   }
 
   for (const phase of definition.phases) {
+    // Honour a cancel that landed during the previous phase's execution.
+    // The admin /cancel endpoint both flips status to 'cancelled' and
+    // kills the in-flight sandbox container; this check keeps the runner
+    // from picking up the next phase after the DB flag flips.
+    if (db && workflowId) {
+      const latest = db.getWorkflowRun(workflowId);
+      if (latest?.status === "cancelled") {
+        console.log(`[runner] ${definition.name} cancelled — stopping before phase ${phase.name}`);
+        return { success: false, phases };
+      }
+    } else {
+      // Shouldn't happen for real runs (simple.ts always passes both),
+      // but if a caller wires the runner without db/workflowId the run
+      // becomes uncancellable — log so the misconfiguration is obvious.
+      console.warn(`[runner] cancel check skipped — no db/workflowId context`);
+    }
+
     const { name: phaseName, type: phaseType = "agent" } = phase;
     // Linear workflows share one sandbox workspace across phases via `taskId`.
     // (DAG path uses phase-scoped taskIds to avoid concurrent write races.)
@@ -1126,6 +1143,18 @@ async function runDagWorkflow(
   // ── Main DAG execution loop ────────────────────────────────────────────────
 
   while (!isComplete(dag)) {
+    // Cancel check (DAG path) — mirror the linear runner's between-phase
+    // guard so a /cancel dispatch halts the next scheduling round.
+    if (db && workflowId) {
+      const latest = db.getWorkflowRun(workflowId);
+      if (latest?.status === "cancelled") {
+        console.log(`[runner:dag] ${definition.name} cancelled — stopping DAG`);
+        return { success: false, phases };
+      }
+    } else {
+      console.warn(`[runner:dag] cancel check skipped — no db/workflowId context`);
+    }
+
     // First, mark nodes that should be skipped (trigger rule fails but deps are terminal)
     const toSkip = getNodesToSkip(dag);
     for (const node of toSkip) {

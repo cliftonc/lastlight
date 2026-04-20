@@ -193,10 +193,21 @@ export async function routeEvent(
       }
 
       // Issue comments: build → full build cycle, explore → socratic
-      // explore workflow, security-labeled issues → security-feedback,
+      // explore workflow, security scan summary issues → security-feedback,
       // otherwise → issue-comment.
-      const hasSecurityLabel = (envelope.labels || []).includes("security");
-      if (hasSecurityLabel && !["build", "approve", "reject"].includes(intent)) {
+      //
+      // Key on `security-scan` (not just `security`) so we only divert to
+      // security-feedback on the per-run SUMMARY issue. Broken-out sub-issues
+      // carry `["security", severity]` (no `security-scan`) and must stay on
+      // the normal build/issue-comment path — "@last-light build this fix"
+      // on a sub-issue needs the real build cycle, not security-feedback.
+      //
+      // ALL comment intents on a summary issue funnel to security-feedback
+      // — including BUILD ("create issues for the highs" looks like build to
+      // the classifier but is really a break-out request). Approve/reject
+      // regex matches already returned above, so they don't reach here.
+      const hasScanSummaryLabel = (envelope.labels || []).includes("security-scan");
+      if (hasScanSummaryLabel) {
         return {
           action: "skill",
           skill: "security-feedback",

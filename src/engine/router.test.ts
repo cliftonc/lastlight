@@ -508,12 +508,12 @@ describe('routeEvent — security-review structured match', () => {
   });
 });
 
-describe('routeEvent — security-labeled issue routing', () => {
+describe('routeEvent — security summary issue routing', () => {
   beforeEach(() => {
     mockScreen.mockResolvedValue({ flagged: false });
   });
 
-  it('routes chat comment on security-labeled issue to security-feedback', async () => {
+  it('routes chat comment on scan summary (security + security-scan labels) to security-feedback', async () => {
     mockClassifyComment.mockResolvedValue({ intent: 'chat' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
@@ -521,7 +521,7 @@ describe('routeEvent — security-labeled issue routing', () => {
       authorAssociation: 'OWNER',
       issueNumber: 42,
       repo: 'cliftonc/lastlight',
-      labels: ['security', 'p1-high'],
+      labels: ['security', 'security-scan'],
     }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
@@ -530,7 +530,46 @@ describe('routeEvent — security-labeled issue routing', () => {
     }
   });
 
-  it('does not route to security-feedback when issue has no security label', async () => {
+  it('routes BUILD intent on scan summary to security-feedback (regression: "create issues for the highs")', async () => {
+    // "create issues for the highs" classifies as BUILD but on a scan
+    // summary that phrase means "break out findings", which is security-
+    // feedback territory. The earlier routing carved out build from this
+    // case and it triggered a real build cycle.
+    mockClassifyComment.mockResolvedValue({ intent: 'build' });
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light create issues for the highs',
+      authorAssociation: 'OWNER',
+      issueNumber: 42,
+      repo: 'cliftonc/lastlight',
+      labels: ['security', 'security-scan'],
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('security-feedback');
+    }
+  });
+
+  it('does NOT route to security-feedback on broken-out sub-issue (security label only, no security-scan)', async () => {
+    // Sub-issues broken out from the summary carry ["security", severity]
+    // but not "security-scan". On a sub-issue, "build this fix" SHOULD
+    // kick off the real build cycle.
+    mockClassifyComment.mockResolvedValue({ intent: 'build' });
+    const result = await routeEvent(makeEnvelope({
+      type: 'comment.created',
+      body: '@last-light build this fix',
+      authorAssociation: 'OWNER',
+      issueNumber: 43,
+      repo: 'cliftonc/lastlight',
+      labels: ['security', 'p1-high'],
+    }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('github-orchestrator');
+    }
+  });
+
+  it('does not route to security-feedback when issue has no security-scan label', async () => {
     mockClassifyComment.mockResolvedValue({ intent: 'chat' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
@@ -543,22 +582,6 @@ describe('routeEvent — security-labeled issue routing', () => {
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('issue-comment');
-    }
-  });
-
-  it('routes build intent on security-labeled issue to github-orchestrator, not security-feedback', async () => {
-    mockClassifyComment.mockResolvedValue({ intent: 'build' });
-    const result = await routeEvent(makeEnvelope({
-      type: 'comment.created',
-      body: '@last-light build this fix',
-      authorAssociation: 'OWNER',
-      issueNumber: 42,
-      repo: 'cliftonc/lastlight',
-      labels: ['security'],
-    }));
-    expect(result.action).toBe('skill');
-    if (result.action === 'skill') {
-      expect(result.skill).toBe('github-orchestrator');
     }
   });
 });
