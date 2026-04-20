@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import clsx from "clsx";
+import DOMPurify from "dompurify";
 import AnsiToHtml from "ansi-to-html";
 import type { ToolPair as ToolPairType } from "../../timeline/types";
 import { MessageCard, RowIcon } from "./MessageCard";
@@ -128,7 +129,7 @@ export function ToolPair({ pair, isNew }: Props) {
                   return hasAnsi ? (
                     <span
                       className="text-xs font-mono truncate flex-1"
-                      dangerouslySetInnerHTML={{ __html: ansiConverter.toHtml(preview) }}
+                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(ansiConverter.toHtml(preview), { ADD_ATTR: ["style"] }) }}
                     />
                   ) : (
                     <span

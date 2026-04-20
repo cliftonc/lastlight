@@ -29,6 +29,7 @@ function readPath(ctx: LoopEvalContext, path: string): unknown {
   let cur: unknown = ctx[parts[0]];
   for (let i = 1; i < parts.length; i++) {
     if (cur === null || cur === undefined || typeof cur !== "object") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(cur, parts[i])) return undefined;
     cur = (cur as Record<string, unknown>)[parts[i]];
   }
   return cur;

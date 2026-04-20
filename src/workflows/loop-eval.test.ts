@@ -78,6 +78,23 @@ describe("evalUntilExpression — dotted paths (scratch.*)", () => {
   });
 });
 
+describe("evalUntilExpression — prototype chain guard", () => {
+  it("returns false when path traverses __proto__", () => {
+    const ctx = { output: "" };
+    expect(evalUntilExpression("__proto__.polluted == 'yes'", ctx)).toBe(false);
+  });
+
+  it("returns false when path traverses constructor", () => {
+    const ctx = { output: "", obj: {} };
+    expect(evalUntilExpression("obj.constructor == 'Object'", ctx)).toBe(false);
+  });
+
+  it("returns false when path traverses prototype", () => {
+    const ctx = { output: "", obj: {} };
+    expect(evalUntilExpression("obj.prototype.x == 'y'", ctx)).toBe(false);
+  });
+});
+
 describe("evalUntilExpression — invalid / unrecognised expressions", () => {
   it("returns false for an empty string", () => {
     expect(evalUntilExpression("", { output: "anything" })).toBe(false);

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import DOMPurify from "dompurify";
 import Prism from "prismjs";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-json";
@@ -35,7 +36,7 @@ export function CodeBlock({ code, language = "text", maxHeight }: Props) {
   }, [code, lang, hasAnsi]);
 
   const ansiHtml = useMemo(
-    () => (hasAnsi ? ansiConverter.toHtml(code) : ""),
+    () => (hasAnsi ? DOMPurify.sanitize(ansiConverter.toHtml(code), { ADD_ATTR: ["style"] }) : ""),
     [code, hasAnsi],
   );
 

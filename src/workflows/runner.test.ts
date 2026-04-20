@@ -797,6 +797,39 @@ describe("runWorkflow — generic loop node", () => {
     expect(result.success).toBe(false);
     expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
   });
+
+  it("treats until_bash containing {{ as non-zero exit (template injection guard)", async () => {
+    const workflow: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "injection-guard",
+      phases: [
+        { name: "phase_0", type: "context" },
+        {
+          name: "run",
+          type: "agent",
+          prompt: "prompts/run.md",
+          generic_loop: {
+            max_iterations: 1,
+            until_bash: "echo {{secret}}",
+            interactive: false,
+            fresh_context: false,
+          },
+        },
+      ],
+    };
+    mockExecuteAgent.mockResolvedValueOnce(makeSuccessResult("output"));
+    // execSync should NOT be called — validateShellCommand throws first
+    mockExecSync.mockReturnValue(Buffer.from(""));
+
+    const result = await runWorkflow(workflow, BASE_CTX, {} as never, {});
+
+    // validateShellCommand throws, caught by catch block, conditionMet stays false
+    // loop exhausts max_iterations=1 and workflow completes as success (loop exhausted is not failure)
+    expect(result.success).toBe(true);
+    // execSync must NOT have been called with the mustache-containing command
+    const calls = mockExecSync.mock.calls.map((c) => c[0] as string);
+    expect(calls.every((cmd) => !cmd.includes("{{"))).toBe(true);
+  });
 });
 
 // ── DAG workflow tests ────────────────────────────────────────────────────────
