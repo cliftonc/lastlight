@@ -182,7 +182,6 @@ export class DockerSandbox {
       "--dangerously-skip-permissions",
       "--output-format", "stream-json",
       "--model", model,
-      "-p", "-",
     ].join(" ");
 
     // Run as agent user — Claude Code blocks --dangerously-skip-permissions as root
