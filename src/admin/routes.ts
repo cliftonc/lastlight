@@ -368,15 +368,21 @@ export function createAdminRoutes(
     if (!githubOAuthEnabled) {
       return c.json({ error: "GitHub OAuth not configured" }, 404);
     }
+    // Redirect the user back to the dashboard login screen with a short,
+    // URL-safe error code. The SPA maps this code to a human-readable
+    // message so the user sees the login card with an inline error instead
+    // of a raw JSON body.
+    const fail = (code: string) => c.redirect(`/admin/?error=${encodeURIComponent(code)}`);
+
     const storedState = getCookie(c, "github_oauth_state");
     deleteCookie(c, "github_oauth_state", { path: "/" });
     const { code, state } = c.req.query() as { code?: string; state?: string };
 
     if (!storedState || !state || storedState !== state) {
-      return c.json({ error: "invalid state parameter" }, 400);
+      return fail("oauth_state");
     }
     if (!code) {
-      return c.json({ error: "missing authorization code" }, 400);
+      return fail("oauth_code");
     }
 
     try {
@@ -398,7 +404,7 @@ export function createAdminRoutes(
       const userInfo = (await userRes.json()) as { login?: string };
       if (!userInfo.login) {
         console.error("GitHub /user failed: missing login field");
-        return c.json({ error: "GitHub userInfo failed" }, 502);
+        return fail("github_userinfo");
       }
       const login = userInfo.login;
 
@@ -423,7 +429,7 @@ export function createAdminRoutes(
           console.warn(
             `[oauth] GitHub login rejected: ${login} not a confirmed member of ${org} (status ${memberRes.status})`,
           );
-          return c.json({ error: "org membership required" }, 403);
+          return fail("github_org");
         }
       }
 
@@ -431,7 +437,7 @@ export function createAdminRoutes(
       return c.redirect(`/admin/?token=${encodeURIComponent(token)}`);
     } catch (err: unknown) {
       console.error("GitHub OAuth exchange failed:", err);
-      return c.json({ error: "OAuth exchange failed" }, 502);
+      return fail("oauth_exchange");
     }
   });
 

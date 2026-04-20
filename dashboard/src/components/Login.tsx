@@ -5,11 +5,34 @@ interface Props {
   onAuthed: () => void;
   slackOAuth?: boolean;
   githubOAuth?: boolean;
+  initialErrorCode?: string | null;
 }
 
-export function Login({ onAuthed, slackOAuth, githubOAuth }: Props) {
+// Maps short error codes from the /oauth/*/callback redirect into readable
+// messages. Unknown codes fall through to a generic message so we never
+// leak an opaque code to the user.
+function oauthErrorMessage(code: string): string {
+  switch (code) {
+    case "github_org":
+      return "Your GitHub account is not a confirmed member of the allowed organization. Ask an admin to install the GitHub App on the org and grant Members: Read, then try again.";
+    case "github_userinfo":
+      return "Could not read your GitHub profile. Please try again.";
+    case "oauth_state":
+      return "Your sign-in session expired or was tampered with. Please try again.";
+    case "oauth_code":
+      return "Sign-in was cancelled before it completed. Please try again.";
+    case "oauth_exchange":
+      return "GitHub sign-in failed. Please try again.";
+    default:
+      return "Sign-in failed. Please try again.";
+  }
+}
+
+export function Login({ onAuthed, slackOAuth, githubOAuth, initialErrorCode }: Props) {
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    initialErrorCode ? oauthErrorMessage(initialErrorCode) : null,
+  );
   const [busy, setBusy] = useState(false);
   const [slackRedirecting, setSlackRedirecting] = useState(false);
   const [githubRedirecting, setGithubRedirecting] = useState(false);
@@ -48,6 +71,12 @@ export function Login({ onAuthed, slackOAuth, githubOAuth }: Props) {
             <div className="text-xs text-base-content/50">Sign in to continue</div>
           </div>
 
+          {error && (
+            <div role="alert" className="alert alert-error alert-soft text-xs py-2 px-3">
+              <span>{error}</span>
+            </div>
+          )}
+
           {slackOAuth && (
             <button
               type="button"
@@ -83,7 +112,6 @@ export function Login({ onAuthed, slackOAuth, githubOAuth }: Props) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            {error && <div className="text-xs text-error">{error}</div>}
             <button
               type="submit"
               className="btn btn-primary btn-sm"
