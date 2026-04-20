@@ -48,10 +48,10 @@ Derive two booleans per row:
 
 `userTicked` is the primary selection signal; `alreadyBrokenOut` rows are never re-selected regardless of checkbox state.
 
-**Determine severity** from the nearest preceding `### 🔴 Critical (n)` / `### 🟠 High (n)` / `### 🟡 Medium (n)` / `### 🟢 Low (n)` header:
+**Determine severity** from the nearest preceding `### 🔴 Critical (n)` / `### 🟠 High (n)` / `### 🟡 Medium (n)` / `### 🟢 Low (n)` header. Medium and Low headers may carry an optional truncation suffix (e.g. `### 🟡 Medium (25) (showing first 7 of 25)`) when the security-review cap kicks in — the regex tolerates anything that follows `(\d+)` on the same line so the trailing suffix doesn't cause severity assignment to fail silently:
 
 ```
-/^### (🔴|🟠|🟡|🟢) (Critical|High|Medium|Low) \((\d+)\)$/m
+/^### (🔴|🟠|🟡|🟢) (Critical|High|Medium|Low) \((\d+)\)(?:\s.*)?$/m
 ```
 
 Map to internal severity labels:
