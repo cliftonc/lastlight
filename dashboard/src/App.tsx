@@ -320,17 +320,27 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [slackOAuth, setSlackOAuth] = useState(false);
   const [githubOAuth, setGithubOAuth] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
       try {
-        // Handle OAuth callback: if ?token= is in URL, store it and strip from history
+        // Handle OAuth callback: if ?token= is in URL, store it and strip from history.
+        // If ?error= is present (set by the server on OAuth failure), capture it for
+        // display on the login card and strip it from the URL.
         const params = new URLSearchParams(window.location.search);
         const urlToken = params.get("token");
+        const urlError = params.get("error");
         if (urlToken) {
           auth.setToken(urlToken);
           params.delete("token");
+        }
+        if (urlError && !cancelled) {
+          setLoginError(urlError);
+          params.delete("error");
+        }
+        if (urlToken || urlError) {
           const newSearch = params.toString();
           const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : "") + window.location.hash;
           window.history.replaceState(null, "", newUrl);
@@ -373,7 +383,14 @@ export default function App() {
     );
   }
   if (authState === "required") {
-    return <Login onAuthed={() => setAuthState("ok")} slackOAuth={slackOAuth} githubOAuth={githubOAuth} />;
+    return (
+      <Login
+        onAuthed={() => setAuthState("ok")}
+        slackOAuth={slackOAuth}
+        githubOAuth={githubOAuth}
+        initialErrorCode={loginError}
+      />
+    );
   }
   return (
     <Dashboard

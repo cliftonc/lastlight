@@ -360,10 +360,11 @@ describe("GET /oauth/github/callback", () => {
     }));
     // No cookie set → state mismatch
     const res = await request(app, "/oauth/github/callback?code=abc&state=bad-state");
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/admin/?error=oauth_state");
   });
 
-  it("returns 400 when code is missing", async () => {
+  it("redirects to /admin/?error=oauth_code when code is missing", async () => {
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
       githubOAuthClientId: "GH_CLIENT",
       githubOAuthClientSecret: "GH_SECRET",
@@ -374,7 +375,8 @@ describe("GET /oauth/github/callback", () => {
       headers: { Cookie: `github_oauth_state=${state}` },
     });
     const res = await app.fetch(req);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/admin/?error=oauth_code");
   });
 
   it("redirects with token and skips org fetch when allowlist is \"*\"", async () => {
@@ -428,8 +430,9 @@ describe("GET /oauth/github/callback", () => {
     global.fetch = originalFetch;
   });
 
-  it("returns 403 when org membership returns 404 (not a member)", async () => {
+  it("redirects to /admin/?error=github_org when membership returns 404 (not a member)", async () => {
     const originalFetch = global.fetch;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     global.fetch = mockGithubFetch({ userLogin: "alice", orgStatus: 404 });
 
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
@@ -444,15 +447,16 @@ describe("GET /oauth/github/callback", () => {
       headers: { Cookie: `github_oauth_state=${state}` },
     });
     const res = await app.fetch(req);
-    expect(res.status).toBe(403);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("org membership required");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/admin/?error=github_org");
 
     global.fetch = originalFetch;
+    warnSpy.mockRestore();
   });
 
-  it("returns 403 when org membership returns 302 (insufficient visibility)", async () => {
+  it("redirects to /admin/?error=github_org when membership returns 302 (insufficient visibility)", async () => {
     const originalFetch = global.fetch;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     global.fetch = mockGithubFetch({ userLogin: "alice", orgStatus: 302 });
 
     const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({
@@ -467,9 +471,11 @@ describe("GET /oauth/github/callback", () => {
       headers: { Cookie: `github_oauth_state=${state}` },
     });
     const res = await app.fetch(req);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/admin/?error=github_org");
 
     global.fetch = originalFetch;
+    warnSpy.mockRestore();
   });
 });
 
