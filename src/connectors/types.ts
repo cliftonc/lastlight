@@ -43,6 +43,8 @@ export type EventType =
   | "issue.reopened"
   | "issue.closed"
   | "pr.opened"
+  | "pr.synchronize" // new commits pushed to a PR's branch
+  | "pr.reopened"
   | "pr.closed"
   | "pr.merged"
   | "comment.created"

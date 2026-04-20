@@ -1,0 +1,16 @@
+kind: comment
+name: pr-comment
+description: |
+  Answer a maintainer's question about an open PR with concrete, code-cited
+  evidence. The PR-side counterpart to `issue-comment` — distinguished
+  because PR questions need the diff and a higher file-read cap.
+
+  Triggered by:
+    - issue_comment.created webhook on a PR (when classifier returns a
+      non-build intent and prNumber is set)
+
+phases:
+  - name: respond
+    label: Respond
+    skill: pr-comment
+    model: "{{models.comment}}"

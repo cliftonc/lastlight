@@ -163,6 +163,13 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
         title = payload.pull_request?.title || "";
         labels = (payload.pull_request?.labels || []).map((l: any) => l.name);
         if (action === "opened") type = "pr.opened";
+        // synchronize fires on every new commit pushed to the PR's branch.
+        // We map it through so the pr-review workflow re-runs against the
+        // new head SHA — without this, branch protection on the new SHA
+        // sits with no `last-light/review` check after the first one.
+        else if (action === "synchronize") type = "pr.synchronize";
+        // reopened: closed-then-reopened PRs deserve a fresh look too.
+        else if (action === "reopened") type = "pr.reopened";
         break;
 
       case "issue_comment":

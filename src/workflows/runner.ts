@@ -147,6 +147,7 @@ export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProf
       return "review-write";
     case "issue-triage":
     case "issue-comment":
+    case "pr-comment":
     case "explore":
     case "security-review":
       return "issues-write";

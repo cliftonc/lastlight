@@ -65,6 +65,22 @@ describe('routeEvent — PR events', () => {
       expect(result.skill).toBe('pr-review');
     }
   });
+
+  it('routes pr.synchronize to pr-review (re-push triggers a fresh review)', async () => {
+    const result = await routeEvent(makeEnvelope({ type: 'pr.synchronize', prNumber: 5, title: 'Add feature' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('pr-review');
+    }
+  });
+
+  it('routes pr.reopened to pr-review', async () => {
+    const result = await routeEvent(makeEnvelope({ type: 'pr.reopened', prNumber: 5, title: 'Add feature' }));
+    expect(result.action).toBe('skill');
+    if (result.action === 'skill') {
+      expect(result.skill).toBe('pr-review');
+    }
+  });
 });
 
 describe('routeEvent — comment.created', () => {
@@ -149,17 +165,17 @@ describe('routeEvent — comment.created', () => {
     }
   });
 
-  it('routes maintainer action intent on PR to issue-comment', async () => {
+  it('routes maintainer non-build intent on PR to pr-comment (diff-aware Q&A)', async () => {
     mockClassifyComment.mockResolvedValue({ intent: 'chat' });
     const result = await routeEvent(makeEnvelope({
       type: 'comment.created',
-      body: '@last-light please approve this',
+      body: '@last-light does this PR consider X?',
       authorAssociation: 'OWNER',
       prNumber: 5,
     }));
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
-      expect(result.skill).toBe('issue-comment');
+      expect(result.skill).toBe('pr-comment');
     }
   });
 
