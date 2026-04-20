@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { GitHubAppAuth } from "./auth.js";
 import { GitHubClient } from "./github.js";
 
@@ -91,21 +91,18 @@ server.tool(
       const url = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 
       const branchArgs = branch ? ["--branch", branch] : [];
-      execSync(["git", "clone", ...branchArgs, url, dest].join(" "), {
+      execFileSync("git", ["clone", ...branchArgs, url, dest], {
         stdio: "pipe",
         timeout: 120_000,
       });
 
       // Configure credential helper so push/pull get fresh tokens
       const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token}"; }; f`;
-      execSync(`git -C ${dest} config credential.helper '${credHelper}'`, { stdio: "pipe" });
+      execFileSync("git", ["-C", dest, "config", "credential.helper", credHelper], { stdio: "pipe" });
 
       // Set bot identity for commits
-      execSync(`git -C ${dest} config user.name "last-light[bot]"`, { stdio: "pipe" });
-      execSync(
-        `git -C ${dest} config user.email "last-light[bot]@users.noreply.github.com"`,
-        { stdio: "pipe" }
-      );
+      execFileSync("git", ["-C", dest, "config", "user.name", "last-light[bot]"], { stdio: "pipe" });
+      execFileSync("git", ["-C", dest, "config", "user.email", "last-light[bot]@users.noreply.github.com"], { stdio: "pipe" });
 
       return jsonResult({
         cloned: `${owner}/${repo}`,
@@ -129,7 +126,7 @@ server.tool(
     try {
       const token = await auth.getToken();
       const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token}"; }; f`;
-      execSync(`git -C ${repoPath} config credential.helper '${credHelper}'`, { stdio: "pipe" });
+      execFileSync("git", ["-C", repoPath, "config", "credential.helper", credHelper], { stdio: "pipe" });
       return jsonResult({
         refreshed: true,
         path: repoPath,
