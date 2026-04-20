@@ -21,6 +21,16 @@ import { evalUntilExpression } from "./loop-eval.js";
 import { buildDag, getReadyNodes, getNodesToSkip, isComplete, type DagNode } from "./dag.js";
 
 /**
+ * Reject shell commands containing mustache template markers to prevent
+ * accidental template injection into until_bash values.
+ */
+function validateShellCommand(cmd: string): void {
+  if (cmd.includes("{{")) {
+    throw new Error(`until_bash command rejected: contains template marker '{{'. Render templates before passing to shell.`);
+  }
+}
+
+/**
  * Load a skill's SKILL.md instructions from skills/<name>/SKILL.md, falling
  * back to .claude/skills/<name>/SKILL.md if the project-local copy isn't
  * present (matches the legacy executeSkill lookup order).
@@ -743,6 +753,7 @@ export async function runWorkflow(
         // Evaluate until_bash
         if (!conditionMet && loop.until_bash) {
           try {
+            validateShellCommand(loop.until_bash);
             execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe", cwd: config.sandboxDir ?? config.cwd });
             conditionMet = true; // exit 0
           } catch {
@@ -903,9 +914,17 @@ export async function runWorkflow(
           const rule = phase.on_output.contains_BLOCKED;
           const hasUnlessLabel =
             rule.unless_label && ctx.issueLabels.includes(rule.unless_label);
-          const titleMatches =
-            !!rule.unless_title_matches &&
-            new RegExp(rule.unless_title_matches, "i").test(ctx.issueTitle || "");
+          const titleMatches = (() => {
+            if (!rule.unless_title_matches) return false;
+            if (rule.unless_title_matches.length > 200) return false;
+            // Reject patterns with nested quantifiers (catastrophic backtracking risk)
+            if (/[+*]\{0,\}.*[+*]/.test(rule.unless_title_matches) || /(\([^)]*[+*][^)]*\))[+*?]/.test(rule.unless_title_matches)) return false;
+            try {
+              return new RegExp(rule.unless_title_matches, "i").test(ctx.issueTitle || "");
+            } catch {
+              return false;
+            }
+          })();
 
           if (hasUnlessLabel || titleMatches) {
             // Rule bypassed — fall through to phase success path.
@@ -1308,7 +1327,7 @@ async function runDagWorkflow(
             conditionMet = evalUntilExpression(loop.until, { output: iterOutput, ...Object.fromEntries(Object.entries(ctx).filter(([, v]) => typeof v === "string").map(([k, v]) => [k, v as string])) });
           }
           if (!conditionMet && loop.until_bash) {
-            try { execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe", cwd: config.sandboxDir ?? config.cwd }); conditionMet = true; }
+            try { validateShellCommand(loop.until_bash); execSync(loop.until_bash, { timeout: 30_000, stdio: "pipe", cwd: config.sandboxDir ?? config.cwd }); conditionMet = true; }
             catch { conditionMet = false; }
           }
           if (conditionMet) { complete = true; }

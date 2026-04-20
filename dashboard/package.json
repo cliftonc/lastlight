@@ -13,7 +13,7 @@
     "recharts": "^2.15.0",
     "ansi-to-html": "^0.7.2",
     "clsx": "^2.1.1",
-    "dompurify": "^3.3.3",
+    "dompurify": "^3.3.4",
     "lucide-react": "^0.468.0",
     "marked": "^11.2.0",
     "prismjs": "^1.30.0",
