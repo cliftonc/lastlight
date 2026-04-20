@@ -14,7 +14,16 @@ export interface GitHubWebhookConfig {
   replyFn?: (owner: string, repo: string, issueNumber: number, body: string) => Promise<void>;
 }
 
-/** GitHub webhook actions we skip — these are noisy and never need agent work */
+/**
+ * GitHub webhook actions we skip — these are noisy and never need agent work.
+ *
+ * NOTE: `synchronize` is intentionally NOT in this set. It fires on every new
+ * commit pushed to a PR's branch and is the canonical "needs a fresh review"
+ * trigger — without it, branch protection requiring `last-light/review`
+ * would block merges after a REQUEST_CHANGES + fix-commit cycle (the new
+ * SHA would never get a check posted against it). The handler maps it to
+ * `pr.synchronize` and routes to pr-review.
+ */
 const IGNORED_ACTIONS = new Set([
   "deleted",
   "edited",
@@ -23,7 +32,6 @@ const IGNORED_ACTIONS = new Set([
   "assigned",
   "unassigned",
   "closed",
-  "synchronize",
   "milestoned",
   "demilestoned",
   "locked",
@@ -85,14 +93,31 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
         return c.json({ filtered: true, reason: `action=${action}` }, 200);
       }
 
-      // Filter out bot events (self-loop prevention)
+      // Filter out bot events (self-loop prevention).
+      //
+      // Exception: `pull_request` opened/synchronize/reopened from a bot
+      // sender must still flow through. A bot opening its own PR or
+      // pushing a fix commit is the canonical "needs a fresh review"
+      // signal — without this exception, a REQUEST_CHANGES verdict on a
+      // bot-authored PR followed by a fix commit would be invisible to
+      // the harness, leaving branch protection (which requires a check
+      // on the latest SHA) permanently blocked.
+      //
+      // Loop risk on this exception is low: pr-review posts a PR Review
+      // (`pr_review.submitted`, currently unrouted) and a Check Run
+      // (`check_run.completed`, no event type at all here) — nothing the
+      // agent acts on. Comment/issue paths still keep the strict filter
+      // to avoid the bot replying to its own comments.
       const senderLogin = payload.sender?.login || "";
       const senderType = payload.sender?.type || "";
-      if (
+      const isBotSender =
         senderType === "Bot" ||
         senderLogin === this.config.botLogin ||
-        senderLogin.endsWith("[bot]")
-      ) {
+        senderLogin.endsWith("[bot]");
+      const isPrAttention =
+        eventType === "pull_request" &&
+        (action === "opened" || action === "synchronize" || action === "reopened");
+      if (isBotSender && !isPrAttention) {
         return c.json({ filtered: true, reason: "bot sender" }, 200);
       }
 
