@@ -506,3 +506,105 @@ describe("POST /login (password)", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("POST /workflow-runs/:id/cancel", () => {
+  // Helper to make a cancel-test db that returns a single run and
+  // records calls to the mutating methods we care about.
+  function makeCancelDb(opts: {
+    run: {
+      id: string;
+      status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
+      triggerId: string;
+      taskId?: string;
+    };
+    runningExecutions?: Array<{ id: string; workflowRunId?: string; triggerId: string }>;
+  }) {
+    const finishes: Array<{ id: string; error?: string }> = [];
+    const cancels: string[] = [];
+    const db = {
+      ...((mockDb as unknown) as Record<string, unknown>),
+      getWorkflowRun: vi.fn(() => opts.run.status === "cancelled" ? null : {
+        id: opts.run.id,
+        workflowName: "pr-review",
+        triggerId: opts.run.triggerId,
+        currentPhase: "review",
+        phaseHistory: [],
+        status: opts.run.status,
+        context: opts.run.taskId ? { taskId: opts.run.taskId } : {},
+        startedAt: "",
+        updatedAt: "",
+      }),
+      cancelWorkflowRun: vi.fn((id: string) => { cancels.push(id); }),
+      runningExecutions: vi.fn(() => opts.runningExecutions ?? []),
+      recordFinish: vi.fn((id: string, res: { error?: string }) => { finishes.push({ id, error: res.error }); }),
+    } as unknown as StateDb;
+    return { db, finishes, cancels };
+  }
+
+  it("returns 404 when run not found", async () => {
+    const db = {
+      ...((mockDb as unknown) as Record<string, unknown>),
+      getWorkflowRun: vi.fn(() => null),
+    } as unknown as StateDb;
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/run-abc/cancel", { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when run already in a terminal state", async () => {
+    const { db } = makeCancelDb({ run: { id: "r1", status: "succeeded", triggerId: "t1" } });
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/r1/cancel", { method: "POST" });
+    expect(res.status).toBe(400);
+  });
+
+  it("cancels and kills containers matching the run's taskId prefix", async () => {
+    const dockerMod = await import("./docker.js");
+    const listMock = vi.mocked(dockerMod.listRunningContainers);
+    const killMock = vi.mocked(dockerMod.killContainer);
+    listMock.mockResolvedValueOnce([
+      { id: "c1", name: "lastlight-sandbox-task-xyz-aaaaaaaa", taskId: "task-xyz", status: "running", created: "", image: "" },
+      { id: "c2", name: "lastlight-sandbox-task-xyz-review-bbbbbbbb", taskId: "task-xyz-review", status: "running", created: "", image: "" },
+      { id: "c3", name: "lastlight-sandbox-other-cccccccc", taskId: "other", status: "running", created: "", image: "" },
+    ]);
+
+    const { db, finishes, cancels } = makeCancelDb({
+      run: { id: "r1", status: "running", triggerId: "t1", taskId: "task-xyz" },
+      runningExecutions: [
+        { id: "e1", workflowRunId: "r1", triggerId: "t1" },
+        { id: "e2", workflowRunId: "r1", triggerId: "t1" },
+      ],
+    });
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/r1/cancel", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(cancels).toEqual(["r1"]);
+    expect(killMock).toHaveBeenCalledTimes(2);
+    expect(killMock).toHaveBeenCalledWith("lastlight-sandbox-task-xyz-aaaaaaaa");
+    expect(killMock).toHaveBeenCalledWith("lastlight-sandbox-task-xyz-review-bbbbbbbb");
+    expect(killMock).not.toHaveBeenCalledWith("lastlight-sandbox-other-cccccccc");
+    expect(finishes.map((f) => f.id).sort()).toEqual(["e1", "e2"]);
+    expect(finishes.every((f) => f.error === "cancelled via admin dashboard")).toBe(true);
+  });
+
+  it("does NOT mark sibling-run executions as failed when cancelling a run with a shared triggerId", async () => {
+    // Regression for the PR #38 review: matching by triggerId clobbered
+    // execution rows belonging to a concurrent run on the same trigger.
+    // Matching by workflowRunId must only finish rows for THIS run.
+    const dockerMod = await import("./docker.js");
+    vi.mocked(dockerMod.listRunningContainers).mockResolvedValueOnce([]);
+
+    const { db, finishes } = makeCancelDb({
+      run: { id: "r1", status: "running", triggerId: "shared-trigger", taskId: "task-r1" },
+      runningExecutions: [
+        { id: "e1", workflowRunId: "r1", triggerId: "shared-trigger" },
+        { id: "e2", workflowRunId: "r2", triggerId: "shared-trigger" },
+        { id: "e3", workflowRunId: undefined, triggerId: "shared-trigger" },
+      ],
+    });
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/r1/cancel", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(finishes.map((f) => f.id)).toEqual(["e1"]);
+  });
+});

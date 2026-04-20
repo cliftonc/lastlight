@@ -445,6 +445,11 @@ export async function runWorkflow(
         console.log(`[runner] ${definition.name} cancelled — stopping before phase ${phase.name}`);
         return { success: false, phases };
       }
+    } else {
+      // Shouldn't happen for real runs (simple.ts always passes both),
+      // but if a caller wires the runner without db/workflowId the run
+      // becomes uncancellable — log so the misconfiguration is obvious.
+      console.warn(`[runner] cancel check skipped — no db/workflowId context`);
     }
 
     const { name: phaseName, type: phaseType = "agent" } = phase;
@@ -1146,6 +1151,8 @@ async function runDagWorkflow(
         console.log(`[runner:dag] ${definition.name} cancelled — stopping DAG`);
         return { success: false, phases };
       }
+    } else {
+      console.warn(`[runner:dag] cancel check skipped — no db/workflowId context`);
     }
 
     // First, mark nodes that should be skipped (trigger rule fails but deps are terminal)

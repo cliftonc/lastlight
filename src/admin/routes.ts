@@ -649,18 +649,21 @@ export function createAdminRoutes(
             try {
               await killContainer(ctr.name);
               killed.push(ctr.name);
-              // Mark any live execution row for this container as failed so
-              // the dashboard stops showing it as running.
-              for (const e of db.runningExecutions()) {
-                if (ctr.taskId && e.triggerId && (e.triggerId === run.triggerId)) {
-                  db.recordFinish(e.id, { success: false, error: "cancelled via admin dashboard" });
-                }
-              }
             } catch (err) {
               console.warn(`[cancel] failed to kill ${ctr.name}:`, err);
             }
           }),
         );
+        // Mark execution rows belonging to THIS cancelled run as failed.
+        // Matching by workflowRunId (the run's id) instead of triggerId
+        // avoids clobbering a sibling run that happens to share the same
+        // trigger — e.g. two webhook deliveries for the same PR that
+        // raced before dedup closed.
+        for (const e of db.runningExecutions()) {
+          if (e.workflowRunId === id) {
+            db.recordFinish(e.id, { success: false, error: "cancelled via admin dashboard" });
+          }
+        }
       } catch (err) {
         console.warn(`[cancel] container enumeration failed:`, err);
       }
