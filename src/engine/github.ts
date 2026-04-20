@@ -109,6 +109,113 @@ export class GitHubClient {
     return data;
   }
 
+  /** Convenience: fetch only the PR's head commit SHA. Used by check-run code. */
+  async getPullRequestHeadSha(owner: string, repo: string, pullNumber: number): Promise<string> {
+    const { data } = await this.octokit.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    return data.head.sha;
+  }
+
+  /**
+   * Create a Check Run on a PR's head commit. Returns the new check_run id so
+   * the caller can later transition it from `in_progress` → `completed` with
+   * a conclusion. Repos that enable "Require status checks to pass" with
+   * `name` in their list will gate merges on the eventual conclusion.
+   *
+   * Requires the GitHub App to have `Checks: Read and write` permission.
+   */
+  async createCheckRun(
+    owner: string,
+    repo: string,
+    headSha: string,
+    name: string,
+    options: { detailsUrl?: string; output?: { title: string; summary: string } } = {},
+  ): Promise<number> {
+    const { data } = await this.octokit.rest.checks.create({
+      owner,
+      repo,
+      name,
+      head_sha: headSha,
+      status: "in_progress",
+      started_at: new Date().toISOString(),
+      ...(options.detailsUrl ? { details_url: options.detailsUrl } : {}),
+      ...(options.output ? { output: options.output } : {}),
+    });
+    return data.id;
+  }
+
+  /**
+   * Update an existing Check Run — typically to transition `in_progress` →
+   * `completed` with a conclusion. Conclusion values that branch protection
+   * treats as passing: `success`, `neutral`, `skipped`. Failing: `failure`,
+   * `cancelled`, `timed_out`, `action_required`.
+   */
+  async updateCheckRun(
+    owner: string,
+    repo: string,
+    checkRunId: number,
+    update: {
+      status?: "queued" | "in_progress" | "completed";
+      conclusion?:
+        | "success"
+        | "failure"
+        | "neutral"
+        | "cancelled"
+        | "timed_out"
+        | "action_required"
+        | "skipped";
+      output?: { title: string; summary: string };
+    },
+  ): Promise<void> {
+    await this.octokit.rest.checks.update({
+      owner,
+      repo,
+      check_run_id: checkRunId,
+      ...(update.status ? { status: update.status } : {}),
+      ...(update.conclusion ? { conclusion: update.conclusion } : {}),
+      ...(update.status === "completed" ? { completed_at: new Date().toISOString() } : {}),
+      ...(update.output ? { output: update.output } : {}),
+    });
+  }
+
+  /**
+   * Find the bot's most recent review on this PR's current head commit. Used
+   * after a pr-review workflow finishes to derive the check-run conclusion
+   * from the review the agent actually posted (APPROVE / REQUEST_CHANGES /
+   * COMMENT). Returns null when the bot hasn't reviewed this SHA yet.
+   *
+   * `botLogin` defaults to `last-light[bot]` so the lookup matches App-auth'd
+   * reviews regardless of how the agent identified itself.
+   */
+  async getLatestBotReview(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    headSha: string,
+    botLogin = "last-light[bot]",
+  ): Promise<{ state: string; body: string | null; submittedAt: string | null } | null> {
+    const reviews = await this.octokit.paginate(this.octokit.rest.pulls.listReviews, {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      per_page: 100,
+    });
+    // Reviews are returned oldest-first; iterate newest-first to pick the most
+    // recent one tied to this SHA. `commit_id` on a review is the head sha at
+    // the time the review was submitted, which is exactly the discriminator
+    // we want — re-pushes invalidate stale reviews here naturally.
+    for (let i = reviews.length - 1; i >= 0; i--) {
+      const r = reviews[i]!;
+      if (r.user?.login === botLogin && r.commit_id === headSha) {
+        return { state: r.state, body: r.body ?? null, submittedAt: r.submitted_at ?? null };
+      }
+    }
+    return null;
+  }
+
   /**
    * Get failed check runs for a PR's head SHA.
    * Fetches the actual job logs (not just annotations) to show real errors.

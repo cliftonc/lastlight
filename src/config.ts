@@ -104,6 +104,16 @@ export interface LastLightConfig {
    * omitted when neither is configured.
    */
   publicUrl?: string;
+  /**
+   * When true, the pr-review workflow posts a `last-light/review` Check Run
+   * on the PR's head SHA — `in_progress` at workflow start, then completed
+   * with `success` (APPROVE), `failure` (REQUEST_CHANGES) or `neutral`
+   * (COMMENT) when the agent submits its review. Repos that add this check
+   * to "Required status checks" in branch protection will block merges on
+   * the conclusion. Requires the GitHub App to have Checks: Read and write.
+   * Defaults off so a permission-less rollout is unchanged behaviour.
+   */
+  reviewPostsCheck: boolean;
 }
 
 /**
@@ -153,7 +163,14 @@ export function loadConfig(): LastLightConfig {
     bootstrapLabel: process.env.BOOTSTRAP_LABEL || "lastlight:bootstrap",
     exploreDefaultRepo: process.env.EXPLORE_DEFAULT_REPO || undefined,
     publicUrl: resolvePublicUrl(),
+    reviewPostsCheck: parseBool(process.env.REVIEW_POSTS_CHECK),
   };
+}
+
+function parseBool(raw: string | undefined): boolean {
+  if (!raw) return false;
+  const v = raw.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /**
