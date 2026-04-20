@@ -68,6 +68,13 @@ export async function routeEvent(
       };
 
     case "pr.opened":
+    case "pr.synchronize":
+    case "pr.reopened":
+      // All three deserve a fresh review on the current head SHA. The
+      // pr-review skill's "skip if already reviewed this SHA" guard covers
+      // the no-op case (e.g. synchronize triggered by a non-code change
+      // when we already reviewed the resulting SHA), so a stable handler
+      // for every PR-attention event is correct.
       return {
         action: "skill",
         skill: "pr-review",
@@ -175,11 +182,15 @@ export async function routeEvent(
         : envelope.body;
 
       if (envelope.prNumber) {
-        // PR comments: build → pr-fix; explore is not meaningful on PRs
-        // (the code already exists) so collapse it to issue-comment.
+        // PR comments:
+        //   build → pr-fix (full Architect→Executor→Reviewer fix loop)
+        //   else  → pr-comment (diff-aware Q&A; the issue-comment skill
+        //           caps at 2 file reads which isn't enough to answer
+        //           "does this PR consider X?" with code-cited evidence)
+        // Explore isn't meaningful on PRs since the code already exists.
         return {
           action: "skill",
-          skill: intent === "build" ? "pr-fix" : "issue-comment",
+          skill: intent === "build" ? "pr-fix" : "pr-comment",
           context: {
             repo: envelope.repo,
             prNumber: envelope.prNumber,

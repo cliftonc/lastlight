@@ -933,13 +933,20 @@ async function main() {
     // Run workflow asynchronously (webhook triggers).
     //
     // Special case: when REVIEW_POSTS_CHECK=1, the pr-review workflow on a
-    // pr.opened event posts a `last-light/review` Check Run on the PR's
-    // head SHA so branch protection can gate the merge on its conclusion.
-    // The check goes `in_progress` here and is completed below from the
-    // workflow's terminal result.
+    // pr-attention event (opened / synchronize / reopened) posts a
+    // `last-light/review` Check Run on the PR's head SHA so branch
+    // protection can gate the merge on its conclusion. The check goes
+    // `in_progress` here and is completed below from the workflow's
+    // terminal result. Critically — `synchronize` is what makes the check
+    // refresh on every push, so a REQUEST_CHANGES followed by a fix
+    // commit produces a fresh yellow→green check on the new SHA.
+    const isPrReviewEvent =
+      envelope.type === "pr.opened" ||
+      envelope.type === "pr.synchronize" ||
+      envelope.type === "pr.reopened";
     const wantReviewCheck =
       config.reviewPostsCheck &&
-      envelope.type === "pr.opened" &&
+      isPrReviewEvent &&
       skill === "pr-review" &&
       !!github &&
       !!envelope.repo &&
