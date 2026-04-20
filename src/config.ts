@@ -96,6 +96,14 @@ export interface LastLightConfig {
    * phase without a target repo identified earlier in the flow.
    */
   exploreDefaultRepo?: string;
+  /**
+   * Publicly-reachable base URL of the harness (no trailing slash), used
+   * when embedding links back to the admin dashboard in outbound messages
+   * (e.g. the Slack "starting workflow" reply). Read from `PUBLIC_URL`,
+   * falling back to `https://<DOMAIN>` when `DOMAIN` is set. Links are
+   * omitted when neither is configured.
+   */
+  publicUrl?: string;
 }
 
 /**
@@ -144,7 +152,22 @@ export function loadConfig(): LastLightConfig {
     approval: parseApprovalGates(),
     bootstrapLabel: process.env.BOOTSTRAP_LABEL || "lastlight:bootstrap",
     exploreDefaultRepo: process.env.EXPLORE_DEFAULT_REPO || undefined,
+    publicUrl: resolvePublicUrl(),
   };
+}
+
+/**
+ * Prefer an explicit PUBLIC_URL (e.g. behind a reverse proxy where DOMAIN
+ * isn't the externally-visible host). Fall back to https://<DOMAIN> — the
+ * same DOMAIN Caddy uses for TLS. Trailing slashes are stripped so callers
+ * can append paths unconditionally.
+ */
+function resolvePublicUrl(): string | undefined {
+  const explicit = process.env.PUBLIC_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  const domain = process.env.DOMAIN?.trim();
+  if (domain) return `https://${domain.replace(/\/+$/, "")}`;
+  return undefined;
 }
 
 /**

@@ -159,6 +159,16 @@ export async function runSimpleWorkflow(
     console.log(`[simple] Created workflow run ${workflowId} (${workflowName})`);
   }
 
+  // Surface the run id to the dispatch layer as soon as it's known (either
+  // fresh or reused). Fire-and-forget so a slow/broken downstream hook can't
+  // stall the workflow.
+  if (callbacks.onRunStart) {
+    callbacks.onRunStart(workflowId).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[simple] onRunStart callback threw: ${msg}`);
+    });
+  }
+
   // ── Build template context ─────────────────────────────────────────────────
   //
   // The context snapshot is the agent's primary view of the task. All

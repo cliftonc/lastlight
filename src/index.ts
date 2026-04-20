@@ -118,6 +118,7 @@ async function main() {
   const dispatchWorkflow = async (
     workflowName: string,
     context: Record<string, unknown>,
+    onRunStart?: (runId: string) => Promise<void>,
   ): Promise<{ success: boolean; error?: string; paused?: boolean }> => {
     // Slack-initiated workflows (explore, /explore) carry a
     // `slack:{team}:{channel}:{thread}` triggerId and don't require a
@@ -279,6 +280,7 @@ async function main() {
       },
       onPhaseEnd: async (phase, result) =>
         console.log(`[dispatch] ◀ ${workflowName}/${phase}: ${result.success ? "OK" : "FAILED"}`),
+      onRunStart,
     };
 
     try {
@@ -894,8 +896,24 @@ async function main() {
     // The router still uses skill names — they map 1:1 to workflow YAML names
     // for the four agent skills (issue-triage, pr-review, repo-health, issue-comment).
     if (envelope.type === "message") {
-      await envelope.reply(`Starting *${skill}*... I'll report back when it's done.`);
-      dispatchWorkflow(skill, { ...context, _triggerType: "chat" }).then(async (result) => {
+      // Post the "Starting *<skill>*" ack once the workflow_runs row exists,
+      // so the reply can include a deep link to the dashboard. Falls back to
+      // a plain ack when no PUBLIC_URL/DOMAIN is configured.
+      const onRunStart = async (runId: string) => {
+        const link = config.publicUrl
+          ? `${config.publicUrl}/admin/?run=${encodeURIComponent(runId)}&tab=workflows`
+          : undefined;
+        const body = link
+          ? `Starting *${skill}*... I'll report back when it's done.\n<${link}|Live progress>`
+          : `Starting *${skill}*... I'll report back when it's done.`;
+        try {
+          await envelope.reply(body);
+        } catch (err: unknown) {
+          const m = err instanceof Error ? err.message : String(err);
+          console.warn(`[event] failed to post run-start ack: ${m}`);
+        }
+      };
+      dispatchWorkflow(skill, { ...context, _triggerType: "chat" }, onRunStart).then(async (result) => {
         if (result.paused) {
           // Workflow paused at a gate (approval or reply) — don't say
           // "completed", the workflow itself already posted instructions.

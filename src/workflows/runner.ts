@@ -90,6 +90,13 @@ export interface RunnerCallbacks {
   onPhaseStart?: (phase: string) => Promise<void>;
   onPhaseEnd?: (phase: string, result: PhaseResult) => Promise<void>;
   postComment?: (body: string) => Promise<void>;
+  /**
+   * Fires once the workflow_runs row is known — either freshly created or
+   * reused from a running/paused trigger. Used by the Slack dispatch path
+   * to post the "Starting <skill>" reply with a deep link to the run.
+   * Fire-and-forget: the workflow does not await this, so failures only log.
+   */
+  onRunStart?: (runId: string) => Promise<void>;
 }
 
 export interface WorkflowResult {
