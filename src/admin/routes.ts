@@ -3,7 +3,7 @@ import path from "node:path";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { streamSSE } from "hono/streaming";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import { Slack } from "arctic";
+import { Slack, GitHub } from "arctic";
 import { unwrapLine, type SessionSource, type SessionMeta } from "./sessions.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
@@ -25,6 +25,17 @@ export interface AdminConfig {
   slackOAuthRedirectUri?: string;
   /** Restrict login to this Slack workspace team_id or team domain */
   slackAllowedWorkspace?: string;
+  /** GitHub OAuth config (optional — enables "Login with GitHub" on dashboard) */
+  githubOAuthClientId?: string;
+  githubOAuthClientSecret?: string;
+  githubOAuthRedirectUri?: string;
+  /**
+   * Required when GitHub OAuth is configured. Either a GitHub org slug
+   * (restricts login to confirmed members — needs read:org scope) or the
+   * literal "*" to explicitly allow any authenticated GitHub user. If
+   * client id/secret are set but this is empty, GitHub OAuth is disabled.
+   */
+  githubAllowedOrg?: string;
 }
 
 /**
@@ -201,13 +212,23 @@ export function createAdminRoutes(
   const app = new Hono();
 
   const slackOAuthEnabled = Boolean(config.slackOAuthClientId && config.slackOAuthClientSecret);
+  const githubCredsSet = Boolean(config.githubOAuthClientId && config.githubOAuthClientSecret);
+  const githubOAuthEnabled = githubCredsSet && Boolean(config.githubAllowedOrg);
+  if (githubCredsSet && !config.githubAllowedOrg) {
+    console.error(
+      "[oauth] GitHub OAuth client id/secret are set but GITHUB_ALLOWED_ORG is empty. " +
+      "Set it to a GitHub org slug to restrict login to that org, or to \"*\" to " +
+      "explicitly allow any GitHub user. GitHub OAuth is disabled until this is set.",
+    );
+  }
+  const githubAllowAnyUser = config.githubAllowedOrg === "*";
 
   // Auth middleware
   app.use("/*", authMiddleware(config.adminPassword, config.adminSecret));
 
   // Auth endpoints
   app.get("/auth-required", (c) => {
-    return c.json({ required: Boolean(config.adminPassword), slackOAuth: slackOAuthEnabled });
+    return c.json({ required: Boolean(config.adminPassword), slackOAuth: slackOAuthEnabled, githubOAuth: githubOAuthEnabled });
   });
 
   app.post("/login", async (c) => {
@@ -315,6 +336,101 @@ export function createAdminRoutes(
       return c.redirect(`/admin/?token=${encodeURIComponent(token)}`);
     } catch (err: unknown) {
       console.error("OAuth exchange failed:", err);
+      return c.json({ error: "OAuth exchange failed" }, 502);
+    }
+  });
+
+  // GitHub OAuth routes (only active when GitHub OAuth env vars are configured)
+  app.get("/oauth/github/authorize", (c) => {
+    if (!githubOAuthEnabled) {
+      return c.json({ error: "GitHub OAuth not configured" }, 404);
+    }
+    const github = new GitHub(
+      config.githubOAuthClientId!,
+      config.githubOAuthClientSecret!,
+      config.githubOAuthRedirectUri ?? "",
+    );
+    const state = randomBytes(16).toString("hex");
+    setCookie(c, "github_oauth_state", state, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 600, // 10 minutes
+    });
+    // `login` on GET /user needs no scope; read:org is only needed for the
+    // org-membership check, so skip it when the allowlist is "*".
+    const scopes = githubAllowAnyUser ? [] : ["read:org"];
+    const url = github.createAuthorizationURL(state, scopes);
+    return c.redirect(url.toString());
+  });
+
+  app.get("/oauth/github/callback", async (c) => {
+    if (!githubOAuthEnabled) {
+      return c.json({ error: "GitHub OAuth not configured" }, 404);
+    }
+    const storedState = getCookie(c, "github_oauth_state");
+    deleteCookie(c, "github_oauth_state", { path: "/" });
+    const { code, state } = c.req.query() as { code?: string; state?: string };
+
+    if (!storedState || !state || storedState !== state) {
+      return c.json({ error: "invalid state parameter" }, 400);
+    }
+    if (!code) {
+      return c.json({ error: "missing authorization code" }, 400);
+    }
+
+    try {
+      const github = new GitHub(
+        config.githubOAuthClientId!,
+        config.githubOAuthClientSecret!,
+        config.githubOAuthRedirectUri ?? "",
+      );
+      const tokens = await github.validateAuthorizationCode(code);
+      const accessToken = tokens.accessToken();
+
+      const userRes = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": "lastlight-admin",
+          Accept: "application/vnd.github+json",
+        },
+      });
+      const userInfo = (await userRes.json()) as { login?: string };
+      if (!userInfo.login) {
+        console.error("GitHub /user failed: missing login field");
+        return c.json({ error: "GitHub userInfo failed" }, 502);
+      }
+      const login = userInfo.login;
+
+      // Org membership restriction check — skipped when allowlist is "*"
+      // (explicit opt-in for "allow any GitHub user").
+      if (!githubAllowAnyUser) {
+        const org = config.githubAllowedOrg!;
+        const memberRes = await fetch(
+          `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(login)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "User-Agent": "lastlight-admin",
+              Accept: "application/vnd.github+json",
+            },
+            redirect: "manual",
+          },
+        );
+        // Only 204 No Content means confirmed member. 302 means caller lacks
+        // read:org visibility; 404 means not a member. Both cases are rejected.
+        if (memberRes.status !== 204) {
+          console.warn(
+            `[oauth] GitHub login rejected: ${login} not a confirmed member of ${org} (status ${memberRes.status})`,
+          );
+          return c.json({ error: "org membership required" }, 403);
+        }
+      }
+
+      const token = createToken(config.adminSecret, "github");
+      return c.redirect(`/admin/?token=${encodeURIComponent(token)}`);
+    } catch (err: unknown) {
+      console.error("GitHub OAuth exchange failed:", err);
       return c.json({ error: "OAuth exchange failed" }, 502);
     }
   });

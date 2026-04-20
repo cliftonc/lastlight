@@ -3,7 +3,7 @@ import type { Context, Next } from "hono";
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
-export function createToken(secret: string, method?: "password" | "slack"): string {
+export function createToken(secret: string, method?: "password" | "slack" | "github"): string {
   const payload: { exp: number; method?: string } = { exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS };
   if (method) payload.method = method;
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -45,7 +45,9 @@ export function authMiddleware(password: string, secret: string) {
       path.endsWith("/health") ||
       path.endsWith("/auth-required") ||
       path.endsWith("/oauth/slack/authorize") ||
-      path.endsWith("/oauth/slack/callback")
+      path.endsWith("/oauth/slack/callback") ||
+      path.endsWith("/oauth/github/authorize") ||
+      path.endsWith("/oauth/github/callback")
     ) {
       return next();
     }
