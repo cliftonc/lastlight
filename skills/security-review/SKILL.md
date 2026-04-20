@@ -100,9 +100,15 @@ Sort findings by `(severity, file, line)` in this exact order:
 2. Then `file` ascending (string compare)
 3. Then `line` ascending
 
-Assign `item` numbers 1-based, top-to-bottom, across **all** severities combined (so items 1–2 might be `p0-critical`, items 3–7 are `p1-high`, etc.).
+**Severity-aware cap (the issue body has a hard 65,536-char GitHub limit, and detailed findings blow through that on noisy repos):**
 
-If the total exceeds **100**, keep the first 100 and record the overflow count for the summary note. Items past 100 are dropped from the issue but counted in `overflow`.
+- Keep **ALL** `p0-critical` findings.
+- Keep **ALL** `p1-high` findings.
+- For `p2-medium` + `p3-low` combined, keep at most **10** (the first 10 after the sort above — severity then file then line, so all medium come before any low). Drop the rest.
+
+Assign `item` numbers 1-based, top-to-bottom, across the **kept** findings (so items 1–2 might be `p0-critical`, items 3–7 are `p1-high`, items 8–17 are the kept medium/low).
+
+`overflow` = total findings that survived filtering minus kept findings. The dropped items are counted in `overflow` and surfaced in the overflow note. Re-running the scan after `SECURITY.md` is tightened is the way to dig into them — we don't bloat one issue with everything.
 
 ### 8. Early exit: no findings
 
@@ -132,7 +138,7 @@ Write `{issueDir}/security-summary.md`:
 **After severity floor**: {n}
 **After SECURITY.md filtering**: {n} (filed)
 **Suppressed**: {n} (accepted: {nA}, false-positive: {nFP})
-{if overflow > 0}: **Overflow**: {overflow} lower-severity findings omitted from the summary issue (cap: 100)
+{if overflow > 0}: **Overflow**: {overflow} lower-severity findings omitted from the summary issue (cap: ALL critical/high + first 10 medium/low)
 ```
 
 ### 11. Slack summary (optional)
@@ -237,6 +243,8 @@ Verbatim, including the heading:
 
 Verbatim header, with numbers substituted. Always include all four severity rows, even when the count is 0.
 
+`{nC}`, `{nH}`, `{nM}`, `{nL}` and `{nTotal}` are **TRUE counts** (post-filtering, pre-cap) — i.e. how many findings of each severity actually survived the SECURITY.md filtering, regardless of whether each individual row is listed below the cap. The same numbers appear in the `### 🔴 Critical ({nC})` etc. section headers. The overflow note (Block 6) communicates how many of those counts were truncated from the listed rows.
+
 ```
 ## Summary
 
@@ -264,12 +272,14 @@ Set each count to 0 when N/A. Emit the line unconditionally so the structure is 
 Emit **only** when `overflow > 0`:
 
 ```
-> **Note** — {overflow} lower-severity findings are not listed here (cap: 100). Tighten `SECURITY.md` severity floors or break out items from this scan, then re-run.
+> **Note** — {overflow} lower-severity findings are not listed here. The cap is: ALL critical and high, plus the first 10 medium/low (after sort). Tighten `SECURITY.md` severity floors or break out items from this scan, then re-run to surface the rest.
 ```
 
 #### Block 7 — findings sections
 
 Four sections, in this **exact order** (Critical → High → Medium → Low). Always emit all four headers, even when a section has zero findings — the feedback skill relies on stable anchors.
+
+The header counts (`{nC}` etc.) are the **true** post-filter counts, identical to those in Block 4's summary table. The rows listed under each header are subject to the § 7 cap: critical and high are always complete; medium + low are truncated to the first 10 combined. When a section is partially listed, append `(showing first N of {nM})` after the marker — see the per-section header rule below.
 
 ```
 ## Findings
@@ -282,14 +292,16 @@ Four sections, in this **exact order** (Critical → High → Medium → Low). A
 
 {rows or "_No findings._"}
 
-### 🟡 Medium ({nM})
+### 🟡 Medium ({nM}){if truncated: " (showing first {kM} of {nM})"}
 
 {rows or "_No findings._"}
 
-### 🟢 Low ({nL})
+### 🟢 Low ({nL}){if truncated: " (showing first {kL} of {nL})"}
 
 {rows or "_No findings._"}
 ```
+
+Where `kM` and `kL` are the actual rows listed in this issue (sum of the two ≤ 10). When `kM == nM` or `kL == nL` (no truncation in that section), omit the parenthetical.
 
 #### Finding-row grammar
 
