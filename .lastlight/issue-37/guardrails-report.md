@@ -1,33 +1,40 @@
 # Guardrails Report — Issue #37
 
-## 1. Test Framework
+Date: 2026-04-20
 
-**Status: PASS**
+## 1. Test Framework — PASS
 
-- Runner: `vitest` v4.1.4
+- Runner: vitest v4.1.4
+- Config: `vitest.config.ts` present at repo root
+- Test files: 19 test files found
 - Command: `npx vitest run`
-- Result: 19 test files, 338 tests passed, 1 todo — all green in 4.05s
+- Result: 338 passed, 1 todo — clean run in ~3s
 
-## 2. Linting
+## 2. Linting — NOT CONFIGURED
 
-**Status: NOT CONFIGURED**
+- No eslint, biome, ruff, or other linter config found in the repo root
+- No lint script in `package.json`
+- Status: informational only — not blocking
 
-- No ESLint, Biome, or other linter config found (`eslint.config.*`, `.eslintrc*`, `biome.json` all absent)
-- No `lint` script in `package.json`
-- Non-blocking: the repo relies on TypeScript type checking instead
-
-## 3. Type Checking
-
-**Status: PASS**
+## 3. Type Checking — PASS
 
 - Config: `tsconfig.json` present at repo root
 - Command: `npx tsc --noEmit`
-- Result: No errors
+- Result: exits 0, no errors
 
-## 4. CI Pipeline (informational)
+## 4. CI Pipeline — INFORMATIONAL
 
-**Status: PRESENT**
+- `.github/workflows/publish.yml` exists (triggers on version tags)
+- Pipeline steps: install → typecheck (`tsc --noEmit`) → test (`vitest run`) → build → publish
+- No dedicated PR CI workflow — only runs on tag push
 
-- `.github/workflows/publish.yml` exists (triggers on version tags `v*`)
-- Pipeline steps: install → typecheck → test → build → publish to npm
-- Both `tsc --noEmit` and `vitest run` are included in CI
+## Summary
+
+| Check | Status |
+|---|---|
+| Test framework | PASS |
+| Linting | NOT CONFIGURED |
+| Type checking | PASS |
+| CI pipeline | INFORMATIONAL |
+
+All critical guardrails are present. Linting is absent but non-blocking.
