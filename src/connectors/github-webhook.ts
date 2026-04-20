@@ -201,6 +201,11 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
         issueNumber = payload.issue?.number;
         body = payload.comment?.body || "";
         title = payload.issue?.title || "";
+        // Carry the parent issue's labels through — the router keys on
+        // `security-scan` to divert comments on summary issues to the
+        // security-feedback skill. Without this, every comment arrived
+        // label-less and fell through to the build path.
+        labels = (payload.issue?.labels || []).map((l: any) => l.name);
         if (action === "created") type = "comment.created";
         // Detect if this is on a PR
         if (payload.issue?.pull_request) {
