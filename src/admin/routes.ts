@@ -622,7 +622,7 @@ export function createAdminRoutes(
     return c.json({ executions });
   });
 
-  app.post("/workflow-runs/:id/cancel", (c) => {
+  app.post("/workflow-runs/:id/cancel", async (c) => {
     const id = c.req.param("id");
     const run = db.getWorkflowRun(id);
     if (!run) return c.json({ error: "workflow run not found" }, 404);
@@ -630,7 +630,42 @@ export function createAdminRoutes(
       return c.json({ error: `cannot cancel a run with status '${run.status}'` }, 400);
     }
     db.cancelWorkflowRun(id);
-    return c.json({ cancelled: id });
+    // Flipping the DB row alone only stops the runner before the NEXT phase.
+    // Kill any sandbox container currently executing a phase of this run so
+    // the in-flight phase stops too. Container names are
+    //   lastlight-sandbox-<taskId>-<uuid>
+    // where taskId is the linear run's taskId or the DAG's phase-scoped
+    // `<taskId>-<phaseName>`, both of which start with the stored taskId.
+    const storedTaskId = (run.context as Record<string, unknown> | undefined)?.taskId;
+    let killed: string[] = [];
+    if (typeof storedTaskId === "string" && storedTaskId) {
+      try {
+        const containers = await listRunningContainers();
+        const matches = containers.filter(
+          (ctr) => ctr.taskId && ctr.taskId.startsWith(storedTaskId),
+        );
+        await Promise.all(
+          matches.map(async (ctr) => {
+            try {
+              await killContainer(ctr.name);
+              killed.push(ctr.name);
+              // Mark any live execution row for this container as failed so
+              // the dashboard stops showing it as running.
+              for (const e of db.runningExecutions()) {
+                if (ctr.taskId && e.triggerId && (e.triggerId === run.triggerId)) {
+                  db.recordFinish(e.id, { success: false, error: "cancelled via admin dashboard" });
+                }
+              }
+            } catch (err) {
+              console.warn(`[cancel] failed to kill ${ctr.name}:`, err);
+            }
+          }),
+        );
+      } catch (err) {
+        console.warn(`[cancel] container enumeration failed:`, err);
+      }
+    }
+    return c.json({ cancelled: id, killedContainers: killed });
   });
 
   // ── Workflow definitions ─────────────────────────────────────────
