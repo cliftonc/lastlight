@@ -30,3 +30,4 @@ The scanner will not re-file issues for these findings.
 | `2358aa69e46dd87c` | Worked example uses realistic API key pattern in SKILL.md | Fabricated example value in documentation, not a real secret | 2026-04-20 | #42 |
 | `fef125cf5f9fa722` | RSA private key PEM stub in test fixture | Truncated test fixture stub, not usable key material | 2026-04-20 | #42 |
 | `b032e93b57866358` | PKCS8 private key PEM stub in test fixture | Truncated test fixture stub, not usable key material | 2026-04-20 | #42 |
+| `7a6c49b010445b8d` | PEM header string literals in validation code matched as private key by gitleaks | PEM header strings used for format validation, not real key material | 2026-04-27 | #47 |
