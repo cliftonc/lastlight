@@ -15,7 +15,6 @@ import {
   AtSymbolIcon,
   ChatBubbleLeftRightIcon,
   ArrowPathIcon,
-  NoSymbolIcon,
 } from "@heroicons/react/24/outline";
 import { CodeBlock } from "./timeline/CodeBlock";
 import {
@@ -225,27 +224,30 @@ export function WorkflowDefinitions() {
                 {definition && (
                   <span className="badge badge-ghost badge-sm font-mono">{definition.kind}</span>
                 )}
-                {!enabled && (
-                  <span className="badge badge-error badge-sm gap-1">
-                    <NoSymbolIcon className="w-3 h-3" />
-                    disabled
-                  </span>
-                )}
-                <button
-                  onClick={handleToggle}
-                  disabled={toggleBusy}
-                  className={clsx(
-                    "btn btn-xs",
-                    enabled ? "btn-outline btn-error" : "btn-success",
-                  )}
+                <label
+                  className="ml-auto sm:ml-0 cursor-pointer flex items-center gap-2"
                   title={
                     enabled
                       ? "Disable this workflow — every trigger source (cron, webhooks, mentions, Slack) will be blocked. Persists across restarts."
                       : "Re-enable this workflow."
                   }
                 >
-                  {enabled ? "Disable" : "Enable"}
-                </button>
+                  <input
+                    type="checkbox"
+                    className="toggle toggle-sm toggle-success"
+                    checked={enabled}
+                    disabled={toggleBusy}
+                    onChange={handleToggle}
+                  />
+                  <span
+                    className={clsx(
+                      "text-xs font-medium",
+                      enabled ? "text-success" : "text-error",
+                    )}
+                  >
+                    {enabled ? "enabled" : "disabled"}
+                  </span>
+                </label>
               </div>
               {definition?.description && (
                 <p className="text-sm text-base-content/60 mt-1">{definition.description}</p>
