@@ -11,7 +11,18 @@ import { listRunningContainers, killContainer, getContainerStats } from "./docke
 import { authMiddleware, createToken, verifyToken } from "./auth.js";
 import { Cron } from "croner";
 import type { CronScheduler } from "../cron/scheduler.js";
-import { getCronWorkflows } from "../workflows/loader.js";
+import {
+  getCronWorkflows,
+  getWorkflow,
+  listAgentWorkflows,
+  loadWorkflowYamlRaw,
+  loadPromptTemplate,
+  loadSkillRaw,
+} from "../workflows/loader.js";
+import {
+  getWorkflowTriggers,
+  getWorkflowTriggerKinds,
+} from "../workflows/triggers.js";
 import { MANAGED_REPOS } from "../managed-repos.js";
 
 export interface AdminConfig {
@@ -687,13 +698,29 @@ export function createAdminRoutes(
   // it can render exactly the phases the YAML file declares — including
   // user-defined custom workflows. No hardcoded phase list, no fallback.
 
-  app.get("/workflows/:name", async (c) => {
+  // List all agent workflows for the dashboard's Workflows browser.
+  app.get("/workflows", (c) => {
+    const defs = listAgentWorkflows();
+    const workflows = defs.map((def) => ({
+      name: def.name,
+      kind: def.kind,
+      description: def.description,
+      trigger: def.trigger,
+      phaseCount: def.phases.length,
+      hasDag: def.phases.some((p) => Array.isArray(p.depends_on) && p.depends_on.length > 0),
+      triggerKinds: getWorkflowTriggerKinds(def.name),
+    }));
+    workflows.sort((a, b) => a.name.localeCompare(b.name));
+    return c.json({ workflows });
+  });
+
+  app.get("/workflows/:name", (c) => {
     const name = c.req.param("name");
     try {
-      const { getWorkflow } = await import("../workflows/loader.js");
       const def = getWorkflow(name);
       // Return only the dashboard-relevant subset (no prompt template paths,
-      // no model overrides) — keeps the surface small and stable.
+      // no model overrides) — keeps the surface small and stable for the
+      // run-detail pipeline. Use /workflows/:name/full for the editor.
       return c.json({
         workflow: {
           name: def.name,
@@ -711,6 +738,74 @@ export function createAdminRoutes(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `workflow definition not found: ${name}`, detail: msg }, 404);
+    }
+  });
+
+  // Full structured definition: every phase field, used by the definition
+  // browser to render phase details and the diagram.
+  app.get("/workflows/:name/full", (c) => {
+    const name = c.req.param("name");
+    try {
+      const def = getWorkflow(name);
+      return c.json({
+        workflow: def,
+        triggers: getWorkflowTriggers(name),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `workflow definition not found: ${name}`, detail: msg }, 404);
+    }
+  });
+
+  // Raw YAML file content — preserves comments and formatting for the
+  // dashboard's syntax-highlighted YAML view.
+  app.get("/workflows/:name/yaml", (c) => {
+    const name = c.req.param("name");
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      return c.json({ error: "invalid workflow name" }, 400);
+    }
+    try {
+      const yaml = loadWorkflowYamlRaw(name);
+      return c.text(yaml, 200, { "Content-Type": "text/plain; charset=utf-8" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `workflow yaml not found: ${name}`, detail: msg }, 404);
+    }
+  });
+
+  // Read a prompt template referenced by a phase (e.g. ?path=prompts/architect.md).
+  // Path is validated by `loadPromptTemplate` to live within workflowDir.
+  app.get("/workflows/:name/prompt", (c) => {
+    const name = c.req.param("name");
+    const promptPath = c.req.query("path");
+    if (!promptPath) return c.json({ error: "missing ?path query" }, 400);
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      return c.json({ error: "invalid workflow name" }, 400);
+    }
+    // Restrict to the prompts/ subdirectory — workflows reference templates
+    // via `prompts/foo.md` (loader.ts:resolvePromptPath also catches escapes).
+    if (!promptPath.startsWith("prompts/") || promptPath.includes("..")) {
+      return c.json({ error: "prompt path must be under prompts/" }, 400);
+    }
+    try {
+      const text = loadPromptTemplate(promptPath);
+      return c.text(text, 200, { "Content-Type": "text/plain; charset=utf-8" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `prompt not found`, detail: msg }, 404);
+    }
+  });
+
+  // Read a skill's SKILL.md file. Used by the phase detail drawer when a
+  // phase declares `skill: <name>`.
+  app.get("/skills/:name", (c) => {
+    const name = c.req.param("name");
+    try {
+      const text = loadSkillRaw(name);
+      return c.text(text, 200, { "Content-Type": "text/plain; charset=utf-8" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `skill not found: ${name}`, detail: msg }, 404);
     }
   });
 

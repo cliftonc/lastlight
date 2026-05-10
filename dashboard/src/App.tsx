@@ -8,6 +8,7 @@ import { Login } from "./components/Login";
 import { useSessionStream } from "./hooks/useSessionStream";
 import { UsageFooter } from "./components/UsageFooter";
 import { WorkflowList } from "./components/WorkflowList";
+import { WorkflowDefinitions } from "./components/WorkflowDefinitions";
 import { HomePage } from "./components/HomePage";
 import { CronsList } from "./components/CronsList";
 import {
@@ -16,6 +17,7 @@ import {
   CubeTransparentIcon,
   ChatBubbleLeftRightIcon,
   ClockIcon,
+  Squares2X2Icon,
 } from "@heroicons/react/24/outline";
 import {
   useUrlState,
@@ -28,11 +30,11 @@ import {
 } from "./hooks/useUrlState";
 
 type AuthState = "checking" | "required" | "ok";
-type Tab = "home" | "sessions" | "chat-sessions" | "workflows" | "crons";
+type Tab = "home" | "sessions" | "chat-sessions" | "workflows" | "runs" | "crons";
 
 const PAGE_SIZE = 50;
 
-const TABS = ["home", "workflows", "sessions", "chat-sessions", "crons"] as const;
+const TABS = ["home", "workflows", "runs", "sessions", "chat-sessions", "crons"] as const;
 
 const SESSION_SOURCE_PATHS: Record<"sessions" | "chat-sessions", string> = {
   sessions: "/admin/api/sessions",
@@ -238,9 +240,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         onQueryChange={(q) => {
           setQuery(q);
           // Searching from the home page is meaningless — Home has no
-          // searchable list. Hop the user to Workflows so the query has
+          // searchable list. Hop the user to Workflow Runs so the query has
           // somewhere to apply.
-          if (tab === "home" && q.length > 0) setTab("workflows");
+          if (tab === "home" && q.length > 0) setTab("runs");
         }}
         streamStatus={status}
         onLogout={onLogout}
@@ -249,7 +251,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         {(
           [
             { id: "home", label: "Home", Icon: HomeIcon },
-            { id: "workflows", label: "Workflows", Icon: RectangleStackIcon },
+            { id: "workflows", label: "Workflows", Icon: Squares2X2Icon },
+            { id: "runs", label: "Workflow Runs", Icon: RectangleStackIcon },
             { id: "sessions", label: "Sandbox Sessions", Icon: CubeTransparentIcon },
             { id: "chat-sessions", label: "Chat Sessions", Icon: ChatBubbleLeftRightIcon },
             { id: "crons", label: "Crons", Icon: ClockIcon },
@@ -281,7 +284,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             const url = new URL(window.location.href);
             url.searchParams.set("run", id);
             window.history.replaceState(null, "", url.toString());
-            setTab("workflows");
+            setTab("runs");
           }}
         />
       ) : tab === "sessions" || tab === "chat-sessions" ? (
@@ -321,7 +324,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <CronsList
           onOpenRuns={(workflow) => {
             // Widen the time window so an old "last run" (a weekly cron may
-            // not have fired in days) is actually visible — the workflows tab
+            // not have fired in days) is actually visible — the runs tab
             // defaults to the last day.
             setTimeRange("all");
             const url = new URL(window.location.href);
@@ -329,11 +332,26 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             url.searchParams.set("range", "all");
             url.searchParams.delete("run");
             window.history.replaceState(null, "", url.toString());
+            setTab("runs");
+          }}
+        />
+      ) : tab === "workflows" ? (
+        <WorkflowDefinitions />
+      ) : (
+        <WorkflowList
+          timeRange={timeRange}
+          query={debouncedQuery}
+          onOpenDefinition={(name) => {
+            // Switch to the Workflows browser with the named workflow
+            // pre-selected. The browser reads `wf` from the URL on mount.
+            const url = new URL(window.location.href);
+            url.searchParams.set("wf", name);
+            url.searchParams.delete("run");
+            url.searchParams.delete("phase");
+            window.history.replaceState(null, "", url.toString());
             setTab("workflows");
           }}
         />
-      ) : (
-        <WorkflowList timeRange={timeRange} query={debouncedQuery} />
       )}
       <UsageFooter />
     </div>

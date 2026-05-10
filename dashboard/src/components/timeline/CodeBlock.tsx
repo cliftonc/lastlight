@@ -7,8 +7,25 @@ import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-python";
 import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-markdown";
-import "prismjs/themes/prism-tomorrow.css";
+import "../../prism-theme.css";
 import AnsiToHtml from "ansi-to-html";
+
+// Register a `template-block` token on markdown + yaml so the mustache-style
+// `{{ ... }}` placeholders our prompt templates and workflow definitions use
+// (e.g. `{{branch}}`, `{{models.architect}}`, `{{phaseOutputs.x.output}}`)
+// pop visually instead of blending in with surrounding prose. Inserting at
+// the front of the language object means Prism tries this token first, so
+// `{{branch}}` inside **bold** still gets highlighted.
+const TEMPLATE_BLOCK = /\{\{[^{}\n]+\}\}/;
+for (const lang of ["markdown", "yaml"] as const) {
+  const grammar = Prism.languages[lang];
+  if (grammar && !(grammar as Record<string, unknown>)["template-block"]) {
+    Prism.languages[lang] = {
+      "template-block": TEMPLATE_BLOCK,
+      ...grammar,
+    };
+  }
+}
 
 const ansiConverter = new AnsiToHtml({
   fg: "#c9d1d9",

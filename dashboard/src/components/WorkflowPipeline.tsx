@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   ReactFlow,
   type Node,
   type Edge,
+  type ReactFlowInstance,
   Position,
   Handle,
   type NodeProps,
@@ -50,13 +51,13 @@ function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
   });
 
   const containerClass = clsx(
-    "flex flex-col items-center gap-1 px-3 py-2 rounded-lg border min-w-[80px] text-center cursor-pointer transition-shadow",
+    "flex flex-col items-center gap-1 px-3 py-2 rounded-lg border shadow-md min-w-[80px] text-center cursor-pointer transition-shadow",
     {
-      "border-success/40 bg-success/5": data.status === "done",
-      "border-error/40 bg-error/5": data.status === "failed",
-      "border-info/40 bg-info/5": data.status === "active",
-      "border-warning/40 bg-warning/5": data.status === "paused",
-      "border-base-300/40 bg-base-200/30": data.status === "pending",
+      "border-success/60 bg-success/15": data.status === "done",
+      "border-error/60 bg-error/15": data.status === "failed",
+      "border-info/60 bg-info/15": data.status === "active",
+      "border-warning/60 bg-warning/15": data.status === "paused",
+      "border-base-300 bg-base-300/70": data.status === "pending",
       "ring-2 ring-primary ring-offset-1 ring-offset-base-100": data.selected,
     },
   );
@@ -310,8 +311,29 @@ export function WorkflowPipeline({
   const numericHeight = typeof height === "number" ? height : 180;
   const effectiveHeight = Math.max(numericHeight, canvasHeight);
 
+  // Re-center on resize. The pipeline section is wrapped in a draggable
+  // divider; without this the nodes drift off-screen as the section shrinks.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const flowRef = useRef<ReactFlowInstance<Node<PhaseNodeData>, Edge> | null>(null);
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        flowRef.current?.fitView({ padding: 0.2, minZoom: 0.4, maxZoom: 1, duration: 200 });
+      });
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, []);
+
   return (
-    <div style={{ width: "100%", height: effectiveHeight }}>
+    <div ref={wrapperRef} style={{ width: "100%", height: effectiveHeight }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -332,6 +354,9 @@ export function WorkflowPipeline({
         zoomOnScroll
         zoomOnPinch
         zoomOnDoubleClick={false}
+        onInit={(instance) => {
+          flowRef.current = instance;
+        }}
         onNodeClick={(_, node) => onPhaseClick?.(node.id)}
         proOptions={{ hideAttribution: true }}
       >

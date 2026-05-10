@@ -91,6 +91,86 @@ export interface WorkflowDefinition {
   phases: WorkflowPhaseDefinition[];
 }
 
+/** Compact list of trigger source types — used for badges on the workflow list. */
+export type TriggerKind = "cron" | "github" | "slack" | "mention" | "internal";
+
+/**
+ * One trigger source for a workflow. Cron entries reference a row in the
+ * Crons tab; the others mirror what the router (`src/engine/router.ts`)
+ * does with incoming events.
+ */
+export type TriggerInfo =
+  | { kind: "cron"; name: string; schedule: string }
+  | { kind: "github"; event: string; description: string }
+  | { kind: "slack"; command: string; description: string }
+  | { kind: "mention"; description: string }
+  | { kind: "internal"; description: string };
+
+/**
+ * Summary returned by GET /workflows — one row per agent workflow YAML.
+ * Used by the Workflows browser (left list).
+ */
+export interface WorkflowSummary {
+  name: string;
+  kind: string;
+  description?: string;
+  trigger?: string;
+  phaseCount: number;
+  hasDag: boolean;
+  triggerKinds: TriggerKind[];
+}
+
+/**
+ * Full structured definition returned by GET /workflows/:name/full.
+ * Mirrors the server's `AgentWorkflowDefinition` (src/workflows/schema.ts).
+ * Phase fields are loosely typed here — the dashboard treats most of them
+ * as opaque metadata to show in the phase detail drawer.
+ */
+export interface WorkflowFullPhase {
+  name: string;
+  label?: string;
+  type: "context" | "agent";
+  prompt?: string;
+  skill?: string;
+  model?: string;
+  approval_gate?: string;
+  approval_gate_message?: string;
+  messages?: Record<string, string>;
+  loop?: {
+    max_cycles: number;
+    on_request_changes: { fix_prompt: string; fix_model?: string; re_review_prompt: string };
+    approval_gate?: string;
+    messages?: Record<string, string>;
+  };
+  generic_loop?: {
+    max_iterations: number;
+    until?: string;
+    until_bash?: string;
+    interactive?: boolean;
+    gate_message?: string;
+    gate_kind?: "approve" | "reply";
+    scratch_key?: string;
+    fresh_context?: boolean;
+  };
+  on_output?: {
+    contains_BLOCKED?: { action: string; message?: string; unless_label?: string; unless_title_matches?: string; bypass_message?: string };
+    contains_READY?: { action: string; message?: string; unless_label?: string; unless_title_matches?: string; bypass_message?: string };
+  };
+  on_success?: { set_phase?: string };
+  depends_on?: string[];
+  trigger_rule?: "all_success" | "one_success" | "none_failed_min_one_success" | "all_done";
+  output_var?: string;
+}
+
+export interface WorkflowFullDefinition {
+  name: string;
+  kind: string;
+  description?: string;
+  trigger?: string;
+  variables?: Record<string, string>;
+  phases: WorkflowFullPhase[];
+}
+
 /**
  * Per-phase execution row returned by GET /workflow-runs/:id/executions.
  * The dashboard uses this to map a clicked pipeline node to its session log
@@ -194,6 +274,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Same as `req` but for endpoints that return text/plain (raw YAML, markdown). */
+async function reqText(path: string, init?: RequestInit): Promise<string> {
+  const token = auth.getToken();
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  if (res.status === 401) {
+    auth.clear();
+    throw new UnauthorizedError();
+  }
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return await res.text();
+}
+
 export interface RateLimit {
   resource: string;
   remaining: number;
@@ -266,6 +360,15 @@ export const api = {
     req<{ cancelled: string }>(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   workflowDefinition: (name: string) =>
     req<{ workflow: WorkflowDefinition }>(`/workflows/${encodeURIComponent(name)}`),
+  workflows: () => req<{ workflows: WorkflowSummary[] }>("/workflows"),
+  workflowFull: (name: string) =>
+    req<{ workflow: WorkflowFullDefinition; triggers: TriggerInfo[] }>(
+      `/workflows/${encodeURIComponent(name)}/full`,
+    ),
+  workflowYaml: (name: string) => reqText(`/workflows/${encodeURIComponent(name)}/yaml`),
+  workflowPrompt: (name: string, path: string) =>
+    reqText(`/workflows/${encodeURIComponent(name)}/prompt?path=${encodeURIComponent(path)}`),
+  skill: (name: string) => reqText(`/skills/${encodeURIComponent(name)}`),
   approvals: () => req<{ approvals: WorkflowApproval[] }>("/approvals"),
   respondToApproval: (id: string, decision: "approved" | "rejected", reason?: string) =>
     req<{ status: string }>(`/approvals/${id}/respond`, {

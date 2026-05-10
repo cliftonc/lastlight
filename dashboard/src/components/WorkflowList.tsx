@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
+import { DocumentMagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import {
   api,
   type WorkflowRun,
@@ -50,6 +51,7 @@ interface DetailPanelProps {
   approvals: WorkflowApproval[];
   onCancel: (id: string) => void;
   onApprovalResponded: () => void;
+  onOpenDefinition?: (name: string) => void;
 }
 
 // ── Resizable pipeline + detail panels ──────────────────────────────────
@@ -189,7 +191,7 @@ function ResizablePipeline({
 
 // ── Detail panel ────────────────────────────────────────────────────────
 
-function DetailPanel({ run, approvals, onCancel, onApprovalResponded }: DetailPanelProps) {
+function DetailPanel({ run, approvals, onCancel, onApprovalResponded, onOpenDefinition }: DetailPanelProps) {
   const runApprovals = approvals.filter((a) => a.workflowRunId === run.id);
   const canCancel = run.status === "running" || run.status === "paused";
 
@@ -291,6 +293,15 @@ function DetailPanel({ run, approvals, onCancel, onApprovalResponded }: DetailPa
     <div className="flex-1 overflow-hidden flex flex-col p-4 gap-4 min-h-0">
       <div className="flex items-center gap-3 flex-wrap shrink-0">
         <span className="font-semibold text-base-content">{run.workflowName}</span>
+        {onOpenDefinition && (
+          <button
+            className="btn btn-xs btn-ghost btn-square"
+            title="View workflow definition"
+            onClick={() => onOpenDefinition(run.workflowName)}
+          >
+            <DocumentMagnifyingGlassIcon className="w-4 h-4" />
+          </button>
+        )}
         <StatusBadge status={run.status} />
         {run.repo && (
           <span className="text-xs text-base-content/50 font-mono">{run.repo}</span>
@@ -356,9 +367,11 @@ interface WorkflowListProps {
   timeRange: string;
   /** Header free-text search — matches workflow name, repo, issue number. */
   query: string;
+  /** Optional handler for the "View workflow definition" icon next to the title. */
+  onOpenDefinition?: (name: string) => void;
 }
 
-export function WorkflowList({ timeRange, query }: WorkflowListProps) {
+export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowListProps) {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [total, setTotal] = useState(0);
   const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
@@ -603,6 +616,7 @@ export function WorkflowList({ timeRange, query }: WorkflowListProps) {
             approvals={approvals}
             onCancel={handleCancel}
             onApprovalResponded={load}
+            onOpenDefinition={onOpenDefinition}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-base-content/30 text-sm">

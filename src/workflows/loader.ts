@@ -139,13 +139,79 @@ export function getCronWorkflows(): CronWorkflowDefinition[] {
 }
 
 /**
+ * Return every agent (non-cron) workflow definition currently on disk.
+ * Used by the admin dashboard to list all browseable workflows.
+ */
+export function listAgentWorkflows(): AgentWorkflowDefinition[] {
+  populateCache();
+  return Array.from(agentCache.values());
+}
+
+/**
+ * Return the raw YAML file contents for a named agent workflow. Preserves
+ * comments and original formatting — used by the dashboard's YAML viewer.
+ */
+export function loadWorkflowYamlRaw(name: string): string {
+  for (const ext of ["yaml", "yml"]) {
+    const filePath = join(workflowDir, `${name}.${ext}`);
+    if (existsSync(filePath)) return readFileSync(filePath, "utf-8");
+  }
+  throw new Error(`Workflow file not found: ${name}.{yaml,yml} in ${workflowDir}`);
+}
+
+/**
  * Read a prompt template file from the workflow directory.
- * Throws if the file doesn't exist.
+ * Throws if the file doesn't exist or if the path escapes `workflowDir`.
  */
 export function loadPromptTemplate(relativePath: string): string {
-  const filePath = join(workflowDir, relativePath);
+  const filePath = resolvePromptPath(relativePath);
+  return readFileSync(filePath, "utf-8");
+}
+
+/**
+ * Validate and resolve a prompt path against the workflow directory. Rejects
+ * absolute paths and any traversal that escapes `workflowDir`. Exported so
+ * admin routes can reuse the same guard.
+ */
+export function resolvePromptPath(relativePath: string): string {
+  if (!relativePath || relativePath.length === 0) {
+    throw new Error(`Prompt path is empty`);
+  }
+  const filePath = resolve(workflowDir, relativePath);
+  if (!filePath.startsWith(workflowDir + "/") && filePath !== workflowDir) {
+    throw new Error(`Prompt path escapes workflow directory: ${relativePath}`);
+  }
   if (!existsSync(filePath)) {
     throw new Error(`Prompt template not found: ${filePath}`);
   }
-  return readFileSync(filePath, "utf-8");
+  return filePath;
+}
+
+// ── Skills ────────────────────────────────────────────────────────────
+
+const SKILL_BASES = [resolve("skills"), resolve(".claude/skills")];
+
+/**
+ * Return the raw SKILL.md content for a named skill. Tries `skills/<name>/`
+ * first, falling back to `.claude/skills/<name>/` (matches the legacy
+ * executeSkill lookup order).
+ */
+export function loadSkillRaw(name: string): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid skill name: ${name}`);
+  }
+  for (const base of SKILL_BASES) {
+    const filePath = join(base, name, "SKILL.md");
+    if (existsSync(filePath)) return readFileSync(filePath, "utf-8");
+  }
+  throw new Error(`Skill not found: skills/${name}/SKILL.md`);
+}
+
+/**
+ * Wrap a skill's SKILL.md content in the canonical executor preamble used by
+ * skill-style phases. Kept here (instead of in runner.ts) so the admin layer
+ * can call `loadSkillRaw` without importing the runner.
+ */
+export function loadSkillInstructions(name: string): string {
+  return loadSkillRaw(name);
 }

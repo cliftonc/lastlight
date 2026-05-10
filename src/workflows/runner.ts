@@ -1,7 +1,5 @@
 import { randomUUID } from "crypto";
 import { execSync } from "child_process";
-import { readFileSync } from "fs";
-import { join, resolve } from "path";
 import type {
   ExecutorConfig,
   ExecutionResult,
@@ -15,7 +13,7 @@ import type { ModelConfig } from "../config.js";
 import { resolveModel } from "../config.js";
 import { listRunningContainers } from "../admin/docker.js";
 import type { AgentWorkflowDefinition, PhaseDefinition } from "./schema.js";
-import { loadPromptTemplate } from "./loader.js";
+import { loadPromptTemplate, loadSkillInstructions } from "./loader.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
 import { evalUntilExpression } from "./loop-eval.js";
 import { buildDag, getReadyNodes, getNodesToSkip, isComplete, type DagNode } from "./dag.js";
@@ -28,22 +26,6 @@ function validateShellCommand(cmd: string): void {
   if (cmd.includes("{{")) {
     throw new Error(`until_bash command rejected: contains template marker '{{'. Render templates before passing to shell.`);
   }
-}
-
-/**
- * Load a skill's SKILL.md instructions from skills/<name>/SKILL.md, falling
- * back to .claude/skills/<name>/SKILL.md if the project-local copy isn't
- * present (matches the legacy executeSkill lookup order).
- */
-function loadSkillInstructions(skillName: string): string {
-  for (const base of [resolve("skills"), resolve(".claude/skills")]) {
-    try {
-      return readFileSync(join(base, skillName, "SKILL.md"), "utf-8");
-    } catch {
-      /* try next path */
-    }
-  }
-  throw new Error(`Skill not found: skills/${skillName}/SKILL.md`);
 }
 
 /**
