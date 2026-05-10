@@ -183,23 +183,38 @@ export function WorkflowDefinitionDiagram({
   // phase is selected and the diagram section shrinks via the resizable
   // divider). React Flow's `fitView` prop only runs on mount, so we hold a
   // reference to the flow instance and refit on every resize tick.
+  // Guard against the xyflow async tick accessing a torn-down store after
+  // unmount / node-list change — manifested as
+  // `Cannot read properties of undefined (reading 'payload')`.
   const wrapperRef = useRef<HTMLDivElement>(null);
   const flowRef = useRef<ReactFlowInstance<Node<PhaseNodeData>, Edge> | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     const el = wrapperRef.current;
-    if (!el) return;
+    if (!el) return undefined;
     let raf = 0;
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        flowRef.current?.fitView({ padding: 0.2, duration: 200 });
+        if (!mountedRef.current) return;
+        const flow = flowRef.current;
+        if (!flow) return;
+        try {
+          if (flow.getNodes().length === 0) return;
+          flow.fitView({ padding: 0.2 });
+        } catch {
+          /* fitView raced against unmount — safe to ignore */
+        }
       });
     });
     ro.observe(el);
     return () => {
+      mountedRef.current = false;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      flowRef.current = null;
     };
   }, []);
 

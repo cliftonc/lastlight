@@ -299,6 +299,46 @@ export function WorkflowPipeline({
     return { nodes: reactFlowNodes, edges: reactFlowEdges, canvasHeight };
   }, [definition, run, executions, selectedPhase]);
 
+  // Re-center on resize. The pipeline section is wrapped in a draggable
+  // divider; without this the nodes drift off-screen as the section shrinks.
+  // The `mounted` guard + try/catch + no-animation prevent xyflow's async
+  // tick from accessing a torn-down store when the component is unmounted
+  // or the run is swapped mid-fit (manifests as
+  // `Cannot read properties of undefined (reading 'payload')`).
+  //
+  // Hooks must be declared before any conditional return — keep these above
+  // the `!definition` short-circuit to satisfy the rules of hooks.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const flowRef = useRef<ReactFlowInstance<Node<PhaseNodeData>, Edge> | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    const el = wrapperRef.current;
+    if (!el) return undefined;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (!mountedRef.current) return;
+        const flow = flowRef.current;
+        if (!flow) return;
+        try {
+          if (flow.getNodes().length === 0) return;
+          flow.fitView({ padding: 0.2, minZoom: 0.4, maxZoom: 1 });
+        } catch {
+          /* fitView raced against unmount / node-list update — safe to ignore */
+        }
+      });
+    });
+    ro.observe(el);
+    return () => {
+      mountedRef.current = false;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      flowRef.current = null;
+    };
+  }, []);
+
   if (!definition) {
     return (
       <div className="p-4 text-sm text-base-content/50">Loading workflow definition…</div>
@@ -310,27 +350,6 @@ export function WorkflowPipeline({
   // are children, expand to fit them.
   const numericHeight = typeof height === "number" ? height : 180;
   const effectiveHeight = Math.max(numericHeight, canvasHeight);
-
-  // Re-center on resize. The pipeline section is wrapped in a draggable
-  // divider; without this the nodes drift off-screen as the section shrinks.
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const flowRef = useRef<ReactFlowInstance<Node<PhaseNodeData>, Edge> | null>(null);
-  useEffect(() => {
-    const el = wrapperRef.current;
-    if (!el) return;
-    let raf = 0;
-    const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        flowRef.current?.fitView({ padding: 0.2, minZoom: 0.4, maxZoom: 1, duration: 200 });
-      });
-    });
-    ro.observe(el);
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
-  }, []);
 
   return (
     <div ref={wrapperRef} style={{ width: "100%", height: effectiveHeight }}>

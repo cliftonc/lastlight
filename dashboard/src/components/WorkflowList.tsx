@@ -550,10 +550,21 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
               const hasApprovals = approvals.some((a) => a.workflowRunId === run.id);
               return (
                 <li key={run.id} className="border-b border-base-300/40">
-                  <button
+                  {/* Row uses role="button" instead of <button> so the
+                      embedded "cancel" action can be a real <button> without
+                      tripping React's no-nested-button DOM warning. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedId(run.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedId(run.id);
+                      }
+                    }}
                     className={clsx(
-                      "w-full flex flex-col items-start gap-0.5 py-2 px-3 text-left transition-colors",
+                      "w-full flex flex-col items-start gap-0.5 py-2 px-3 text-left transition-colors cursor-pointer",
                       active
                         ? "bg-primary/15 border-l-2 border-l-primary -ml-px pl-[10px]"
                         : "hover:bg-base-300/40 border-l-2 border-l-transparent -ml-px pl-[10px]",
@@ -587,7 +598,7 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
                         cancel
                       </button>
                     )}
-                  </button>
+                  </div>
                 </li>
               );
             })}
