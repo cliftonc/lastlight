@@ -28,7 +28,8 @@ export const GET: APIRoute = async ({ site }) => {
     '',
     ...SITE_PAGES.map((p) => {
       const desc = p.description ? `: ${p.description}` : '';
-      return `- [${p.label}](${origin}${p.path})${desc}`;
+      const mdPath = p.path === '/' ? '/index.md' : `${p.path}.md`;
+      return `- [${p.label}](${origin}${mdPath})${desc}`;
     }),
     '',
   ];
@@ -37,7 +38,7 @@ export const GET: APIRoute = async ({ site }) => {
     lines.push(`## Docs: ${section.title}`);
     lines.push('');
     for (const item of section.items) {
-      lines.push(`- [${item.label}](${origin}/docs/${item.slug})`);
+      lines.push(`- [${item.label}](${origin}/docs/${item.slug}.md)`);
     }
     lines.push('');
   }
