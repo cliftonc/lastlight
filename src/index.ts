@@ -4,7 +4,8 @@ import { randomUUID } from "crypto";
 import { loadConfig, generateMcpConfig, resolveModel } from "./config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
 import { routeEvent } from "./engine/router.js";
-import { handleChatMessage } from "./engine/chat.js";
+import { CHAT_SYSTEM_SUFFIX, handleChatMessage, loadAgentContext } from "./engine/chat.js";
+import { OpencodeChatServer } from "./engine/opencode-chat-server.js";
 import { configureGitAuth } from "./engine/git-auth.js";
 import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
@@ -83,6 +84,36 @@ async function main() {
   const mcpConfigPath = resolve(config.mcpConfigPath);
   writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
   console.log(`[config] MCP config written to: ${mcpConfigPath}`);
+
+  // Resolve the claude-home dir once — used by the chat shim writer and
+  // the dashboard reader so they agree on the path.
+  const claudeHomeDir = resolve(process.env.CLAUDE_HOME_DIR || resolve(config.stateDir, "claude-home"));
+
+  // Long-lived `opencode serve` process backing the chat skill. Its
+  // working dir holds the per-process opencode.json (MCP servers) and
+  // AGENTS.md (chat persona). One server, many concurrent sessions —
+  // one per Slack thread.
+  const chatServeWorkingDir = resolve(config.stateDir, "opencode-serve");
+  const chatServer = new OpencodeChatServer({
+    port: config.opencodeServePort,
+    workingDir: chatServeWorkingDir,
+    defaultModel: resolveModel(config.models, "chat"),
+    agentMarkdown: loadAgentContext() + CHAT_SYSTEM_SUFFIX,
+    mcpServers: config.githubApp ? {
+      github: {
+        type: "local",
+        command: ["node", resolve("mcp-github-app/src/index.js")],
+        enabled: true,
+        environment: {
+          GITHUB_APP_ID: config.githubApp.appId,
+          GITHUB_APP_PRIVATE_KEY_PATH: resolve(config.githubApp.privateKeyPath),
+          GITHUB_APP_INSTALLATION_ID: config.githubApp.installationId,
+        },
+        timeout: 30000,
+      },
+    } : undefined,
+    printLogs: process.env.OPENCODE_SERVE_LOGS === "1",
+  });
 
   // Configure git with GitHub App credentials — agents can git clone/push natively.
   // Non-fatal: the token is refreshed before each agent execution anyway, so a
@@ -379,7 +410,7 @@ async function main() {
     mountAdmin(githubConnector.honoApp, db, {
       cronScheduler: cron,
       stateDir: config.stateDir,
-      sessionsDir: resolve(process.env.CLAUDE_HOME_DIR || "./data/claude-home"),
+      sessionsDir: claudeHomeDir,
       adminPassword: process.env.ADMIN_PASSWORD ?? "",
       adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
       slackOAuthClientId: process.env.SLACK_OAUTH_CLIENT_ID,
@@ -546,6 +577,11 @@ async function main() {
           messagingSessionId,
           sender,
           sessionManager,
+          {
+            chatServer,
+            claudeHomeDir,
+            mcpServerNames: config.githubApp ? ["github"] : [],
+          },
           {
             mcpConfigPath,
             model: resolveModel(config.models, "chat"),
@@ -1087,6 +1123,18 @@ async function main() {
   console.log("[main] All connectors started");
   console.log("[main] Cron jobs registered");
 
+  // Boot the long-lived chat server. Slack/Discord chat turns go to it
+  // over HTTP. Non-fatal if it fails — chat will degrade to error
+  // replies until the next restart, but workflows still run.
+  if (config.slack) {
+    try {
+      await chatServer.start();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[chat-server] startup failed: ${msg}`);
+    }
+  }
+
   // Boot-time recovery: any workflow_runs left in 'running' state from a
   // previous harness lifetime have already had their sandbox containers
   // killed by cleanupOrphanedSandboxes(). Mark their stale execution rows as
@@ -1118,6 +1166,10 @@ async function main() {
     console.log("\n[main] Shutting down...");
     cron.stopAll();
     await registry.stopAll();
+    await chatServer.stop().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[chat-server] stop error: ${msg}`);
+    });
     db.close();
     process.exit(0);
   };

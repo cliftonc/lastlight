@@ -72,6 +72,12 @@ export interface LastLightConfig {
   models: ModelConfig;
   /** Max agent turns */
   maxTurns: number;
+  /**
+   * Port for the long-lived `opencode serve` chat process. The harness
+   * spawns one of these on boot to back the messaging chat skill. Bound
+   * to 127.0.0.1 only. Override with `OPENCODE_SERVE_PORT`.
+   */
+  opencodeServePort: number;
   /** GitHub App config (optional — not needed for messaging-only mode) */
   githubApp?: {
     appId: string;
@@ -157,6 +163,7 @@ export function loadConfig(): LastLightConfig {
     model: process.env.CLAUDE_MODEL || "openai/gpt-5.3-codex",
     models: parseModelConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
+    opencodeServePort: parseInt(process.env.OPENCODE_SERVE_PORT || "4096", 10),
     githubApp,
     slack,
     approval: parseApprovalGates(),
