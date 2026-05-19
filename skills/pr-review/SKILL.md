@@ -15,8 +15,8 @@ When asked to review a pull request, or when triggered by a webhook/cron to chec
 ### 0. Check if already reviewed
 
 Before reviewing, **always check if the bot has already reviewed this PR**:
-1. Use `list_pull_request_files` to get the PR head SHA
-2. Use `get_pull_request` to check existing reviews
+1. Use `github_list_pull_request_files` to get the PR head SHA
+2. Use `github_get_pull_request` to check existing reviews
 3. Look for reviews from `last-light[bot]` — if one exists on the current head SHA, **skip this PR**. Do NOT post a duplicate review.
 4. If the PR has new commits since the last bot review, a re-review is appropriate.
 
@@ -57,11 +57,11 @@ Using MCP tools:
 
 ### 5. Submit the review
 
-Use `create_pull_request_review` MCP tool. Do NOT post as a regular comment.
+Use `github_create_pull_request_review` MCP tool. Do NOT post as a regular comment.
 
 ## Tool Usage
 
-**Always use MCP tools** for all GitHub operations. Never use `gh` CLI, `curl`, or raw HTTP requests.
+**Always use the github MCP server tools** (`github_*`) for all GitHub operations. Never use `gh` CLI, `curl`, or raw HTTP requests.
 
 ## Pitfalls
 - **Never review the same PR twice** at the same commit — always check first

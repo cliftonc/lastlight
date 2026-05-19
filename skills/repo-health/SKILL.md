@@ -54,7 +54,7 @@ When asked for a repo status report, or on a weekly cron schedule.
 
 ## Tool Usage
 
-**Always use MCP tools** (`mcp_github_*`) for all GitHub operations — listing issues, PRs, commits, labels. Never use `gh` CLI, `curl`, or raw HTTP requests. The MCP server handles authentication.
+**Always use the github MCP server tools** (`github_*`) for all GitHub operations — listing issues, PRs, commits, labels. Never use `gh` CLI, `curl`, or raw HTTP requests. The MCP server handles authentication.
 
 ## Pitfalls
 - Don't include draft PRs in the "awaiting review" count
