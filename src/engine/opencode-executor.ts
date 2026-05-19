@@ -9,8 +9,26 @@ import {
   type ExecutionResult,
   type GitSandboxAccess,
 } from "./executor.js";
+import { ClaudeJsonlShim, projectSlugForCwd } from "./opencode-shim.js";
 
 const DEFAULT_MODEL = "openai/gpt-5.3-codex";
+
+/**
+ * Cwd inside the sandbox container (matches `WORKSPACE_DIR` in
+ * `src/sandbox/docker.ts`). Surfaced here so the jsonl shim can pin the
+ * right `claude-home/projects/<slug>/` dir, which the dashboard
+ * SessionReader scans by directory name.
+ */
+const SANDBOX_WORKSPACE_DIR = "/home/agent/workspace";
+
+/**
+ * Names of MCP servers the executor configures inside the sandbox. The
+ * shim prepends `mcp_` to tool calls whose `<server>_` prefix matches
+ * one of these, so the dashboard tool-family classifier
+ * (`dashboard/src/timeline/toolFamily.ts`) keeps routing them as MCP /
+ * git family. Keep in sync with `deploy/opencode-config.tmpl.json`.
+ */
+const MCP_SERVER_NAMES = ["github"];
 
 /**
  * Execute an agent task using OpenCode.
@@ -224,19 +242,37 @@ async function executeSandboxed(
 
   let notifiedSessionId = false;
 
+  // Dashboard live-tail shim: as we receive OpenCode events, write a
+  // parallel Claude-SDK envelope jsonl into the claude-home projects dir
+  // the SessionReader already scans. See Phase 2 of the OpenCode fork plan.
+  const stateDir = config.stateDir || resolve("data");
+  const claudeHomeDir = process.env.CLAUDE_HOME_DIR
+    ? resolve(process.env.CLAUDE_HOME_DIR)
+    : resolve(stateDir, "claude-home");
+  const shim = new ClaudeJsonlShim({
+    claudeHomeDir,
+    projectSlug: projectSlugForCwd(SANDBOX_WORKSPACE_DIR),
+    mcpServerNames: MCP_SERVER_NAMES,
+    model: config.model,
+    initialPrompt: prompt,
+  });
+
   try {
     const output = await sandbox.runAgent(taskId, prompt, {
       model: config.model,
       onLine: (line) => {
-        if (notifiedSessionId || !onSessionId) return;
         if (!line.startsWith("{")) return;
+        let msg: Record<string, unknown>;
         try {
-          const msg = JSON.parse(line);
-          if (typeof msg?.sessionID === "string") {
-            notifiedSessionId = true;
-            onSessionId(msg.sessionID);
-          }
-        } catch { /* incomplete JSON — wait for the next chunk */ }
+          msg = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return; // incomplete JSON — wait for the next chunk
+        }
+        shim.feed(msg);
+        if (!notifiedSessionId && onSessionId && typeof msg.sessionID === "string") {
+          notifiedSessionId = true;
+          onSessionId(msg.sessionID);
+        }
       },
     });
 
@@ -265,6 +301,19 @@ async function executeSandboxed(
       apiDurationMs: acc.apiDurationMs(),
       stopReason,
     };
+
+    shim.finalize({
+      finalText: acc.finalText,
+      turns: acc.turns,
+      costUsd: acc.costUsd,
+      inputTokens: acc.inputTokens,
+      outputTokens: acc.outputTokens,
+      cacheReadInputTokens: acc.cacheReadInputTokens,
+      cacheCreationInputTokens: acc.cacheCreationInputTokens,
+      stopReason,
+      durationMs,
+    });
+    await shim.flush();
 
     // Detect billing / auth / rate-limit errors regardless of stop reason
     const combined = (acc.errors.join("\n") + "\n" + acc.finalText).toLowerCase();
@@ -296,6 +345,7 @@ async function executeSandboxed(
     };
   } catch (err: any) {
     console.error(`  [executor] Sandbox error: ${err.message}`);
+    await shim.flush().catch(() => { /* ignore */ });
     return {
       success: false,
       output: "",
@@ -331,6 +381,21 @@ async function executeDirect(
     "--dangerously-skip-permissions",
   ];
 
+  // Same dashboard live-tail shim as the sandbox path. The cwd here is the
+  // harness process working dir, so the project slug differs.
+  const stateDir = config.stateDir || resolve("data");
+  const claudeHomeDir = process.env.CLAUDE_HOME_DIR
+    ? resolve(process.env.CLAUDE_HOME_DIR)
+    : resolve(stateDir, "claude-home");
+  const directCwd = config.cwd || process.cwd();
+  const shim = new ClaudeJsonlShim({
+    claudeHomeDir,
+    projectSlug: projectSlugForCwd(directCwd),
+    mcpServerNames: MCP_SERVER_NAMES,
+    model,
+    initialPrompt: prompt,
+  });
+
   return new Promise<ExecutionResult>((resolveResult) => {
     const child = spawn(opencodeBin, args, {
       cwd: config.cwd,
@@ -342,13 +407,27 @@ async function executeDirect(
 
     let stdout = "";
     let stderr = "";
+    let buf = "";
 
     child.stdout.setEncoding("utf-8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("{")) continue;
+        try {
+          shim.feed(JSON.parse(line));
+        } catch { /* skip malformed */ }
+      }
+    });
     child.stderr.setEncoding("utf-8");
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
 
     child.on("error", (err) => {
+      void shim.flush();
       resolveResult({
         success: false,
         output: "",
@@ -358,11 +437,27 @@ async function executeDirect(
       });
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
+      // Flush any trailing partial line through the shim
+      if (buf.length > 0 && buf.startsWith("{")) {
+        try { shim.feed(JSON.parse(buf)); } catch { /* ignore */ }
+      }
       const acc = parseStream(stdout);
       const stopReason = acc.stopReason();
       const success = code === 0 && stopReason === "success";
       const durationMs = Date.now() - startTime;
+      shim.finalize({
+        finalText: acc.finalText,
+        turns: acc.turns,
+        costUsd: acc.costUsd,
+        inputTokens: acc.inputTokens,
+        outputTokens: acc.outputTokens,
+        cacheReadInputTokens: acc.cacheReadInputTokens,
+        cacheCreationInputTokens: acc.cacheCreationInputTokens,
+        stopReason,
+        durationMs,
+      });
+      await shim.flush();
       const error = success
         ? undefined
         : (acc.errors.join("\n") || (code !== 0 ? `opencode exit ${code}: ${stderr}` : acc.lastReason || "unknown"));
