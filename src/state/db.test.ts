@@ -410,6 +410,16 @@ describe("dailyStats", () => {
     }
   }
 
+  // Dates relative to "now" so the test data always falls inside the
+  // dailyStats() window. Hardcoded calendar dates rot once wall-clock
+  // time moves past the 30-day window.
+  function daysAgo(n: number): { iso: string; key: string } {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - n);
+    d.setUTCHours(12, 0, 0, 0);
+    return { iso: d.toISOString(), key: d.toISOString().slice(0, 10) };
+  }
+
   it("returns days rows of zeros when no executions exist", () => {
     const rows = db.dailyStats(30);
     expect(rows).toHaveLength(30);
@@ -418,17 +428,17 @@ describe("dailyStats", () => {
   });
 
   it("aggregates executions by date", () => {
-    const day1 = "2026-04-09T10:00:00.000Z";
-    const day2 = "2026-04-10T10:00:00.000Z";
-    insertExecution({ id: randomUUID(), startedAt: day1, success: true });
-    insertExecution({ id: randomUUID(), startedAt: day1, success: false });
-    insertExecution({ id: randomUUID(), startedAt: day2, success: true });
+    const day1 = daysAgo(5);
+    const day2 = daysAgo(4);
+    insertExecution({ id: randomUUID(), startedAt: day1.iso, success: true });
+    insertExecution({ id: randomUUID(), startedAt: day1.iso, success: false });
+    insertExecution({ id: randomUUID(), startedAt: day2.iso, success: true });
 
     const rows = db.dailyStats(30);
     expect(rows).toHaveLength(30);
 
-    const d1 = rows.find((r) => r.date === "2026-04-09");
-    const d2 = rows.find((r) => r.date === "2026-04-10");
+    const d1 = rows.find((r) => r.date === day1.key);
+    const d2 = rows.find((r) => r.date === day2.key);
     expect(d1).toBeDefined();
     expect(d1!.executions).toBe(2);
     expect(d1!.successes).toBe(1);
@@ -440,12 +450,12 @@ describe("dailyStats", () => {
   });
 
   it("sums token and cost data correctly", () => {
-    const day = "2026-04-10T12:00:00.000Z";
-    insertExecution({ id: randomUUID(), startedAt: day, success: true, inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, costUsd: 0.01 });
-    insertExecution({ id: randomUUID(), startedAt: day, success: true, inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, costUsd: 0.02 });
+    const day = daysAgo(3);
+    insertExecution({ id: randomUUID(), startedAt: day.iso, success: true, inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, costUsd: 0.01 });
+    insertExecution({ id: randomUUID(), startedAt: day.iso, success: true, inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, costUsd: 0.02 });
 
     const rows = db.dailyStats(30);
-    const d = rows.find((r) => r.date === "2026-04-10");
+    const d = rows.find((r) => r.date === day.key);
     expect(d).toBeDefined();
     expect(d!.inputTokens).toBe(300);
     expect(d!.outputTokens).toBe(130);
@@ -455,12 +465,12 @@ describe("dailyStats", () => {
   });
 
   it("handles NULL token/cost columns gracefully", () => {
-    const day = "2026-04-10T08:00:00.000Z";
+    const day = daysAgo(2);
     // recordStart only — no recordFinish, so tokens/cost are NULL
-    db.recordStart({ id: randomUUID(), triggerType: "webhook", triggerId: "t1", skill: "build", repo: "r", issueNumber: 1, startedAt: day });
+    db.recordStart({ id: randomUUID(), triggerType: "webhook", triggerId: "t1", skill: "build", repo: "r", issueNumber: 1, startedAt: day.iso });
 
     const rows = db.dailyStats(30);
-    const d = rows.find((r) => r.date === "2026-04-10");
+    const d = rows.find((r) => r.date === day.key);
     expect(d).toBeDefined();
     expect(d!.totalTokens).toBe(0);
     expect(d!.costUsd).toBe(0);
