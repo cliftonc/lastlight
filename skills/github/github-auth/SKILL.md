@@ -23,10 +23,10 @@ git push origin HEAD
 ## Token Refresh
 
 The token expires after ~1 hour. If git operations fail with auth errors,
-call the `refresh_git_auth` MCP tool:
+call the `github_refresh_git_auth` MCP tool:
 
 ```
-refresh_git_auth(path: "./repo")
+github_refresh_git_auth(path: "./repo")
 ```
 
 The credential helper is updated in place — no reconfiguration needed.
@@ -49,6 +49,6 @@ git config user.email
 
 | Problem | Solution |
 |---------|----------|
-| `fatal: Authentication failed` | Token expired — call `refresh_git_auth` MCP tool |
+| `fatal: Authentication failed` | Token expired — call `github_refresh_git_auth` MCP tool |
 | `remote: Permission denied` | GitHub App may not be installed on this repo |
 | Token visible in logs | Never put tokens in git URLs — the credential helper handles auth |

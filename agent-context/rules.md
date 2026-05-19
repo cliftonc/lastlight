@@ -11,9 +11,9 @@
 ## Git Authentication
 
 At the start of any task involving git operations:
-1. Call the `clone_repo` MCP tool — this clones with authentication, sets up credential helper, and configures bot identity in one step.
+1. Call the `github_clone_repo` MCP tool — this clones with authentication, sets up credential helper, and configures bot identity in one step.
 2. `git push`, `git pull`, `git fetch` all work transparently after cloning.
-3. If auth fails after ~1 hour, call `refresh_git_auth` with the repo path to get a fresh token.
+3. If auth fails after ~1 hour, call `github_refresh_git_auth` with the repo path to get a fresh token.
 
 ## Managed Repositories
 

@@ -15,13 +15,13 @@ The parent issue's structure is defined in `skills/security-review/SKILL.md § I
 - `context.commentBody` — the triggering comment text
 - `context.sender` — GitHub login of the commenter
 
-The parent issue's body is NOT passed directly — fetch it via `mcp_github_get_issue` at step 1.
+The parent issue's body is NOT passed directly — fetch it via `github_get_issue` at step 1.
 
 ## Procedure
 
 ### 1. Fetch and parse the parent issue
 
-Call `mcp_github_get_issue({ owner, repo, issue_number: issueNumber })` to retrieve the parent issue body.
+Call `github_get_issue({ owner, repo, issue_number: issueNumber })` to retrieve the parent issue body.
 
 **Version check.** The body MUST start with:
 
@@ -124,7 +124,7 @@ Pick the single best-fit bucket:
 
    If the selection is ambiguous (no supported form matched), reply asking for clarification. Do not guess.
 
-2. **For each selected finding**, call `mcp_github_create_issue` with:
+2. **For each selected finding**, call `github_create_issue` with:
    - `title`: the finding's `title` (use exactly as parsed — no prefix/suffix)
    - `labels`: `["security", severity]` (e.g. `["security", "p0-critical"]`)
    - `body`: the sub-issue body template below
@@ -164,7 +164,7 @@ Pick the single best-fit bucket:
    - [x] <!-- item:N fp:FP --> ~~**TITLE** — `FILE:LINE` (TOOL · `RULE`)~~ → #SUBISSUE
    ```
 
-   i.e. checkbox = `[x]`, title+location wrapped in `~~…~~`, ` → #SUBISSUE` appended. Match the existing row by `item:N` (the fingerprint is also suitable as a secondary key). Do **not** touch rows that weren't in the selection, even if they're ticked — leave user ticks as they were. Preserve all other content (summary table, other findings, `<details>` blocks) byte-for-byte. Call `mcp_github_update_issue({ owner, repo, issue_number: parentIssueNumber, body: newBody })`.
+   i.e. checkbox = `[x]`, title+location wrapped in `~~…~~`, ` → #SUBISSUE` appended. Match the existing row by `item:N` (the fingerprint is also suitable as a secondary key). Do **not** touch rows that weren't in the selection, even if they're ticked — leave user ticks as they were. Preserve all other content (summary table, other findings, `<details>` blocks) byte-for-byte. Call `github_update_issue({ owner, repo, issue_number: parentIssueNumber, body: newBody })`.
 
 4. **Post a summary comment** on the parent issue:
 
@@ -184,7 +184,7 @@ Pick the single best-fit bucket:
 
 1. Resolve the target finding by `item N` reference in the comment. If the item doesn't exist or no number is given, fall through to `discuss`.
 2. Extract the reason: everything after the first `:` in the comment, trimmed. Fall back to `"no reason given"` when absent.
-3. Clone the repo via `mcp_github_clone_repo`.
+3. Clone the repo via `github_clone_repo`.
 4. Read `SECURITY.md`; create it from the template in § SECURITY.md template if missing.
 5. Append a row to the matching table (accepted risks OR false positives):
 

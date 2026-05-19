@@ -10,7 +10,7 @@ You are publishing an approved spec that the previous phase wrote to
 
 If `{{issueNumber}}` is set and non-zero (and not a Slack-originated run),
 post the spec as a **comment on issue #{{issueNumber}}** in
-`{{owner}}/{{repo}}` using the GitHub MCP `create_issue_comment` tool.
+`{{owner}}/{{repo}}` using the `github_add_issue_comment` MCP tool.
 
 ### Slack-originated (triggered in a Slack thread)
 
