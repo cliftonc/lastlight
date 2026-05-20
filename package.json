@@ -50,7 +50,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "@clack/prompts": "^1.2.0",
     "@hono/node-server": "^1.19.13",
     "@slack/bolt": "^4.6.0",
