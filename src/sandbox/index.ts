@@ -140,6 +140,8 @@ export async function createTaskSandbox(opts: {
  * workDir already contains a .git (cheaper than a full clone the second time
  * via `git fetch`, but rare — sandbox dirs are usually one-shot per taskId).
  */
+export { prePopulateWorkspace as __prePopulateWorkspaceForTest };
+
 function prePopulateWorkspace(
   workDir: string,
   pre: { owner: string; repo: string; branch: string; token: string },
@@ -165,8 +167,16 @@ function prePopulateWorkspace(
   } catch (err: any) {
     // Don't kill the run on a failed pre-clone — fall through to an empty
     // workspace and let the agent clone via the MCP path as a backup.
+    //
+    // CRITICAL: execFileSync errors echo the failing command line, which
+    // includes the auth URL `https://x-access-token:<token>@github.com/…`.
+    // Scrub the token (and any incidental occurrences in stdout/stderr)
+    // before anything reaches the logs.
+    const scrub = (s: unknown): string =>
+      typeof s === "string" ? s.replaceAll(pre.token, "[REDACTED-TOKEN]") : "";
+    const safeMessage = scrub(err?.message) || scrub(err?.toString?.()) || "unknown error";
     console.warn(
-      `[sandbox] Pre-clone of ${pre.owner}/${pre.repo}@${pre.branch} failed (${err.message}). ` +
+      `[sandbox] Pre-clone of ${pre.owner}/${pre.repo}@${pre.branch} failed (${safeMessage}). ` +
       `Agent will need to clone via MCP.`,
     );
   }
