@@ -29,8 +29,7 @@ export class SessionManager {
         created_at TEXT NOT NULL,
         last_activity_at TEXT NOT NULL,
         message_count INTEGER DEFAULT 0,
-        active INTEGER DEFAULT 1,
-        UNIQUE(platform, channel_id, thread_id, user_id)
+        active INTEGER DEFAULT 1
       );
 
       CREATE TABLE IF NOT EXISTS messaging_messages (
@@ -47,6 +46,66 @@ export class SessionManager {
       CREATE INDEX IF NOT EXISTS idx_msg_messages_session
         ON messaging_messages(session_id, timestamp);
     `);
+
+    // Older versions of this code put an unconditional
+    // `UNIQUE(platform, channel_id, thread_id, user_id)` on the table.
+    // That collides with the get-or-create flow: a stale (active=0) row
+    // for a returning user/thread would block the INSERT of a fresh
+    // session. Replace it with a partial unique index that only enforces
+    // the "one active session per key" invariant — the actually-desired
+    // semantic. Inactive rows from past sessions are allowed to pile up
+    // (deleted later by clearStale).
+    const tableSql = (this.db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='messaging_sessions'`)
+      .get() as { sql?: string } | undefined)?.sql ?? "";
+    if (tableSql.includes("UNIQUE(platform")) {
+      this.rebuildWithoutTableUnique();
+    }
+
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_sessions_unique_active
+        ON messaging_sessions(platform, channel_id, thread_id, user_id)
+        WHERE active = 1
+    `);
+  }
+
+  /**
+   * One-shot migration: copy `messaging_sessions` rows into a table
+   * without the table-level UNIQUE constraint. Done in a transaction so a
+   * crash mid-migration can't leave the DB half-rebuilt. Old indexes are
+   * recreated; the partial unique index is added by the caller.
+   */
+  private rebuildWithoutTableUnique() {
+    console.log("[messaging] migrating messaging_sessions: dropping unconditional UNIQUE constraint");
+    this.db.exec("BEGIN");
+    try {
+      this.db.exec(`
+        CREATE TABLE messaging_sessions__new (
+          id TEXT PRIMARY KEY,
+          platform TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          thread_id TEXT,
+          user_id TEXT NOT NULL,
+          agent_session_id TEXT,
+          created_at TEXT NOT NULL,
+          last_activity_at TEXT NOT NULL,
+          message_count INTEGER DEFAULT 0,
+          active INTEGER DEFAULT 1
+        );
+        INSERT INTO messaging_sessions__new
+          SELECT id, platform, channel_id, thread_id, user_id, agent_session_id,
+                 created_at, last_activity_at, message_count, active
+          FROM messaging_sessions;
+        DROP TABLE messaging_sessions;
+        ALTER TABLE messaging_sessions__new RENAME TO messaging_sessions;
+        CREATE INDEX IF NOT EXISTS idx_msg_sessions_lookup
+          ON messaging_sessions(platform, channel_id, thread_id, user_id);
+      `);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /** Look up an existing session by id (used to read its agent_session_id). */
