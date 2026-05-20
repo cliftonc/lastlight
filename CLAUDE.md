@@ -2,16 +2,41 @@
 
 A GitHub repository maintenance agent. It listens for events (GitHub webhooks
 and Slack messages), classifies them, and runs an AI agent against a target
-repo via the Anthropic Agent SDK. Everything non-trivial — triage, PR review,
-the full Architect→Executor→Reviewer build cycle, health reports — is
-expressed as a **YAML workflow** the harness executes phase-by-phase.
+repo via the **OpenCode** runtime (`sst/opencode`). Everything non-trivial —
+triage, PR review, the full Architect→Executor→Reviewer build cycle, health
+reports — is expressed as a **YAML workflow** the harness executes
+phase-by-phase.
+
+## Runtime
+
+OpenCode is provider-agnostic. The harness defaults to
+`openai/gpt-5.3-codex` and accepts any `provider/model` string OpenCode
+supports (anthropic/…, openai/…, etc.). API credentials are read from
+`OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` on the harness env; pick the
+provider that matches your `OPENCODE_MODEL`. No `claude` CLI, no Anthropic
+SDK in the runtime path.
+
+Two execution surfaces:
+- **Sandbox** — `opencode run --format json` invoked per workflow phase
+  inside a Docker container (`src/sandbox/docker.ts`). Stream parsed to
+  capture session id, tokens, cost, stop reason. Used by every YAML
+  workflow.
+- **`opencode serve` (chat)** — one long-lived HTTP server on harness
+  boot. Each messaging thread maps to one OpenCode session; `POST
+  /session/{id}/message` per turn. Replaces the in-process Agent SDK
+  query() the chat path used pre-fork.
+
+Both surfaces write a Claude-SDK-style envelope jsonl to
+`$STATE_DIR/opencode-home/projects/<slug>/<sessionId>.jsonl` (the
+"shim") so the dashboard's `SessionReader` keeps working unchanged. The
+shim is `src/engine/opencode-shim.ts`.
 
 ## Repo layout
 
 ```
 src/
-  index.ts              Main entry — wires connectors, registers the event
-                        handler, starts the cron scheduler and admin dashboard.
+  index.ts              Main entry — wires connectors, boots opencode
+                        serve, starts the cron scheduler and admin dashboard.
   config.ts             Env parsing (ports, models, MCP config, GitHub App).
   cli.ts                Thin client that POSTs to a running server.
   connectors/           Platform abstraction — every event source emits an
@@ -24,16 +49,35 @@ src/
   engine/
     router.ts           Deterministic, code-based routing of EventEnvelope
                         → { skill, context }. Classifies build intent via a
-                        small LLM classifier. No LLM decides the tab.
-    executor.ts         Runs one agent session in a Docker sandbox. Parses
-                        stream-json output for tokens / cost / session id /
-                        usage metrics.
-    chat.ts             In-process chat skill. Runs query() directly (no
-                        sandbox) for low-latency Slack replies, RESUMES the
-                        same Agent SDK session per Slack thread via the
-                        `resume` option, and returns full ChatResult metrics.
+                        small LLM call. No LLM decides the tab.
+    opencode-executor.ts  Runs one agent session via opencode run inside a
+                        Docker sandbox. Parses --format json stream for
+                        tokens / cost / session id / stop reason and feeds
+                        the dashboard shim.
+    opencode-chat-server.ts  Supervisor + typed HTTP client for the
+                        long-lived opencode serve process. Per-session
+                        in-flight chain serializes same-sessionId calls
+                        (e.g. two messages in one Slack thread) while
+                        keeping cross-session traffic parallel.
+    chat.ts             Chat skill — creates/resumes an OpenCode session
+                        per Slack thread, posts the turn, writes the
+                        dashboard envelope jsonl, returns ChatResult
+                        metrics for the executions row.
+    opencode-shim.ts    ClaudeJsonlShim: translates OpenCode events
+                        (text / tool_use / error) into Claude-SDK
+                        envelope jsonl lines under opencode-home/projects/.
+                        MCP tool name shim (github_<tool> → mcp_github_<tool>
+                        for the dashboard tool-family classifier).
+    profiles.ts         ExecutorConfig / ExecutionResult / GitSandboxAccess
+                        types + GITHUB_PERMISSION_PROFILES + loadAgentContext.
+                        Imported by runner.ts, chat.ts, opencode-executor.ts.
+    llm.ts              One-shot LLM helper for screen.ts + classifier.ts —
+                        direct fetch to Anthropic Messages or OpenAI Chat
+                        Completions based on the model id prefix.
+    screen.ts           Prompt-injection screener. Uses llm.ts with a cheap
+                        model (claude-haiku by default).
     classifier.ts       Tiny LLM call that decides "is this comment asking
-                        me to build something?". In-process.
+                        me to build something?". Uses llm.ts.
     git-auth.ts         GitHub App JWT → installation token. Supports
                         permission downscoping (contents/issues/pull_requests/
                         metadata read vs write) and a per-token repo allowlist.
@@ -51,13 +95,13 @@ src/
                         the sandbox. Implementation detail of `sandbox/`.
   admin/                Admin dashboard API (Hono) + SessionReader /
                         ChatSessionReader / auth / Slack OAuth login.
-                        SessionReader scans claude-home/projects/-<cwd>/ for
-                        sandbox runs; ChatSessionReader is DB-backed and
-                        groups by Slack thread.
+                        SessionReader scans opencode-home/projects/-<cwd>/
+                        for sandbox runs; ChatSessionReader is DB-backed
+                        and groups by Slack thread.
   state/
     db.ts               SQLite tables: executions, workflow_runs,
-                        workflow_approvals, rate_limits, system_status,
-                        plus daily/hourly stat rollups.
+                        workflow_approvals, messaging_sessions,
+                        messaging_messages, plus daily/hourly stat rollups.
   cron/                 node-cron scheduler. Each tick dispatches a
                         cron-kind workflow via the same runner.
 
@@ -72,15 +116,20 @@ workflows/prompts/      Prompt templates referenced from phases via
 skills/                 SKILL.md files loaded when a phase sets `skill:`
                         instead of `prompt:`. Single-phase workflows
                         (triage / review / health) use this path.
-agent-context/          *.md files concatenated and prepended as the system
-                        prompt for every agent session — the bot's
-                        "personality" plus hard rules.
+agent-context/          *.md files concatenated and prepended as AGENTS.md
+                        for every agent session — the bot's "personality"
+                        plus hard rules. Sandbox entrypoint cats these into
+                        $WORKSPACE/AGENTS.md; the chat-server supervisor
+                        writes the same content + a chat-persona suffix
+                        into its own AGENTS.md.
 
-mcp-github-app/         Standalone MCP server that exposes GitHub tools to
-                        the agent. Uses the GitHub App installation token
-                        by default; falls back to a GITHUB_TOKEN env var
-                        only when App env vars are unset (low-trust
-                        sandbox fallback).
+mcp-github-app/         Standalone MCP server exposing GitHub tools to the
+                        agent. Uses the GitHub App installation token by
+                        default; falls back to a GITHUB_TOKEN env var only
+                        when App env vars are unset (low-trust sandbox
+                        fallback). Wired into opencode via mcp.github in
+                        deploy/opencode-config.tmpl.json (sandbox) and the
+                        chat-server's generated opencode.json.
 deploy/                 Docker entrypoints, Caddyfile, systemd helpers.
 dashboard/              React+Vite admin SPA, served from /admin at runtime.
 ```
@@ -93,24 +142,28 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
   "build" vs "triage" — it just executes phases in order (or as a DAG). See
   `src/workflows/CLAUDE.md`.
 - **Two execution modes**:
-  - **Sandbox** — workflow phases run inside a Docker sandbox (`src/sandbox`)
-    with a minted per-run GitHub token. Every phase writes an `executions`
-    row. Used by all YAML workflows.
-  - **In-process** — the chat skill (`src/engine/chat.ts`) runs the Agent
-    SDK directly in the harness process for low-latency Slack replies. Each
-    turn still writes an `executions` row (triggerType=`chat`, skill=`chat`,
-    triggerId=messaging session id) and the SDK session is resumed per
-    Slack thread so one thread = one growing jsonl.
+  - **Sandbox** — workflow phases run inside a Docker sandbox
+    (`src/sandbox`) with a minted per-run GitHub token. Each phase invokes
+    `opencode run --format json` in the container and the harness parses
+    the streamed events into an ExecutionResult + envelope jsonl. Every
+    phase writes an `executions` row.
+  - **Chat** — the chat skill (`src/engine/chat.ts`) talks to the
+    long-lived `opencode serve` process over HTTP. One OpenCode session
+    per messaging thread, resumed across turns. Each turn writes an
+    `executions` row (triggerType=`chat`, skill=`chat`,
+    triggerId=messaging session id) and the same shim drops a jsonl
+    envelope under `opencode-home/projects/-app/`.
 - **Two session stores**:
-  - **Sandbox sessions** — Agent SDK jsonls on disk at
-    `$STATE_DIR/claude-home/projects/-<sanitized-sandbox-cwd>/`. Read by
-    `SessionReader`.
+  - **Sandbox sessions** — shim envelope jsonls at
+    `$STATE_DIR/opencode-home/projects/-<sanitized-sandbox-cwd>/`
+    (currently `-home-agent-workspace`). Read by `SessionReader`.
   - **Chat sessions** — DB-backed (`executions` table grouped by
     `trigger_id` / Slack thread). Read by `ChatSessionReader`; messages
-    resolved to the single jsonl owned by `messaging_sessions.agent_session_id`.
-- **Permission profiles** (`src/engine/executor.ts`) — each workflow maps to
+    resolved to the single jsonl owned by `messaging_sessions.agent_session_id`
+    under `opencode-home/projects/-app/`.
+- **Permission profiles** (`src/engine/profiles.ts`) — each workflow maps to
   a `GitAccessProfile`: `read`, `issues-write`, `review-write`, `repo-write`.
-  `runner.ts` picks one per workflow name and `executor.ts` mints a
+  `runner.ts` picks one per workflow name and `opencode-executor.ts` mints a
   downscoped installation token for the sandbox. Only `repo-write` runs see
   the App PEM; everything else uses a pre-minted scoped token (static-token
   mode in mcp-github-app).
@@ -118,7 +171,8 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
   When hit, the run persists with `status: paused`, a row in
   `workflow_approvals`, and the user can resolve it via GitHub comment
   (`@last-light approve` / `reject`), Slack slash command (`/approve`,
-  `/reject`), or the dashboard. Resume logic is in `src/workflows/resume.ts`.
+  `/reject`), or the dashboard. Resume logic is in `src/workflows/resume.ts`
+  and is runtime-agnostic — it operates on `ExecutionResult` + DB rows.
 
 ## State directory
 
@@ -129,16 +183,18 @@ a Docker volume in production).
 data/
   lastlight.db              SQLite — executions, workflow_runs,
                             workflow_approvals, messaging_sessions,
-                            messaging_messages, rate_limits, system_status.
-  claude-home/              HOME for the Agent SDK inside the harness. Its
-                            `projects/` subdir is the source of truth for
-                            session jsonls:
+                            messaging_messages, plus daily/hourly stat
+                            rollups.
+  opencode-home/            Shim destination. Its `projects/` subdir is the
+                            source of truth for dashboard session reads:
     projects/
-      -app/                 In-process chat sessions (cwd = /app).
+      -app/                 Chat sessions (one jsonl per Slack thread,
+                            keyed by OpenCode sessionId).
       -home-agent-workspace/  Sandbox sessions (cwd inside the container).
+  opencode-serve/           Working dir for the long-lived `opencode serve`
+                            chat process — generated opencode.json + AGENTS.md
+                            live here.
   sandboxes/                Cloned repos per task (one dir per taskId).
-  sessions/                 Legacy — unused for Agent SDK jsonls now.
-                            Kept for structured stream logs if enabled.
   logs/                     Structured harness logs.
   secrets/app.pem           Mode-600 copy of the GitHub App PEM. Copied
                             here by deploy/entrypoint.sh so sandbox
@@ -169,7 +225,12 @@ npm run cli -- review owner/repo       # repo-wide PR scan
 npm run cli -- health owner/repo       # weekly health report
 
 # Local dev with Docker sandbox isolation
-./scripts/dev-local.sh                 # sets up secrets + claude-home mount
+./scripts/dev-local.sh                 # builds opencode.json + secrets
+                                        # then starts harness in watch mode
+
+# Standalone smoke for the opencode-serve supervisor
+npx tsx scripts/chat-smoke.mjs         # two-turn HTTP probe against a
+                                        # locally-spawned `opencode serve`
 ```
 
 ## Environment
@@ -178,23 +239,27 @@ Required:
 
 - `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 - `WEBHOOK_SECRET` — must match the GitHub App webhook secret
-- `ANTHROPIC_API_KEY` — or rely on `claude login` (subscription mode)
+- One of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` matching your `OPENCODE_MODEL`
 
 Models:
 
-- `CLAUDE_MODEL` — default model (sonnet-4-6 if unset)
-- `CLAUDE_MODELS` — per-task overrides as JSON, e.g.
-  `{"architect":"claude-opus-4-6","triage":"claude-haiku-4-5-20251001"}`.
-  Keys match phase names or skill types. `chat` is intentionally NOT
-  overridden — Haiku refuses tool calls and creates false "no permission"
-  replies.
+- `OPENCODE_MODEL` — default model for sandbox + chat
+  (default: `openai/gpt-5.3-codex`)
+- `OPENCODE_MODELS` — per-task overrides as JSON, e.g.
+  `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}`.
+  Keys match phase names or skill types.
 
 Runtime:
 
 - `PORT` — webhook listener port (default 8644)
 - `STATE_DIR` — persistent state dir (default `./data`)
 - `DB_PATH` — override SQLite path
-- `CLAUDE_HOME_DIR` — override Agent SDK HOME (default `$STATE_DIR/claude-home`)
+- `OPENCODE_HOME_DIR` — override dashboard session-jsonl root
+  (default `$STATE_DIR/opencode-home`)
+- `OPENCODE_SERVE_PORT` — port for the long-lived chat server
+  (default 4096, bound to 127.0.0.1)
+- `OPENCODE_SERVE_LOGS=1` — forward serve logs to harness stderr
+- `OPENCODE_BIN` — override the opencode binary path (CI/dev)
 - `MCP_CONFIG_PATH` — override generated MCP config path
 
 Admin dashboard:
@@ -205,7 +270,7 @@ Admin dashboard:
 Slack (optional):
 
 - `SLACK_BOT_TOKEN` (xoxb-…), `SLACK_APP_TOKEN` (xapp-…) — enables the
-  messaging connector + chat skill
+  messaging connector + chat skill (also gates the `opencode serve` spawn)
 - `SLACK_DELIVERY_CHANNEL` — channel id for cron reports
 - `SLACK_ALLOWED_USERS` — comma-separated user ids allowlist
 - `SLACK_OAUTH_CLIENT_ID`, `SLACK_OAUTH_CLIENT_SECRET`,

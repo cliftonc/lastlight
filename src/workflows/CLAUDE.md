@@ -29,8 +29,9 @@ EventEnvelope
         → db.createWorkflowRun()     or reuses an existing paused/running row
         → runWorkflow()              [src/workflows/runner.ts]
           ├─ runPhase()              per phase: context / agent / loop
-          │    └─ executeAgent()     [src/engine/executor.ts]
-          │         └─ spawns a docker sandbox, parses stream-json
+          │    └─ executeAgent()     [src/engine/opencode-executor.ts]
+          │         └─ spawns a docker sandbox, runs `opencode run --format json`,
+          │           parses the event stream + writes the dashboard shim jsonl
           └─ runDagWorkflow()        invoked when any phase has depends_on
 ```
 

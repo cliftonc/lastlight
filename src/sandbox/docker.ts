@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFileCb);
  * workspace after volumes are mounted — no post-run docker exec needed.
  *
  * Volumes mounted at runtime:
- * - Shared data volume (/data): Claude auth, secrets (app.pem), session logs
+ * - Shared data volume (/data): secrets (app.pem), session logs
  * - Task worktree (/home/agent/workspace): per-task git repo
  */
 
@@ -27,7 +27,7 @@ export interface SandboxConfig {
   timeoutSeconds?: number;
   /**
    * Per-sandbox memory cap, in Docker's `--memory` format (e.g. "2g", "512m").
-   * Default: 2g — enough headroom for `npm install`, vite build, and a Claude
+   * Default: 2g — enough headroom for `npm install`, vite build, and an
    * agent loop, but small enough that several concurrent sandboxes can't
    * exhaust a 16 GB host. Override via the `SANDBOX_MEMORY_LIMIT` env var.
    */
@@ -60,9 +60,9 @@ export class DockerSandbox {
     const containerName = `lastlight-sandbox-${opts.taskId}-${randomUUID().slice(0, 8)}`;
     const worktreePath = resolve(opts.worktreePath);
 
-    // Shared data — mounted at /data inside the sandbox. Contains claude auth,
-    // session logs, etc. (see deploy/sandbox-entrypoint.sh for the layout it
-    // expects).
+    // Shared data — mounted at /data inside the sandbox. Contains secrets
+    // (app.pem) and the opencode-home session-jsonl tree (see
+    // deploy/sandbox-entrypoint.sh for the layout it expects).
     //
     // SANDBOX_DATA_VOLUME accepts either:
     //   - a Docker named volume name (e.g. "lastlight_agent-data") — used in
@@ -109,8 +109,8 @@ export class DockerSandbox {
     ];
 
     try {
-      // The entrypoint handles all setup: claude auth, skills, CLAUDE.md,
-      // .mcp.json, and git config. No docker exec calls needed.
+      // The entrypoint handles all setup: AGENTS.md, opencode.json, app.pem
+      // materialization, and git config. No docker exec calls needed.
       const containerId = execCmd("docker", args).trim();
 
       const info: SandboxInfo = { containerId, containerName, worktreePath };

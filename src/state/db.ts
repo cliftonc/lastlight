@@ -88,11 +88,11 @@ export interface ExecutionRecord {
   turns?: number;
   durationMs?: number;
   /**
-   * Agent SDK session id captured from the stream-json `system/init` line.
+   * Runtime session id (OpenCode `ses_…`) captured from the event stream.
    * Used by the dashboard to look up the session log for a given phase.
    */
   sessionId?: string;
-  /** Total USD cost reported by Claude on the final result message. */
+  /** Total USD cost reported by the runtime on the final step. Zero under OAuth/subscription auth. */
   costUsd?: number;
   /** Fresh input tokens (no cache hit). */
   inputTokens?: number;
@@ -227,9 +227,9 @@ export class StateDb {
       // Column already exists — ignore
     }
 
-    // Per-execution Claude usage metrics, captured from the stream-json
-    // result message. Lets the dashboard show cost / tokens per phase and
-    // lets us aggregate spend later. All additive, safe on existing DBs.
+    // Per-execution runtime usage metrics, captured from the OpenCode
+    // step_finish events. Lets the dashboard show cost / tokens per phase
+    // and lets us aggregate spend later. All additive, safe on existing DBs.
     for (const col of [
       "cost_usd REAL",
       "input_tokens INTEGER",

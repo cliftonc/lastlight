@@ -1,6 +1,14 @@
 # Migration Plan: Claude CLI → pi-mono harness
 
-**Status:** Draft (2026-04-27). For review before execution.
+> **SUPERSEDED (2026-05-20).** The Claude → pi-mono migration was not
+> executed. The codebase instead migrated to OpenCode on the
+> `opencode-fork` branch (now merged), retaining the workflow runner,
+> YAML schemas, permission profiles, approval gates, MCP server,
+> GitHub App, dashboard contract, and DB. See `CLAUDE.md` and
+> `README.md` for the current runtime story. This document is kept
+> for historical reference of the design alternatives considered.
+
+**Status:** SUPERSEDED — original draft (2026-04-27).
 **Owner:** TBD
 **Target architecture:** Option A — `pi-agent-core` runs on the host as a library; Docker container becomes a tool-execution sandbox via `docker exec`. `pi-mcp-adapter` brokers the existing `mcp-github-app` so it ships unchanged.
 

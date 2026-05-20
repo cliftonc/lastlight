@@ -11,7 +11,7 @@
 
 An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features through an Architect → Executor → Reviewer development cycle.
 
-Built on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management.
+Built on the [OpenCode](https://github.com/sst/opencode) runtime with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `OPENCODE_MODEL` at any `provider/model` OpenCode supports (defaults to `openai/gpt-5.3-codex`).
 
 ## Production Setup (Clean Server)
 
@@ -24,7 +24,8 @@ npx lastlight setup
 The setup wizard walks you through:
 
 1. **GitHub App** — enter your App ID, Installation ID, and PEM key path
-2. **Anthropic API key** — for the Claude Agent SDK
+2. **Provider API key** — `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY`,
+   whichever your `OPENCODE_MODEL` points at
 3. **Webhook secret** — auto-generated if you don't have one
 4. **Domain & TLS** — optional Caddy config for automatic HTTPS
 5. **Slack** — optional bot token and app token for Slack integration
@@ -45,8 +46,10 @@ to receive webhooks.
 ### Prerequisites
 
 - Node.js 20+
-- [Claude Code CLI](https://claude.ai/install.sh) installed and logged in (`claude login`)
+- Docker Desktop (or compatible)
 - A GitHub App (see [Create a GitHub App](#1-create-a-github-app) below)
+- An API key for whichever provider your chosen `OPENCODE_MODEL` uses
+  (`OPENAI_API_KEY` for openai/…, `ANTHROPIC_API_KEY` for anthropic/…)
 
 ### Setup
 
@@ -72,6 +75,10 @@ GITHUB_APP_INSTALLATION_ID=789012
 
 # Webhook secret (required for webhook mode)
 WEBHOOK_SECRET=your-secret-here
+
+# Model provider auth — at least one
+OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ### Run
@@ -81,9 +88,8 @@ WEBHOOK_SECRET=your-secret-here
 | | Touched? |
 |---|---|
 | `~/.gitconfig` (your identity, credential helper) | ❌ skipped (`LASTLIGHT_LOCAL_DEV=1`) |
-| `~/.claude/.credentials.json` | ❌ read once on first run, never written |
-| `~/.claude/projects/...` (your session history) | ❌ direct fallback disabled |
-| `./data/sandbox-claude-home/` | ✅ project-local seed of your claude login; sandboxes refresh tokens here, isolated from host |
+| `./data/sandbox-data/` | ✅ project-local bind-mount for sandbox containers |
+| `./data/opencode-home/` | ✅ project-local; shim envelope jsonls for the dashboard live here |
 | `./data/lastlight.db`, `./data/sandboxes/`, `./data/logs/` | ✅ project-local state, gitignored |
 
 One-time setup — build the sandbox image:
@@ -102,9 +108,8 @@ npm run dev:dashboard  # dashboard only
 
 Both server scripts call `scripts/dev-local.sh`, which:
 - Verifies Docker is running and the sandbox image exists
-- Locates your host claude credentials — `~/.claude/.credentials.json` on Linux, or the macOS keychain entry `Claude Code-credentials` on macOS. Run `claude login` first if neither is present.
-- Re-seeds `./data/sandbox-claude-home/.credentials.json` from the host credentials on every start, so a fresh `claude login` is picked up automatically without wiping anything.
-- Sets `LASTLIGHT_LOCAL_DEV=1`, `SANDBOX_DATA_VOLUME=./data/sandbox-claude-home`, `STATE_DIR=./data`, `CLAUDE_HOME_DIR=./data/sandbox-claude-home`, and `ENABLE_DIRECT_FALLBACK=false`
+- Copies your `GITHUB_APP_PRIVATE_KEY_PATH` into `./data/sandbox-data/secrets/app.pem` (mode 600) so the in-sandbox GitHub MCP server can authenticate
+- Sets `LASTLIGHT_LOCAL_DEV=1`, `SANDBOX_DATA_VOLUME=./data/sandbox-data`, `STATE_DIR=./data`, `OPENCODE_HOME_DIR=./data/sandbox-data/opencode-home`, and `ENABLE_DIRECT_FALLBACK=false`
 - Starts the harness with `tsx watch src/index.ts`
 
 #### Triggering work via the CLI
@@ -129,9 +134,7 @@ The default for a single-issue/PR shorthand is the **cheap** action (triage or r
 
 ### Authentication
 
-Locally, the Agent SDK uses your Claude Code login (subscription). No API key needed — just make sure `claude login` works on your host. `npm run dev` copies the credentials into the project-local sandbox claude-home, so the sandbox is logged in without bind-mounting your real `~/.claude`.
-
-To use an API key instead, set `ANTHROPIC_API_KEY` in `.env`.
+OpenCode picks credentials from `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` on the harness env. The harness forwards them into each sandbox container so workflow runs can reach the API.
 
 ---
 
@@ -144,16 +147,6 @@ docker-compose build agent
 docker-compose up -d agent
 ```
 
-### First-Time Auth
-
-The container needs Claude Code credentials. Log in interactively once:
-
-```bash
-docker exec -it lastlight-agent-1 claude login
-```
-
-Follow the URL in your browser to authenticate. The auth token persists in the Docker volume — it survives container restarts and rebuilds.
-
 ### Secrets
 
 Create a `secrets/` directory with your GitHub App credentials:
@@ -164,7 +157,7 @@ cp .env secrets/
 cp your-app.private-key.pem secrets/
 ```
 
-The entrypoint symlinks these into the container at startup.
+The entrypoint symlinks these into the container at startup. Your provider API key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) belongs in `secrets/.env`.
 
 ### Expose Webhooks
 
@@ -186,12 +179,14 @@ All persistent state lives in a single Docker volume (`agent-data`), mounted at 
 
 ```
 data/
-  lastlight.db              # SQLite: execution log, rate limits
-  claude-home/              # Claude auth + session JSONL logs
-    projects/-app/*.jsonl   # Full audit trail per agent session
+  lastlight.db              # SQLite: executions, workflow_runs, approvals, messaging sessions
+  opencode-home/            # Dashboard shim jsonls
+    projects/-app/*.jsonl   # Chat sessions (one per Slack thread)
+    projects/-home-agent-workspace/*.jsonl  # Sandbox sessions
+  opencode-serve/           # Working dir for the long-lived chat server
   sandboxes/                # Cloned repos per task
   logs/                     # Structured logs
-  sessions/                 # (reserved)
+  secrets/app.pem           # GitHub App PEM (mode 600) for sandbox access
 ```
 
 Mount this volume or bind-mount the directory for monitoring tools to access session logs and the execution database.
@@ -243,16 +238,21 @@ npx tsx src/cli.ts triage owner/repo
 | `GITHUB_APP_PRIVATE_KEY_PATH` | Yes | Path to `.pem` file |
 | `GITHUB_APP_INSTALLATION_ID` | Yes | Installation ID |
 | `WEBHOOK_SECRET` | Yes | GitHub webhook signature secret |
-| `ANTHROPIC_API_KEY` | No | Anthropic API key (uses Claude login if not set) |
-| `CLAUDE_MODEL` | No | Model to use (default: `claude-sonnet-4-6`) |
+| `OPENAI_API_KEY` | One of | API key when using `openai/…` models |
+| `ANTHROPIC_API_KEY` | One of | API key when using `anthropic/…` models |
+| `OPENCODE_MODEL` | No | Default model (default: `openai/gpt-5.3-codex`) |
+| `OPENCODE_MODELS` | No | Per-task overrides as JSON, e.g. `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}` |
+| `OPENCODE_SERVE_PORT` | No | Port for the long-lived chat server (default: `4096`, bound to 127.0.0.1) |
+| `OPENCODE_SERVE_LOGS` | No | Set to `1` to forward chat-server logs to harness stderr |
+| `OPENCODE_BIN` | No | Override the opencode binary path (CI/dev) |
 | `PORT` / `WEBHOOK_PORT` | No | Webhook listener port (default: `8644`) |
 | `STATE_DIR` | No | Persistent state directory (default: `./data`) |
-| `MAX_TURNS` | No | Max agent turns per invocation (default: `200`) |
+| `OPENCODE_HOME_DIR` | No | Where the dashboard reads sessions (default: `$STATE_DIR/opencode-home`) |
+| `MAX_TURNS` | No | Reserved (unused by OpenCode; kept for API stability) |
 | `BOT_LOGIN` | No | Bot login name for self-event filtering (default: `last-light[bot]`) |
-| `LASTLIGHT_LOCAL_DEV` | No | Set to `1` to skip `git config --global` writes from `git-auth.ts`. Use this on dev machines so the harness doesn't overwrite your personal `~/.gitconfig`. The installation token is still passed to sandboxes via the `GIT_TOKEN` env var. |
-| `SANDBOX_DATA_VOLUME` | No | Either a Docker named volume name (default: `lastlight_agent-data`, used in production) or a host path (starts with `/`, `./`, `../`, or `~`) to bind-mount as `/data` inside each sandbox. Local dev uses `./data/sandbox-claude-home`. |
-| `CLAUDE_HOME_DIR` | No | Directory the dashboard reads sessions from (default: `./data/claude-home`). Local dev points this at `./data/sandbox-claude-home` to match the bind-mounted sandbox volume. |
-| `ENABLE_DIRECT_FALLBACK` | No | If `true`, the harness falls back to in-process Agent SDK execution when the sandbox image is unavailable. Local dev sets this to `false` to keep all agent work isolated in containers. |
+| `LASTLIGHT_LOCAL_DEV` | No | Set to `1` on dev machines to skip `git config --global` writes from `git-auth.ts`. The installation token still reaches sandboxes via `GIT_TOKEN`. |
+| `SANDBOX_DATA_VOLUME` | No | Either a Docker named volume name (default: `lastlight_agent-data`, used in production) or a host path (starts with `/`, `./`, `../`, or `~`) to bind-mount as `/data` inside each sandbox. Local dev uses `./data/sandbox-data`. |
+| `ENABLE_DIRECT_FALLBACK` | No | If `true`, the harness spawns `opencode run` directly on the host when no sandbox is available. Local dev sets this to `false` to keep all agent work isolated in containers. |
 
 ### 3. Managed Repositories
 
@@ -271,9 +271,9 @@ Edit `agent-context/rules.md` to list repositories the bot manages:
 | Bot personality & communication style | `agent-context/soul.md` |
 | Operational rules, review guidelines, triage rules | `agent-context/rules.md` |
 | Skill definitions | `skills/*/SKILL.md` |
-| Orchestrator phases (Architect/Executor/Reviewer) | `src/engine/orchestrator.ts` |
+| Workflow phases (Architect/Executor/Reviewer/PR) | `workflows/build.yaml` + `workflows/prompts/` |
 | Event routing rules | `src/engine/router.ts` |
-| Cron job schedules | `src/cron/jobs.ts` |
+| Cron job schedules | `workflows/cron-*.yaml` |
 
 ---
 
@@ -282,7 +282,7 @@ Edit `agent-context/rules.md` to list repositories the bot manages:
 ```
 ┌─────────────────────────────────────────┐
 │            Connector Layer              │
-│  GitHub Webhook │ (future: Slack, etc.) │
+│  GitHub Webhook │ Slack Socket Mode     │
 │        ↓        │         ↓             │
 │     Event Normalizer (EventEnvelope)    │
 └────────────────┬────────────────────────┘
@@ -291,10 +291,11 @@ Edit `agent-context/rules.md` to list repositories the bot manages:
 │             Core Engine                 │
 │  Event Router (deterministic)           │
 │        ↓                                │
-│  Agent Executor (Claude Agent SDK)      │
-│  - System prompt from agent-context/    │
-│  - MCP tools (GitHub App)               │
-│  - Skills (SKILL.md)                    │
+│  Workflow Runner (YAML phases)          │
+│  - Sandbox: `opencode run --format json`│
+│    in a Docker container per phase      │
+│  - Chat: long-lived `opencode serve`,   │
+│    one session per messaging thread     │
 │        ↓                                │
 │  Sandboxes (git clone per task)         │
 │  Cron Scheduler (health reports)        │
@@ -308,9 +309,9 @@ Edit `agent-context/rules.md` to list repositories the bot manages:
 2. **Router** maps event type to skill deterministically (no LLM in the routing loop):
    - `issue.opened` → `issue-triage`
    - `pr.opened` → `pr-review`
-   - `comment.created` with `@last-light` from maintainer → `github-orchestrator`
-3. **Executor** spawns a Claude Agent SDK session with the skill prompt, MCP tools, and agent context
-4. **Orchestrator** (for build requests) runs a multi-phase cycle:
+   - `comment.created` with `@last-light` from maintainer → routed by intent classifier (build / explore / triage / review / action)
+3. **Workflow runner** loads the matching YAML, dispatches each phase to `executeAgent` (sandbox `opencode run`) or, for chat, `chatServer.postMessage` (long-lived `opencode serve`)
+4. **Build workflow** runs a multi-phase cycle:
    - Phase 1: **Architect** — read-only analysis, writes plan to `.lastlight/issue-N/architect-plan.md`
    - Phase 2: **Executor** — TDD implementation following the plan
    - Phase 3: **Reviewer** — independent verification (no shared context with executor)
@@ -334,7 +335,7 @@ When webhooks are enabled, only the weekly health report runs on cron (issue/PR 
 ```
 lastlight/
   src/
-    index.ts                # Server entry point
+    index.ts                # Server entry point (also boots opencode serve)
     cli.ts                  # CLI client (talks to server)
     config.ts               # Config loader (.env)
     connectors/
@@ -343,15 +344,23 @@ lastlight/
       index.ts              # Connector registry
     engine/
       router.ts             # Deterministic event → skill routing
-      executor.ts           # Agent SDK query() wrapper
-      orchestrator.ts       # Architect → Executor → Reviewer cycle
-      agents.ts             # Subagent role definitions
+      opencode-executor.ts  # Sandbox runtime: opencode run --format json
+      opencode-chat-server.ts  # Long-lived opencode serve supervisor + client
+      chat.ts               # Chat skill (calls the chat server)
+      opencode-shim.ts      # Translates OpenCode events → Claude-SDK
+                            # envelope jsonl for the dashboard reader
+      profiles.ts           # ExecutorConfig / ExecutionResult types +
+                            # GITHUB_PERMISSION_PROFILES + loadAgentContext
+      llm.ts                # One-shot LLM helper for screen + classifier
+      screen.ts             # Prompt-injection screener
+      classifier.ts         # Intent classifier (build / explore / triage / …)
       git-auth.ts           # GitHub App git credential setup
-    worktree/
-      manager.ts            # Git worktree per-task isolation
+    workflows/              # YAML workflow runner (see src/workflows/CLAUDE.md)
+    sandbox/                # Docker sandbox lifecycle
     cron/
       scheduler.ts          # Cron with overlap protection
-      jobs.ts               # Job definitions
+      jobs.ts               # Cron job registry
+    admin/                  # Dashboard API (Hono) + session readers
     state/
       db.ts                 # SQLite execution tracking
 
@@ -367,6 +376,14 @@ lastlight/
     github/                 # GitHub API workflow skills
     software-development/   # Dev skills (architect, TDD, debugging)
 
+  workflows/                # YAML workflow definitions
+    build.yaml              # Architect → Executor → Reviewer → PR
+    issue-triage.yaml
+    pr-review.yaml
+    repo-health.yaml
+    cron-*.yaml             # Cron-kind triggers
+    prompts/                # Per-phase prompt templates
+
   mcp-github-app/           # MCP server: 28+ GitHub tools via Octokit
     src/
       index.js              # MCP server entry (clone_repo, refresh_git_auth, etc.)
@@ -374,8 +391,11 @@ lastlight/
       github.js             # Octokit wrapper with retry/backoff
 
   deploy/
-    entrypoint.sh           # Docker entrypoint
+    entrypoint.sh                  # Docker entrypoint
+    sandbox-entrypoint.sh          # Sandbox container entrypoint
+    opencode-config.tmpl.json      # MCP servers config template for sandbox
   Dockerfile
+  sandbox.Dockerfile
   docker-compose.yml
   Caddyfile                 # Reverse proxy for HTTPS
 ```
@@ -396,30 +416,21 @@ npm run dev:server
 docker compose --profile build-only build sandbox
 ```
 
-### `npm run dev` says claude is not logged in
+### Agent run fails with a quota / billing error
+
+The runtime surfaces upstream errors as `error_api` with the verbatim provider message in the executions row:
+
+- OpenAI: "Quota exceeded. Check your plan and billing details." → top up at https://platform.openai.com/account/billing
+- Anthropic: "Credit balance is too low" → top up at https://console.anthropic.com
+
+### Chat replies fail / `opencode serve` won't start
 
 ```bash
-claude login    # then re-run npm run dev
+# Smoke-test the supervisor against your local opencode binary
+npx tsx scripts/chat-smoke.mjs
 ```
 
-### Agent exits with code 1
-
-```bash
-# Check if Claude is logged in
-claude --version && claude -p "hello"
-
-# In Docker: check auth persisted
-docker exec lastlight-agent-1 claude -p "hello"
-# If it fails, re-login AS THE LASTLIGHT USER (not root!):
-docker exec -it --user lastlight lastlight-agent-1 claude login
-```
-
-**IMPORTANT**: Always use `--user lastlight` when running `claude login` in Docker. Running as root causes:
-- Permission errors (`.credentials.json` owned by root, session logs unwritable)
-- Config corruption (cached feature flags wiped, MCP auth cache polluted with Claude.ai servers)
-- `bypassPermissions` mode may stop working with MCP servers attached
-
-If you accidentally logged in as root, rebuild the container: `docker compose build agent && docker compose up -d agent`
+If that two-turn probe succeeds in isolation, the issue is environmental (port collision, missing API key) rather than the supervisor itself. Set `OPENCODE_SERVE_LOGS=1` to forward serve logs to the harness stderr for deeper diagnosis.
 
 ### Webhooks not arriving
 
@@ -434,12 +445,6 @@ curl -X POST http://localhost:8644/webhooks/github -d '{}'
 docker-compose ps
 ```
 
-### Credit balance / rate limit errors
-
-If you see "Credit balance is too low", either:
-- Top up at https://console.anthropic.com (API key mode)
-- Remove `ANTHROPIC_API_KEY` from `.env` to use your Claude subscription instead
-
 ### Permission denied on MCP tools
 
-The executor runs with `bypassPermissions` mode. In Docker, this requires running as a non-root user (the Dockerfile handles this automatically).
+The executor runs OpenCode with `--dangerously-skip-permissions` (non-interactive auto-approve). In Docker this requires a non-root user (the sandbox Dockerfile handles this automatically via gosu).

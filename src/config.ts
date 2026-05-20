@@ -40,7 +40,7 @@ export interface SlackConfig {
 /**
  * Per-task-type model configuration.
  * Keys are session types (matching admin dashboard labels).
- * Values are Claude model IDs.
+ * Values are OpenCode `provider/model` strings.
  */
 export interface ModelConfig {
   /** Default model for all tasks */
@@ -66,7 +66,7 @@ export interface LastLightConfig {
   stateDir: string;
   /** Directory for agent sandboxes (cloned repos per task) */
   sandboxDir: string;
-  /** Default Claude model (used when no per-type override exists) */
+  /** Default model id (used when no per-type override exists) */
   model: string;
   /** Per-task-type model overrides */
   models: ModelConfig;
