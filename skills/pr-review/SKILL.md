@@ -12,6 +12,26 @@ When asked to review a pull request, or when triggered by a webhook/cron to chec
 
 ## Procedure
 
+### Workspace setup
+
+For pr-review runs the harness **pre-clones the PR's head ref into
+`/home/agent/workspace`** before this session starts. Inspect the
+workspace with `glob` / `read` directly. Do NOT call `github_clone_repo`
+— that re-downloads the whole repo wastefully.
+
+If you need to confirm or refresh:
+
+```
+git -C /home/agent/workspace log -1 --oneline
+# if you need newer commits:
+git -C /home/agent/workspace fetch origin <branch> --depth 50
+git -C /home/agent/workspace reset --hard FETCH_HEAD
+```
+
+Only fall back to `github_clone_repo` if the workspace is empty — that
+means the pre-clone failed (look for `[sandbox] Pre-clone … failed` in
+harness logs).
+
 ### Target selection
 
 The runner provides PR context vars. Use them in this order:

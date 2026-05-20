@@ -83,6 +83,22 @@ export async function createTaskSandbox(opts: {
   stateDir: string;
   sandboxDir?: string;
   env?: Record<string, string>;
+  /**
+   * When set, the harness clones the repo into workDir at the named branch
+   * before starting the sandbox container. The agent then enters a
+   * workspace that's already checked out, avoiding a redundant
+   * `clone_repo` MCP call inside the session.
+   *
+   * Token must be alphanumeric (shape asserted upstream) and is embedded
+   * into the clone URL just for this one-shot operation — git's own
+   * credential.helper inside the sandbox covers subsequent push/pull.
+   */
+  prePopulate?: {
+    owner: string;
+    repo: string;
+    branch: string;
+    token: string;
+  };
 }): Promise<{ sandbox: DockerSandbox; workDir: string; cleanup: () => Promise<void> } | null> {
   if (!sandboxAvailable()) return null;
 
@@ -95,6 +111,10 @@ export async function createTaskSandbox(opts: {
   }
 
   mkdirSync(workDir, { recursive: true });
+
+  if (opts.prePopulate) {
+    prePopulateWorkspace(workDir, opts.prePopulate);
+  }
 
   const sandbox = new DockerSandbox({
     imageName: SANDBOX_IMAGE,
@@ -112,5 +132,42 @@ export async function createTaskSandbox(opts: {
   } catch (err: any) {
     console.warn(`[sandbox] Failed to create sandbox: ${err.message}`);
     return null;
+  }
+}
+
+/**
+ * Shallow-clone the repo into workDir at the given branch. Re-clones if the
+ * workDir already contains a .git (cheaper than a full clone the second time
+ * via `git fetch`, but rare — sandbox dirs are usually one-shot per taskId).
+ */
+function prePopulateWorkspace(
+  workDir: string,
+  pre: { owner: string; repo: string; branch: string; token: string },
+): void {
+  // Token shape is asserted in src/engine/git-auth.ts before we get here,
+  // but re-check the narrow set here too — defense in depth, this string
+  // crosses a process boundary into git's command line.
+  if (!/^[A-Za-z0-9_-]+$/.test(pre.token)) {
+    throw new Error("prePopulate: refusing to embed a token outside [A-Za-z0-9_-]");
+  }
+  const url = `https://x-access-token:${pre.token}@github.com/${pre.owner}/${pre.repo}.git`;
+  const start = Date.now();
+  try {
+    execFileSync(
+      "git",
+      ["clone", "--branch", pre.branch, "--depth", "50", url, workDir],
+      { stdio: "pipe", timeout: 120_000 },
+    );
+    const ms = Date.now() - start;
+    console.log(
+      `[sandbox] Pre-cloned ${pre.owner}/${pre.repo}@${pre.branch} into ${workDir} (${ms}ms)`,
+    );
+  } catch (err: any) {
+    // Don't kill the run on a failed pre-clone — fall through to an empty
+    // workspace and let the agent clone via the MCP path as a backup.
+    console.warn(
+      `[sandbox] Pre-clone of ${pre.owner}/${pre.repo}@${pre.branch} failed (${err.message}). ` +
+      `Agent will need to clone via MCP.`,
+    );
   }
 }

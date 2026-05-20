@@ -190,6 +190,8 @@ async function main() {
       triggerId: _triggerId,
       channelId,
       threadId,
+      prePopulateBranch: ctxPrePopulateBranch,
+      branch: ctxBranch,
       ...rest
     } = context;
 
@@ -199,6 +201,42 @@ async function main() {
     const extra: Record<string, unknown> = { ...(rest as Record<string, unknown>) };
     if (typeof channelId === "string") extra.channelId = channelId;
     if (typeof threadId === "string") extra.threadId = threadId;
+
+    // For PR-scoped read workflows, resolve the PR head ref and ask the
+    // sandbox to pre-clone the repo at that branch. The agent then enters
+    // a workspace that's already a checkout of the PR's actual code —
+    // saves a redundant clone_repo MCP call inside the session.
+    //
+    // pr-fix already plumbs `branch` through context (line ~709 below)
+    // because the architect/executor need the branch name to push to;
+    // we honor that here as the pre-populate branch too.
+    let prePopulateBranch: string | undefined =
+      typeof ctxPrePopulateBranch === "string" ? ctxPrePopulateBranch : undefined;
+    if (!prePopulateBranch && typeof ctxBranch === "string" && ctxBranch && workflowName === "pr-fix") {
+      prePopulateBranch = ctxBranch;
+    }
+    if (
+      !prePopulateBranch &&
+      workflowName === "pr-review" &&
+      typeof prNumber === "number" &&
+      github &&
+      owner &&
+      repo
+    ) {
+      try {
+        const pr = await github.getPullRequest(owner, repo, prNumber);
+        prePopulateBranch = pr.head.ref;
+        console.log(
+          `[dispatch] pr-review: pre-populating workspace at ${owner}/${repo}@${prePopulateBranch}`,
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[dispatch] pr-review: could not resolve PR head ref (${msg}); ` +
+          `agent will need to clone via MCP`,
+        );
+      }
+    }
 
     const request: SimpleWorkflowRequest = {
       owner,
@@ -212,6 +250,7 @@ async function main() {
       sender: typeof sender === "string" ? sender : "unknown",
       triggerId: slackTriggerId,
       extra,
+      prePopulateBranch,
     };
 
     // For workflows where the architect/agent needs to see the full issue

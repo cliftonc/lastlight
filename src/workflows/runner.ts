@@ -154,6 +154,7 @@ function gitSandboxAccessForWorkflow(
   workflowName: string,
   owner: string,
   repo: string,
+  prePopulateBranch?: string,
 ): GitSandboxAccess {
   const profile = gitAccessProfileForWorkflow(workflowName);
   return {
@@ -162,6 +163,7 @@ function gitSandboxAccessForWorkflow(
     profile,
     // Only high-trust code-writing workflows get sandbox-side app-key access.
     allowMcpAppAuth: profile === "repo-write",
+    prePopulateBranch,
   };
 }
 
@@ -349,7 +351,14 @@ export async function runWorkflow(
     ? { ...(ctx.scratch as Record<string, unknown>) }
     : (db && workflowId ? { ...(db.getWorkflowRun(workflowId)?.scratch ?? {}) } : {});
   ctx.scratch = scratch;
-  const githubAccess = gitSandboxAccessForWorkflow(definition.name, ctx.owner, ctx.repo);
+  // `prePopulateBranch` is set upstream (in src/index.ts dispatch) for
+  // workflows that operate on an existing branch (pr-review, pr-fix). The
+  // executor uses it to clone that branch into the workspace before the
+  // sandbox starts — agent enters a workspace already checked out.
+  const prePopulateBranch = typeof ctx.prePopulateBranch === "string"
+    ? ctx.prePopulateBranch
+    : undefined;
+  const githubAccess = gitSandboxAccessForWorkflow(definition.name, ctx.owner, ctx.repo, prePopulateBranch);
   const notify = callbacks.postComment || (async () => {});
   const onStart = callbacks.onPhaseStart || (async () => {});
   const onEnd = callbacks.onPhaseEnd || (async () => {});

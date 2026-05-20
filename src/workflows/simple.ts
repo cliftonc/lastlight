@@ -51,6 +51,14 @@ export interface SimpleWorkflowRequest {
    * pr-fix workflow's failedChecks/branch/prNumber payload.
    */
   extra?: Record<string, unknown>;
+  /**
+   * When set, the harness pre-clones the repo at this branch into the
+   * sandbox workspace before the agent starts. Used by pr-review /
+   * pr-fix so the agent enters a workspace already checked out at the
+   * PR's head ref — saves a redundant `clone_repo` call inside the
+   * session.
+   */
+  prePopulateBranch?: string;
 }
 
 function workflowScopedTaskId(
@@ -107,9 +115,16 @@ export async function runSimpleWorkflow(
       ? `${owner}/${repo}#${number}`
       : `${owner}/${repo}::${workflowName}`);
 
-  const branch = number !== undefined
-    ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
-    : `lastlight/${workflowName}`;
+  // When the dispatcher passes `prePopulateBranch` (set for pr-review /
+  // pr-fix from the actual PR head ref), use that as the `branch` template
+  // var too — the agent's workspace is going to be checked out at that
+  // ref, so the prompt should reflect reality rather than a lastlight/N-slug
+  // name that doesn't exist. Build-style workflows still get the synthesized
+  // lastlight/N-slug branch they create themselves.
+  const branch = request.prePopulateBranch
+    ?? (number !== undefined
+      ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
+      : `lastlight/${workflowName}`);
 
   // ── Resume handling ────────────────────────────────────────────────────────
   //
@@ -162,6 +177,7 @@ export async function runSimpleWorkflow(
         branch,
         taskId,
         issueDir,
+        prePopulateBranch: request.prePopulateBranch,
         models: models as Record<string, unknown> | undefined,
         ...request.extra,
       },

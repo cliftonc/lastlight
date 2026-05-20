@@ -86,6 +86,11 @@ export async function executeAgent(
       });
       env.GIT_TOKEN = token;
       env.GITHUB_TOKEN = token;
+      // Stash the token on the access object so the createTaskSandbox call
+      // below can read it for pre-population without re-minting. Don't
+      // forward this onwards (the executor returns; the value goes
+      // out of scope when this function exits).
+      (access as GitSandboxAccess & { __token?: string }).__token = token;
     } catch (err: any) {
       console.warn(
         `[executor] Could not generate git token (repo=${access?.repo || "none"}, ` +
@@ -100,11 +105,26 @@ export async function executeAgent(
   if (process.env.OPENAI_API_KEY) env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   if (process.env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
+  // Pre-populate the workspace with the target branch when the workflow
+  // declared one (currently used by review-style workflows that operate on
+  // an existing PR head ref). Skips otherwise — build-style workflows
+  // start from an empty workspace and create a fresh branch themselves.
+  const token = (access as GitSandboxAccess & { __token?: string } | undefined)?.__token;
+  const prePopulate = access?.prePopulateBranch && token
+    ? {
+        owner: access.owner,
+        repo: access.repo,
+        branch: access.prePopulateBranch,
+        token,
+      }
+    : undefined;
+
   const sbx = await createTaskSandbox({
     taskId,
     stateDir,
     sandboxDir: config.sandboxDir,
     env,
+    prePopulate,
   });
 
   if (sbx) {

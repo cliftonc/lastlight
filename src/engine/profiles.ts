@@ -67,6 +67,18 @@ export interface GitSandboxAccess {
    * Leave false for lower-trust runs to keep private key material inaccessible.
    */
   allowMcpAppAuth?: boolean;
+  /**
+   * When set, the harness pre-clones the repo at this branch into the
+   * task's workspace before the sandbox container starts. The agent then
+   * sees the workspace already checked out — no `clone_repo` call needed
+   * inside the session. Used by read-only workflows (pr-review, pr-fix)
+   * that operate on an existing branch rather than creating one.
+   *
+   * Build-style workflows that create a new lastlight/* branch from main
+   * leave this unset — they start empty and let the agent set up the
+   * branch fresh.
+   */
+  prePopulateBranch?: string;
 }
 
 export const GITHUB_PERMISSION_PROFILES: Record<GitAccessProfile, GitHubTokenPermissions> = {
