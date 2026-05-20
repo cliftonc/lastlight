@@ -6,7 +6,6 @@ import { SessionFilters } from "./components/SessionFilters";
 import { MessageFeed, type MessageOrder } from "./components/MessageFeed";
 import { Login } from "./components/Login";
 import { useSessionStream } from "./hooks/useSessionStream";
-import { UsageFooter } from "./components/UsageFooter";
 import { WorkflowList } from "./components/WorkflowList";
 import { WorkflowDefinitions } from "./components/WorkflowDefinitions";
 import { HomePage } from "./components/HomePage";
@@ -353,7 +352,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           }}
         />
       )}
-      <UsageFooter />
     </div>
   );
 }

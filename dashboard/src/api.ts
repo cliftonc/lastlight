@@ -290,13 +290,6 @@ async function reqText(path: string, init?: RequestInit): Promise<string> {
   return await res.text();
 }
 
-export interface RateLimit {
-  resource: string;
-  remaining: number;
-  reset_at: string;
-  updated_at: string;
-}
-
 export const api = {
   authRequired: () => req<{ required: boolean; slackOAuth: boolean; githubOAuth: boolean }>("/auth-required"),
   login: (password: string) =>
@@ -332,7 +325,6 @@ export const api = {
   containerStats: () => req<{ stats: ContainerStats[] }>("/containers/stats"),
   killContainer: (name: string) =>
     req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  rateLimits: () => req<{ limits: RateLimit[] }>("/rate-limits"),
   workflowRuns: (
     opts: {
       limit?: number;

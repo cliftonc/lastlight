@@ -30,8 +30,6 @@ export interface AdminConfig {
   sessionsDir: string;
   adminPassword: string;
   adminSecret: string;
-  /** Optional admin notifier (e.g. Slack) used by the recheck endpoint */
-  adminNotifier?: (msg: string) => Promise<void>;
   /** Optional callback to actively resume a paused workflow after dashboard approval */
   resumeWorkflow?: (workflowRun: WorkflowRun, sender: string) => Promise<void>;
   /**
@@ -495,31 +493,6 @@ export function createAdminRoutes(
     const hoursParam = c.req.query("hours");
     const hours = Math.min(Math.max(1, parseInt(hoursParam ?? "24", 10) || 24), 168);
     return c.json({ hourly: db.hourlyStats(hours) });
-  });
-
-  // API rate limits
-  app.get("/rate-limits", (c) => {
-    return c.json({ limits: db.getRateLimits() });
-  });
-
-  // Component health states (e.g. host-claude-auth degraded after auth failure)
-  app.get("/system-status", (c) => {
-    return c.json({ statuses: db.listSystemStatus() });
-  });
-
-  // Manually trigger a recheck of the host claude CLI auth.
-  // Force-runs the check even if the state is currently degraded; the
-  // notifier only fires on actual state transitions, so calling this
-  // endpoint repeatedly while degraded does NOT spam the admin.
-  app.post("/system-status/host-claude-auth/recheck", async (c) => {
-    try {
-      const { checkApiUsage } = await import("../cron/rate-limits.js");
-      await checkApiUsage(db, config.adminNotifier, { force: true });
-      const status = db.getSystemStatus("host-claude-auth");
-      return c.json({ status });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 500);
-    }
   });
 
   // Running Docker containers
