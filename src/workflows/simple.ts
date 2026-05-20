@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { ExecutorConfig } from "../engine/profiles.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
-import type { ModelConfig } from "../config.js";
+import type { ModelConfig, VariantConfig } from "../config.js";
 import { getWorkflow } from "./loader.js";
 import {
   runWorkflow,
@@ -90,6 +90,7 @@ export async function runSimpleWorkflow(
   models?: ModelConfig,
   approvalConfig?: ApprovalGateConfig,
   bootstrapLabel = "lastlight:bootstrap",
+  variants?: VariantConfig,
 ): Promise<WorkflowResult> {
   // Kill switch — if an admin has disabled this workflow in the dashboard,
   // skip every trigger source (cron, webhooks, mentions, Slack) without
@@ -179,6 +180,7 @@ export async function runSimpleWorkflow(
         issueDir,
         prePopulateBranch: request.prePopulateBranch,
         models: models as Record<string, unknown> | undefined,
+        variants: variants as Record<string, unknown> | undefined,
         ...request.extra,
       },
       startedAt: new Date().toISOString(),
@@ -252,6 +254,9 @@ export async function runSimpleWorkflow(
     // on ctx so the runner can read it without an extra DB lookup.
     prePopulateBranch: request.prePopulateBranch,
     models: models as unknown as Record<string, unknown>,
+    // Reasoning-effort overrides per phase. Empty/undefined entries skip
+    // the --variant flag (model uses its default effort).
+    variants: variants as unknown as Record<string, unknown> | undefined,
     // Slack-initiated runs need the runner to pause/resume on the thread id,
     // not on owner/repo#N. Passing the override through here keeps the
     // runner's triggerId derivation in one place.
@@ -272,6 +277,7 @@ export async function runSimpleWorkflow(
       models,
       approvalConfig,
       workflowId,
+      variants,
     );
 
     if (result.success && !result.paused) {

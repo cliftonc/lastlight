@@ -369,6 +369,7 @@ async function main() {
         config.models,
         config.approval,
         config.bootstrapLabel,
+        config.variants,
       );
       const summary = result.phases.map((p) => `${p.phase}=${p.success ? "ok" : "fail"}`).join(", ");
       if (result.paused) {
@@ -1175,6 +1176,7 @@ async function main() {
       sandboxDir: config.sandboxDir,
     },
     models: config.models,
+    variants: config.variants,
     approvalConfig: config.approval,
     bootstrapLabel: config.bootstrapLabel,
     slackPoster: slackConnector

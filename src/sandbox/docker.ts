@@ -164,6 +164,14 @@ export class DockerSandbox {
     prompt: string,
     opts?: {
       model?: string;
+      /**
+       * Reasoning-effort variant. Provider-agnostic per OpenCode's
+       * `--variant` flag (translates to OpenAI's `reasoning_effort`,
+       * Anthropic's thinking budget, etc.). Omit to use the model's
+       * default effort. Validated against an allowlist so a bad value
+       * can't smuggle additional CLI args into the opencode invocation.
+       */
+      variant?: string;
       /** Called for each newline-terminated stdout line as it arrives. */
       onLine?: (line: string) => void;
     },
@@ -174,10 +182,24 @@ export class DockerSandbox {
     const model = opts?.model || "openai/gpt-5.5";
     const timeout = this.config.timeoutSeconds || 1800;
 
+    // `cmd` is interpolated into `sh -c <cmd>` below, so any value we
+    // append here is shell-parsed. Assert variant matches a tight
+    // allowlist (lowercase letters / digits / `-`, max 16 chars) before
+    // embedding it — defense in depth in case it ever gets sourced from
+    // user input.
+    const variantArgs: string[] = [];
+    if (opts?.variant) {
+      if (!/^[a-z0-9-]{1,16}$/.test(opts.variant)) {
+        throw new Error(`Refusing to pass variant "${opts.variant}" — must match /^[a-z0-9-]{1,16}$/`);
+      }
+      variantArgs.push("--variant", opts.variant);
+    }
+
     const cmd = [
       "opencode", "run",
       "--format", "json",
       "-m", model,
+      ...variantArgs,
       "--dangerously-skip-permissions",
     ].join(" ");
 

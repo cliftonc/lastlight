@@ -1,7 +1,7 @@
 import type { StateDb, WorkflowRun } from "../state/db.js";
 import type { ExecutorConfig } from "../engine/profiles.js";
 import type { GitHubClient } from "../engine/github.js";
-import type { ModelConfig } from "../config.js";
+import type { ModelConfig, VariantConfig } from "../config.js";
 import { runWorkflow, type ApprovalGateConfig, type RunnerCallbacks } from "./runner.js";
 import { getWorkflow } from "./loader.js";
 import { slugify, type TemplateContext } from "./templates.js";
@@ -11,6 +11,7 @@ export interface ResumeOptions {
   github: GitHubClient | null;
   config: ExecutorConfig;
   models?: ModelConfig;
+  variants?: VariantConfig;
   approvalConfig?: ApprovalGateConfig;
   bootstrapLabel?: string;
   /** Post a message to a Slack channel/thread. Used to resume Slack-originated workflows. */
@@ -236,6 +237,7 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
       opts.models,
       opts.approvalConfig,
       run.id,           // <-- key bit: reuse the existing workflow run id
+      opts.variants,
     );
 
     if (result.success) {

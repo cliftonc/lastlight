@@ -54,6 +54,7 @@ phases:
     label: Guardrails
     prompt: prompts/guardrails.md    # renders this template, runs an agent
     model: "{{models.guardrails}}"
+    variant: "{{variants.guardrails}}"  # reasoning-effort, e.g. minimal/high
     on_output:
       contains_BLOCKED:
         action: fail
@@ -64,13 +65,23 @@ phases:
   - name: reviewer
     label: Reviewer
     prompt: prompts/reviewer.md
+    model: "{{models.reviewer}}"
+    variant: "{{variants.reviewer}}"
     approval_gate: post_reviewer     # pause before moving on
     loop:                             # iterate on REQUEST_CHANGES
       max_cycles: 3
       on_request_changes:
         fix_prompt: prompts/executor.md
+        fix_model: "{{models.fix}}"
+        fix_variant: "{{variants.fix}}"
         re_review_prompt: prompts/reviewer-rereview.md
 ```
+
+`model:` resolves through `OPENCODE_MODELS` (or the `default` fallback);
+`variant:` resolves through `OPENCODE_VARIANTS` (or `OPENCODE_VARIANT`).
+Both are optional — omit the YAML entry and the runner uses the env-level
+default, omit env-level too and OpenCode picks its built-in default
+(model: `OPENCODE_MODEL`, variant: no `--variant` flag passed).
 
 Three kinds of phase the runner recognises:
 

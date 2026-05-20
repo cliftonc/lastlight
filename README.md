@@ -242,6 +242,8 @@ npx tsx src/cli.ts triage owner/repo
 | `ANTHROPIC_API_KEY` | One of | API key when using `anthropic/…` models |
 | `OPENCODE_MODEL` | No | Default model (default: `openai/gpt-5.5`) |
 | `OPENCODE_MODELS` | No | Per-task overrides as JSON, e.g. `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}` |
+| `OPENCODE_VARIANT` | No | Reasoning-effort default (OpenCode `--variant`), e.g. `minimal`, `medium`, `high`, `max`. Provider-agnostic — OpenCode maps to the right per-provider knob. |
+| `OPENCODE_VARIANTS` | No | Per-task variant overrides as JSON, e.g. `{"architect":"high","reviewer":"high","triage":"minimal"}` |
 | `OPENCODE_SERVE_PORT` | No | Port for the long-lived chat server (default: `4096`, bound to 127.0.0.1) |
 | `OPENCODE_SERVE_LOGS` | No | Set to `1` to forward chat-server logs to harness stderr |
 | `OPENCODE_BIN` | No | Override the opencode binary path (CI/dev) |

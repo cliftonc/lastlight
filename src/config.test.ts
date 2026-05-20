@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveModel, loadConfig } from './config.js';
-import type { ModelConfig } from './config.js';
+import { resolveModel, resolveVariant, loadConfig } from './config.js';
+import type { ModelConfig, VariantConfig } from './config.js';
 
 describe('resolveModel', () => {
   const models: ModelConfig = {
@@ -46,6 +46,69 @@ describe('loadConfig — model resolution', () => {
     vi.stubEnv('OPENCODE_MODEL', 'openai/gpt-5.4');
     const config = loadConfig();
     expect(config.model).toBe('openai/gpt-5.4');
+  });
+});
+
+describe('resolveVariant', () => {
+  it('returns per-type override when present', () => {
+    const variants: VariantConfig = { default: 'medium', architect: 'high', triage: 'minimal' };
+    expect(resolveVariant(variants, 'architect')).toBe('high');
+    expect(resolveVariant(variants, 'triage')).toBe('minimal');
+  });
+
+  it('falls back to default when no override exists', () => {
+    const variants: VariantConfig = { default: 'medium', architect: 'high' };
+    expect(resolveVariant(variants, 'unknown')).toBe('medium');
+  });
+
+  it('returns undefined when neither override nor default is set', () => {
+    expect(resolveVariant({}, 'anything')).toBeUndefined();
+  });
+});
+
+describe('loadConfig — variant overrides via OPENCODE_VARIANTS', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('returns an empty variants config when nothing is set', () => {
+    vi.stubEnv('OPENCODE_VARIANTS', '');
+    vi.stubEnv('OPENCODE_VARIANT', '');
+    const config = loadConfig();
+    expect(config.variants).toEqual({});
+  });
+
+  it('parses OPENCODE_VARIANTS JSON and exposes per-type entries', () => {
+    vi.stubEnv('OPENCODE_VARIANTS', JSON.stringify({ architect: 'high', reviewer: 'high', triage: 'minimal' }));
+    const config = loadConfig();
+    expect(config.variants.architect).toBe('high');
+    expect(config.variants.reviewer).toBe('high');
+    expect(config.variants.triage).toBe('minimal');
+  });
+
+  it('uses OPENCODE_VARIANT as the catch-all default', () => {
+    vi.stubEnv('OPENCODE_VARIANT', 'medium');
+    vi.stubEnv('OPENCODE_VARIANTS', '');
+    const config = loadConfig();
+    expect(config.variants.default).toBe('medium');
+    expect(resolveVariant(config.variants, 'anything')).toBe('medium');
+  });
+
+  it('combines default + per-type, with per-type winning', () => {
+    vi.stubEnv('OPENCODE_VARIANT', 'medium');
+    vi.stubEnv('OPENCODE_VARIANTS', JSON.stringify({ architect: 'high' }));
+    const config = loadConfig();
+    expect(resolveVariant(config.variants, 'architect')).toBe('high');
+    expect(resolveVariant(config.variants, 'triage')).toBe('medium');
+  });
+
+  it('gracefully handles invalid OPENCODE_VARIANTS JSON', () => {
+    vi.stubEnv('OPENCODE_VARIANTS', 'not-json');
+    vi.stubEnv('OPENCODE_VARIANT', '');
+    const config = loadConfig();
+    expect(config.variants).toEqual({});
   });
 });
 

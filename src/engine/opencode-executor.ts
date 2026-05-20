@@ -283,6 +283,7 @@ async function executeSandboxed(
   try {
     const output = await sandbox.runAgent(taskId, prompt, {
       model: config.model,
+      variant: config.variant,
       onLine: (line) => {
         if (!line.startsWith("{")) return;
         let msg: Record<string, unknown>;
@@ -397,10 +398,16 @@ async function executeDirect(
 
   const model = config.model || DEFAULT_MODEL;
   const opencodeBin = process.env.OPENCODE_BIN || "opencode";
+  // Mirror the docker.ts allowlist — keeps the variant-handling rule in
+  // one mental model regardless of which execution path runs.
+  if (config.variant && !/^[a-z0-9-]{1,16}$/.test(config.variant)) {
+    throw new Error(`Refusing to pass variant "${config.variant}" — must match /^[a-z0-9-]{1,16}$/`);
+  }
   const args = [
     "run",
     "--format", "json",
     "-m", model,
+    ...(config.variant ? ["--variant", config.variant] : []),
     "--dangerously-skip-permissions",
   ];
 

@@ -248,6 +248,16 @@ Models:
 - `OPENCODE_MODELS` — per-task overrides as JSON, e.g.
   `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}`.
   Keys match phase names or skill types.
+- `OPENCODE_VARIANT` — catch-all reasoning-effort default (passed to
+  OpenCode as `--variant`). Provider-agnostic; OpenCode translates to
+  the right per-provider knob (OpenAI `reasoning_effort`, Anthropic
+  thinking budget, etc.). Common values: `minimal`, `medium`, `high`,
+  `max`.
+- `OPENCODE_VARIANTS` — per-task variant overrides as JSON, same key
+  scheme as `OPENCODE_MODELS`. Example:
+  `{"architect":"high","reviewer":"high","review":"high","triage":"minimal"}`.
+  Phases can also declare `variant: "{{variants.<phase>}}"` in YAML
+  for per-phase resolution.
 
 Runtime:
 

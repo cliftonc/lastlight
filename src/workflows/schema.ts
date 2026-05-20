@@ -35,6 +35,8 @@ const PhaseLoopSchema = z.object({
   on_request_changes: z.object({
     fix_prompt: z.string(),
     fix_model: z.string().optional(),
+    /** Reasoning-effort override for the fix cycle (e.g. {{variants.fix}}). */
+    fix_variant: z.string().optional(),
     re_review_prompt: z.string(),
   }),
   /** Gate to pause at before running the fix (optional) */
@@ -104,6 +106,12 @@ const PhaseDefinitionSchema = z
     skill: z.string().optional(),
     /** Model override — can reference template vars like {{models.architect}} */
     model: z.string().optional(),
+    /**
+     * Reasoning-effort override — can reference template vars like
+     * `{{variants.architect}}`. Maps to OpenCode's `--variant` flag
+     * (provider-agnostic; OpenCode translates per provider).
+     */
+    variant: z.string().optional(),
     /** Named approval gate to pause at after this phase */
     approval_gate: z.string().optional(),
     /** Message template rendered when pausing at this phase's approval gate. */

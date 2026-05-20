@@ -49,6 +49,23 @@ export interface ModelConfig {
   [taskType: string]: string;
 }
 
+/**
+ * Per-task-type reasoning-effort ("variant") configuration. Maps to
+ * OpenCode's `--variant` flag — a provider-agnostic knob OpenCode
+ * translates into each provider's reasoning-effort API (OpenAI's
+ * `reasoning_effort`, Anthropic's thinking budget, etc.). Common values:
+ * `minimal` / `medium` / `high` / `max`.
+ *
+ * Keys mirror `ModelConfig`: phase names ("architect", "reviewer", …)
+ * or skill types. `default` is the catch-all when no override matches.
+ */
+export interface VariantConfig {
+  /** Default variant for all tasks (unset → no `--variant` flag passed) */
+  default?: string;
+  /** Per-type overrides */
+  [taskType: string]: string | undefined;
+}
+
 export interface LastLightConfig {
   /** Webhook listener port */
   port: number;
@@ -70,6 +87,8 @@ export interface LastLightConfig {
   model: string;
   /** Per-task-type model overrides */
   models: ModelConfig;
+  /** Per-task-type reasoning-effort overrides (OpenCode `--variant`) */
+  variants: VariantConfig;
   /** Max agent turns */
   maxTurns: number;
   /**
@@ -162,6 +181,7 @@ export function loadConfig(): LastLightConfig {
     workflowDir: resolve(process.env.WORKFLOW_DIR || "./workflows"),
     model: process.env.OPENCODE_MODEL || "openai/gpt-5.5",
     models: parseModelConfig(),
+    variants: parseVariantConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
     opencodeServePort: parseInt(process.env.OPENCODE_SERVE_PORT || "4096", 10),
     githubApp,
@@ -255,6 +275,44 @@ function requireEnv(name: string): string {
  */
 export function resolveModel(models: ModelConfig, taskType: string): string {
   return models[taskType] || models.default;
+}
+
+/**
+ * Parse `OPENCODE_VARIANTS` into a `VariantConfig`. Same JSON shape as
+ * `OPENCODE_MODELS` — e.g.
+ *   {"architect":"high","reviewer":"high","review":"high","triage":"minimal"}
+ * The optional `OPENCODE_VARIANT` env var sets the catch-all default.
+ */
+function parseVariantConfig(): VariantConfig {
+  const config: VariantConfig = {};
+  const defaultVariant = process.env.OPENCODE_VARIANT?.trim();
+  if (defaultVariant) config.default = defaultVariant;
+
+  const raw = process.env.OPENCODE_VARIANTS;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof value === "string" && value.length > 0) {
+            config[key] = value;
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[config] Invalid OPENCODE_VARIANTS JSON: ${err.message}`);
+    }
+  }
+  return config;
+}
+
+/**
+ * Resolve the variant (reasoning effort) for a given task type.
+ * Checks per-type overrides first, then falls back to default. Returns
+ * `undefined` when neither is set — callers omit the `--variant` flag.
+ */
+export function resolveVariant(variants: VariantConfig, taskType: string): string | undefined {
+  return variants[taskType] || variants.default;
 }
 
 /**

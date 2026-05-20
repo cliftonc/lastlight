@@ -21,6 +21,13 @@ export interface ExecutorConfig {
   maxTurns?: number;
   /** Model id passed to the runtime (e.g. "openai/gpt-5.5"). */
   model?: string;
+  /**
+   * Reasoning-effort variant passed to the runtime as `--variant`. Maps
+   * to OpenCode's provider-agnostic reasoning effort (e.g. `minimal`,
+   * `medium`, `high`, `max`). When omitted, no `--variant` flag is sent
+   * and the model uses its default effort.
+   */
+  variant?: string;
   /** Path to agent context directory. */
   agentContextDir?: string;
   /** Directory for persistent state. */
