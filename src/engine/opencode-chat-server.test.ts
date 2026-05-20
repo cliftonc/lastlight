@@ -65,6 +65,38 @@ describe("buildChatAgentDef", () => {
     }
   });
 
+  it("explicitly allows every non-destructive github_* tool by name (allow-list, not deny-list)", () => {
+    // Mirrors `mcp-github-app/src/index.js`. A new tool added there must be
+    // added here too, or it will not be reachable from chat by default.
+    for (const t of [
+      "github_get_repository",
+      "github_get_file_contents",
+      "github_list_branches",
+      "github_list_issues",
+      "github_get_issue",
+      "github_create_issue",
+      "github_update_issue",
+      "github_add_issue_comment",
+      "github_list_issue_comments",
+      "github_add_labels",
+      "github_remove_label",
+      "github_list_labels",
+      "github_create_label",
+      "github_list_pull_requests",
+      "github_get_pull_request",
+      "github_list_pull_request_files",
+      "github_get_pull_request_diff",
+      "github_list_pull_request_reviews",
+      "github_list_pull_request_review_comments",
+      "github_list_commits",
+      "github_search_repositories",
+      "github_search_issues",
+      "github_search_code",
+    ]) {
+      expect(def.permission[t]).toBe("allow");
+    }
+  });
+
   it("allows the read-only host tools the chat skill needs for narrow lookups", () => {
     expect(def.permission.read).toBe("allow");
     expect(def.permission.glob).toBe("allow");

@@ -142,9 +142,15 @@ OpenCode picks credentials from `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` on t
 
 ### Build and Run
 
+Build both the harness image **and** the sandbox image. The harness spawns a
+sandbox container per workflow run, so `lastlight-sandbox:latest` must exist
+locally before any workflow can execute. The sandbox service is under the
+`build-only` profile so it is never started — it is only built.
+
 ```bash
-docker-compose build agent
-docker-compose up -d agent
+docker compose build agent
+docker compose --profile build-only build sandbox
+docker compose up -d agent
 ```
 
 ### Secrets

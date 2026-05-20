@@ -6,6 +6,13 @@
  *   "anthropic/claude-…" or unprefixed "claude-…"  →  Anthropic Messages API
  *   "openai/gpt-…"      or unprefixed "gpt-…"     →  OpenAI Chat Completions API
  *
+ * Scope: this helper supports Anthropic and OpenAI only. OpenCode workflow
+ * phases are provider-agnostic (whatever OpenCode supports), but the
+ * screener/classifier path is not — an explicit prefix like
+ * `mistral/large` will throw rather than silently route to OpenAI with
+ * the wrong model id. Bare ids (no slash) still fall back to OpenAI to
+ * keep "gpt-5.5"-style shorthands working.
+ *
  * Replaces the `@anthropic-ai/claude-agent-sdk` query() this codebase
  * used pre-Phase 7 for these small calls. The whole SDK was overkill for
  * one HTTP round-trip with no tools and no streaming.
@@ -104,6 +111,10 @@ export function resolveProvider(model: string): { provider: "anthropic" | "opena
     const tail = model.slice(slash + 1);
     if (head === "anthropic") return { provider: "anthropic", modelId: tail };
     if (head === "openai") return { provider: "openai", modelId: tail };
+    // An explicit prefix we don't handle — fail loudly so the caller
+    // notices instead of silently sending e.g. `mistral/large-latest`
+    // as an OpenAI model id and getting a confusing 404.
+    throw new Error(`llm helper: unsupported provider prefix "${head}" (only "anthropic" and "openai" are supported)`);
   }
   // Unprefixed — guess from common model name shapes.
   const lower = model.toLowerCase();

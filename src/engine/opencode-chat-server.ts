@@ -424,7 +424,8 @@ function numOr0(v: unknown): number {
  *   - todowrite — internal agent scratchpad, doesn't escape the fence
  *   - read-only github MCP tools (get_*, list_*, search_*)
  *   - tame github write tools: create_issue, add_issue_comment,
- *     add_labels / remove_label, update_issue (close/reopen/edit)
+ *     add_labels / remove_label / create_label,
+ *     update_issue (close/reopen/edit)
  *
  * Denied:
  *   - host-side filesystem mutation: bash, edit, write, patch
@@ -437,9 +438,10 @@ function numOr0(v: unknown): number {
  *     setup_git_auth, refresh_git_auth, merge_pull_request,
  *     create_pull_request, create_pull_request_review
  *
- * For "talk about the repo" the agent uses github_get_file_contents,
- * github_search_code, and the github_list_* read tools — those are
- * allowed implicitly (deny-list pattern; unlisted github_* are allowed).
+ * github_* policy is an enumerated allow-list, not a deny-list — every
+ * tool currently exposed by mcp-github-app is mentioned by name, so a
+ * new write tool added there will *not* be reachable from chat by
+ * accident. Keep this list in sync with `mcp-github-app/src/index.js`.
  */
 export function buildChatAgentDef(): Record<string, unknown> {
   return {
@@ -475,7 +477,34 @@ export function buildChatAgentDef(): Record<string, unknown> {
       webfetch: "allow",
       websearch: "allow",
       todowrite: "allow",
-      // GitHub MCP — code/branch/PR mutation
+      // GitHub MCP — explicit per-tool allow-list. Every tool exposed by
+      // mcp-github-app is listed here; a new tool added there will not
+      // be chat-callable until it's added to this block. Keep in sync
+      // with `mcp-github-app/src/index.js`.
+      github_get_repository: "allow",
+      github_get_file_contents: "allow",
+      github_list_branches: "allow",
+      github_list_issues: "allow",
+      github_get_issue: "allow",
+      github_create_issue: "allow",
+      github_update_issue: "allow",
+      github_add_issue_comment: "allow",
+      github_list_issue_comments: "allow",
+      github_add_labels: "allow",
+      github_remove_label: "allow",
+      github_list_labels: "allow",
+      github_create_label: "allow",
+      github_list_pull_requests: "allow",
+      github_get_pull_request: "allow",
+      github_list_pull_request_files: "allow",
+      github_get_pull_request_diff: "allow",
+      github_list_pull_request_reviews: "allow",
+      github_list_pull_request_review_comments: "allow",
+      github_list_commits: "allow",
+      github_search_repositories: "allow",
+      github_search_issues: "allow",
+      github_search_code: "allow",
+      // GitHub MCP — denied writes (code / branch / PR / auth mutation).
       github_clone_repo: "deny",
       github_create_branch: "deny",
       github_push_files: "deny",

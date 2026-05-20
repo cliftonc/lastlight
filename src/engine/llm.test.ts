@@ -13,6 +13,10 @@ describe("resolveProvider", () => {
   it("falls back to openai for unrecognized bare ids", () => {
     expect(resolveProvider("mystery-model")).toEqual({ provider: "openai", modelId: "mystery-model" });
   });
+  it("throws on an explicit unsupported provider prefix instead of silently mis-routing", () => {
+    expect(() => resolveProvider("mistral/large-latest")).toThrow(/unsupported provider prefix "mistral"/);
+    expect(() => resolveProvider("google/gemini-pro")).toThrow(/unsupported provider prefix "google"/);
+  });
 });
 
 describe("defaultFastModel", () => {
