@@ -56,6 +56,13 @@ RUN chown -R agent:agent /app /home/agent
 
 WORKDIR /home/agent/workspace
 
+# Image-level env so every `docker exec` (the entrypoint just runs once at
+# container start) sees these. Exporting them in sandbox-entrypoint.sh only
+# affects PID 1 — subsequent `docker exec opencode run …` calls get a fresh
+# environment and would otherwise miss these paths.
+ENV LASTLIGHT_WORKSPACE=/home/agent/workspace
+ENV LASTLIGHT_GIT_CREDENTIALS=/home/agent/.lastlight-git-credentials
+
 # Entrypoint runs as root, fixes permissions, then drops to agent via gosu
 ENTRYPOINT ["/app/sandbox-entrypoint.sh"]
 CMD ["sleep", "infinity"]

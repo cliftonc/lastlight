@@ -6,14 +6,10 @@ set -euo pipefail
 
 AGENT_HOME="/home/agent"
 WORKSPACE="$AGENT_HOME/workspace"
-# Exported so child MCP servers (which inherit a non-writable cwd from
-# OpenCode's tool scratch dir) can resolve relative paths against the
-# real workspace. Consumed by mcp-github-app's clone_repo.
-export LASTLIGHT_WORKSPACE="$WORKSPACE"
-# Shared credentials file used by `git credential-store`. Written here at
-# boot from $GIT_TOKEN; rewritten by mcp-github-app when it refreshes the
-# token. Single location avoids token interpolation through any shell.
-export LASTLIGHT_GIT_CREDENTIALS="$AGENT_HOME/.lastlight-git-credentials"
+# LASTLIGHT_WORKSPACE and LASTLIGHT_GIT_CREDENTIALS are set as image-level
+# ENV in sandbox.Dockerfile so they're visible to every `docker exec` call
+# the harness makes (not just the entrypoint's PID-1 tree). They show up in
+# this shell's env via that mechanism; no export needed here.
 
 # ── Fix workspace ownership (bind-mounts may be root-owned on macOS) ──
 chown -R agent:agent "$WORKSPACE" 2>/dev/null || true
