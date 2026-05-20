@@ -86,3 +86,4 @@ bin/
 checkpoints/
 whatsapp/
 .spike/
+solo.yml
