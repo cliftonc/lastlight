@@ -43,6 +43,15 @@ export interface OpencodeChatServerConfig {
    * Claude SDK's `systemPrompt` option that pre-Phase 5 chat used.
    */
   agentMarkdown?: string;
+  /**
+   * Name of the OpenCode agent to use for chat turns. The supervisor
+   * writes the matching agent definition into opencode.json so the server
+   * picks it up on boot. Defaults to `chat` — a primary agent that
+   * denies host-side tools (bash/edit/webfetch/task/skill/todowrite/etc.)
+   * and the destructive github_* write tools, while still permitting
+   * reads + issue/comment/label management via the github MCP.
+   */
+  agentName?: string;
 }
 
 export interface OpencodeMcpServer {
@@ -202,7 +211,7 @@ export class OpencodeChatServer {
         headers: { "content-type": "application/json" },
         signal: ctrl.signal,
         body: JSON.stringify({
-          agent: opts?.agent || "build",
+          agent: opts?.agent || this.cfg.agentName || "chat",
           parts: [{ type: "text", text: prompt }],
           model: { providerID, modelID },
         }),
@@ -234,6 +243,12 @@ export class OpencodeChatServer {
     if (this.cfg.mcpServers && Object.keys(this.cfg.mcpServers).length > 0) {
       config.mcp = this.cfg.mcpServers;
     }
+
+    const agentName = this.cfg.agentName ?? "chat";
+    config.agent = {
+      [agentName]: buildChatAgentDef(),
+    };
+
     const file = path.join(this.cfg.workingDir, "opencode.json");
     await fs.writeFile(file, JSON.stringify(config, null, 2));
 
@@ -381,4 +396,60 @@ export function splitModel(model: string): { providerID: string; modelID: string
 
 function numOr0(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Permission profile for the chat agent. Tool-level fence — the chat
+ * persona prompt already forbids these, but OpenCode's permission
+ * config gives us a hard guarantee that prompt injection can't talk
+ * the agent into running shell commands against the harness process,
+ * editing local files, fetching arbitrary URLs, cloning repos to the
+ * server's filesystem, or destructively mutating remote repos.
+ *
+ * Allowed (the chat skill's legitimate surface):
+ *   - read-only host tools (read / glob / grep / list)
+ *   - read-only github MCP tools (get_*, list_*, search_*)
+ *   - tame github write tools: create_issue, add_issue_comment,
+ *     add_labels / remove_label, update_issue (close/reopen/edit)
+ *
+ * Denied:
+ *   - host-side: bash, edit, webfetch, websearch, task, skill,
+ *     todowrite, repo_clone, repo_overview, external_directory
+ *   - github writes that touch code/branches/PRs:
+ *     clone_repo, create_branch, push_files, create_or_update_file,
+ *     setup_git_auth, refresh_git_auth, merge_pull_request,
+ *     create_pull_request, create_pull_request_review
+ */
+export function buildChatAgentDef(): Record<string, unknown> {
+  return {
+    description: "Last Light messaging chat agent — read repos, manage issues/comments/labels, no host shell, no code changes.",
+    mode: "primary",
+    permission: {
+      // Host-side tools
+      bash: "deny",
+      edit: "deny",
+      webfetch: "deny",
+      websearch: "deny",
+      task: "deny",
+      skill: "deny",
+      todowrite: "deny",
+      repo_clone: "deny",
+      repo_overview: "deny",
+      external_directory: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      list: "allow",
+      // GitHub MCP — code/branch/PR mutation
+      github_clone_repo: "deny",
+      github_create_branch: "deny",
+      github_push_files: "deny",
+      github_create_or_update_file: "deny",
+      github_setup_git_auth: "deny",
+      github_refresh_git_auth: "deny",
+      github_merge_pull_request: "deny",
+      github_create_pull_request: "deny",
+      github_create_pull_request_review: "deny",
+    },
+  };
 }

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run the lastlight harness on your local machine without polluting your
 # host environment. Specifically:
-#   - Sets LASTLIGHT_LOCAL_DEV=1 so git-auth.ts skips `git config --global`
-#     writes (so your ~/.gitconfig identity and credential helper are
-#     untouched).
+#   - The harness does NOT touch your ~/.gitconfig (this is the default
+#     behaviour; it would require an explicit LASTLIGHT_WRITE_GLOBAL_GIT=1
+#     opt-in to do so, which we never set here).
 #   - Bind-mounts a project-local directory (./data/sandbox-data) into each
 #     sandbox container as /data, instead of the production named volume
 #     `lastlight_agent-data`.
@@ -72,20 +72,21 @@ else
 fi
 
 # ── Environment overrides for safe local execution ────────────────────────
-# - LASTLIGHT_LOCAL_DEV=1     → git-auth.ts skips `git config --global` writes
 # - SANDBOX_DATA_VOLUME=…     → bind-mount sandbox-data dir as /data inside
 #                               each sandbox container
 # - OPENCODE_HOME_DIR=…       → dashboard reads sandbox sessions from here
 # - STATE_DIR=./data          → SQLite db, sandboxes/, logs/ stay project-local
 # - ENABLE_DIRECT_FALLBACK=false → require sandbox; never fall back to direct
 #   in-process execution
-export LASTLIGHT_LOCAL_DEV=1
+#
+# LASTLIGHT_WRITE_GLOBAL_GIT is intentionally NOT set — the harness's default
+# is to leave ~/.gitconfig alone; sandboxes receive the GitHub App token via
+# the GIT_TOKEN env var and configure git --system inside the container.
 export SANDBOX_DATA_VOLUME="$SANDBOX_DATA_DIR"
 export STATE_DIR="$PROJECT_ROOT/data"
 export OPENCODE_HOME_DIR="$LOCAL_OPENCODE_HOME"
 export ENABLE_DIRECT_FALLBACK=false
 
-echo "[dev-local] LASTLIGHT_LOCAL_DEV=1"
 echo "[dev-local] SANDBOX_DATA_VOLUME=$SANDBOX_DATA_VOLUME (bind-mounted as /data)"
 echo "[dev-local] OPENCODE_HOME_DIR=$OPENCODE_HOME_DIR"
 echo "[dev-local] STATE_DIR=$STATE_DIR"

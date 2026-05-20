@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   OpencodeChatServer,
+  buildChatAgentDef,
   parseTurnResult,
   splitModel,
 } from "./opencode-chat-server.js";
@@ -28,6 +29,43 @@ const TURN_FIXTURE = {
     { type: "step-finish", tokens: { input: 7587, output: 28 }, cost: 0, reason: "stop" },
   ],
 };
+
+describe("buildChatAgentDef", () => {
+  const def = buildChatAgentDef() as { permission: Record<string, string>; mode: string };
+
+  it("runs as a primary agent so postMessage can target it directly", () => {
+    expect(def.mode).toBe("primary");
+  });
+
+  it("denies every host-side tool that could touch ~/.gitconfig or the filesystem", () => {
+    for (const t of ["bash", "edit", "webfetch", "websearch", "task", "skill", "todowrite", "repo_clone", "repo_overview", "external_directory"]) {
+      expect(def.permission[t]).toBe("deny");
+    }
+  });
+
+  it("denies destructive github_* tools (code / branch / PR mutation)", () => {
+    for (const t of [
+      "github_clone_repo",
+      "github_create_branch",
+      "github_push_files",
+      "github_create_or_update_file",
+      "github_setup_git_auth",
+      "github_refresh_git_auth",
+      "github_merge_pull_request",
+      "github_create_pull_request",
+      "github_create_pull_request_review",
+    ]) {
+      expect(def.permission[t]).toBe("deny");
+    }
+  });
+
+  it("allows the read-only host tools the chat skill needs for narrow lookups", () => {
+    expect(def.permission.read).toBe("allow");
+    expect(def.permission.glob).toBe("allow");
+    expect(def.permission.grep).toBe("allow");
+    expect(def.permission.list).toBe("allow");
+  });
+});
 
 describe("splitModel", () => {
   it("splits provider/model", () => {

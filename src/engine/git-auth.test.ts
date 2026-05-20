@@ -43,11 +43,36 @@ const baseConfig = {
   installationId: "67890",
 };
 
-describe("git-auth — no shell injection via execFileSync", () => {
+describe("git-auth — global ~/.gitconfig writes are opt-in", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchToken();
-    delete process.env.LASTLIGHT_LOCAL_DEV;
+    // Default: NOT opted in — must not touch global git config.
+    delete process.env.LASTLIGHT_WRITE_GLOBAL_GIT;
+  });
+
+  it("configureGitAuth does NOT touch ~/.gitconfig by default", async () => {
+    await configureGitAuth(baseConfig);
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  it("refreshGitAuth does NOT touch ~/.gitconfig by default", async () => {
+    await refreshGitAuth(baseConfig);
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  it("configureGitAuth still returns the minted token when opted out", async () => {
+    const out = await configureGitAuth(baseConfig);
+    expect(out.token).toBe("ghs_testtoken123");
+    expect(out.expiresAt).toBe("2099-01-01T00:00:00Z");
+  });
+});
+
+describe("git-auth — opt-in global writes use execFileSync safely", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchToken();
+    process.env.LASTLIGHT_WRITE_GLOBAL_GIT = "1";
   });
 
   it("configureGitAuth does not use execSync", async () => {
