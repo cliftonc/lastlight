@@ -85,5 +85,4 @@ hooks/
 bin/
 checkpoints/
 whatsapp/
-.spike/
 solo.yml

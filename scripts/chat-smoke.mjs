@@ -4,7 +4,7 @@ const server = new OpencodeChatServer({
   port: 4097,
   workingDir: "/tmp/chat-smoke-wd",
   defaultModel: "openai/gpt-5.3-codex",
-  binary: process.cwd() + "/.spike/node_modules/.bin/opencode",
+  binary: process.cwd() + "/node_modules/.bin/opencode",
   printLogs: process.env.LOGS === "1",
 });
 

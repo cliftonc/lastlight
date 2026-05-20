@@ -45,6 +45,21 @@ if ! docker images -q lastlight-sandbox:latest | grep -q .; then
   exit 1
 fi
 
+# ── Locate opencode binary for the chat server ───────────────────────────
+# The chat-server supervisor spawns `opencode serve` on harness boot. Use
+# the project-local install (`opencode-ai` is a devDependency) so `npm
+# install` provisions it automatically. Falls back to whatever's on PATH
+# if the user prefers a system-wide install.
+LOCAL_OPENCODE_BIN="$PROJECT_ROOT/node_modules/.bin/opencode"
+if [ -x "$LOCAL_OPENCODE_BIN" ]; then
+  export OPENCODE_BIN="$LOCAL_OPENCODE_BIN"
+elif ! command -v opencode >/dev/null 2>&1; then
+  echo "ERROR: opencode binary not found." >&2
+  echo "Run \`npm install\` to install the opencode-ai devDependency, or" >&2
+  echo "install opencode globally and put it on PATH." >&2
+  exit 1
+fi
+
 mkdir -p "$LOCAL_OPENCODE_HOME/projects"
 
 # ── Copy GitHub App private key for the in-sandbox MCP server ─────────────
@@ -90,6 +105,7 @@ export ENABLE_DIRECT_FALLBACK=false
 echo "[dev-local] SANDBOX_DATA_VOLUME=$SANDBOX_DATA_VOLUME (bind-mounted as /data)"
 echo "[dev-local] OPENCODE_HOME_DIR=$OPENCODE_HOME_DIR"
 echo "[dev-local] STATE_DIR=$STATE_DIR"
+echo "[dev-local] OPENCODE_BIN=${OPENCODE_BIN:-$(command -v opencode)}"
 echo "[dev-local] Starting harness with hot reload..."
 
 exec npx tsx watch src/index.ts
