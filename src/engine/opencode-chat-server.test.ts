@@ -37,9 +37,15 @@ describe("buildChatAgentDef", () => {
     expect(def.mode).toBe("primary");
   });
 
-  it("denies every host-side tool that could touch ~/.gitconfig or the filesystem", () => {
-    for (const t of ["bash", "edit", "write", "patch", "webfetch", "websearch", "task", "skill", "todowrite", "repo_clone", "repo_overview", "external_directory"]) {
+  it("denies host-side filesystem mutation and subagent/skill escape paths", () => {
+    for (const t of ["bash", "edit", "write", "patch", "task", "skill", "repo_clone", "repo_overview", "external_directory"]) {
       expect(def.permission[t]).toBe("deny");
+    }
+  });
+
+  it("allows web lookups, internal scratchpad, and read-only host tools", () => {
+    for (const t of ["read", "glob", "grep", "list", "webfetch", "websearch", "todowrite"]) {
+      expect(def.permission[t]).toBe("allow");
     }
   });
 

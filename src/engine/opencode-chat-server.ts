@@ -418,43 +418,63 @@ function numOr0(v: unknown): number {
  *
  * Allowed (the chat skill's legitimate surface):
  *   - read-only host tools (read / glob / grep / list)
+ *   - web lookups (webfetch / websearch) so the agent can answer
+ *     "what does package X do" / "what's the latest release of Y" without
+ *     a round-trip. Slack input already goes through screenForInjection.
+ *   - todowrite — internal agent scratchpad, doesn't escape the fence
  *   - read-only github MCP tools (get_*, list_*, search_*)
  *   - tame github write tools: create_issue, add_issue_comment,
  *     add_labels / remove_label, update_issue (close/reopen/edit)
  *
  * Denied:
- *   - host-side: bash, edit, write, patch, webfetch, websearch, task,
- *     skill, todowrite, repo_clone, repo_overview, external_directory
+ *   - host-side filesystem mutation: bash, edit, write, patch
+ *   - host-side escape paths: task (spawns subagents), skill (runs full
+ *     build/review flows), repo_clone (clones to harness disk, any URL),
+ *     repo_overview (scans a local clone — no local clones allowed),
+ *     external_directory (reads outside the workspace)
  *   - github writes that touch code/branches/PRs:
  *     clone_repo, create_branch, push_files, create_or_update_file,
  *     setup_git_auth, refresh_git_auth, merge_pull_request,
  *     create_pull_request, create_pull_request_review
+ *
+ * For "talk about the repo" the agent uses github_get_file_contents,
+ * github_search_code, and the github_list_* read tools — those are
+ * allowed implicitly (deny-list pattern; unlisted github_* are allowed).
  */
 export function buildChatAgentDef(): Record<string, unknown> {
   return {
     description: "Last Light messaging chat agent — read repos, manage issues/comments/labels, no host shell, no code changes.",
     mode: "primary",
     permission: {
-      // Host-side tools. `edit` modifies existing files; `write` creates or
-      // overwrites; `patch` applies diffs. All three are file-mutation paths
-      // and stay denied even though the chat system prompt also forbids
-      // them — prompt-level constraints are weaker than tool-level denies.
+      // Host-side filesystem mutation. `edit` modifies existing files;
+      // `write` creates or overwrites; `patch` applies diffs. All three
+      // stay denied even though the chat system prompt forbids them —
+      // prompt-level constraints are strictly weaker than tool-level denies.
       bash: "deny",
       edit: "deny",
       write: "deny",
       patch: "deny",
-      webfetch: "deny",
-      websearch: "deny",
+      // Host-side escape paths. `task` spawns subagents that inherit the
+      // chat session; `skill` triggers full Last Light skill flows (build /
+      // review / triage) which belong to the sandbox path, not chat;
+      // `repo_clone` is OpenCode's host-side clone tool — clones to the
+      // harness disk and accepts arbitrary URLs (wide attack surface, and
+      // github_get_file_contents already covers "read repo files").
       task: "deny",
       skill: "deny",
-      todowrite: "deny",
       repo_clone: "deny",
       repo_overview: "deny",
       external_directory: "deny",
+      // Read-only host tools.
       read: "allow",
       glob: "allow",
       grep: "allow",
       list: "allow",
+      // Web lookups + internal scratchpad — useful for conversational
+      // responses, no escape from the fence.
+      webfetch: "allow",
+      websearch: "allow",
+      todowrite: "allow",
       // GitHub MCP — code/branch/PR mutation
       github_clone_repo: "deny",
       github_create_branch: "deny",
