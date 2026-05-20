@@ -71,40 +71,64 @@ export class SessionManager {
 
   /**
    * One-shot migration: copy `messaging_sessions` rows into a table
-   * without the table-level UNIQUE constraint. Done in a transaction so a
-   * crash mid-migration can't leave the DB half-rebuilt. Old indexes are
-   * recreated; the partial unique index is added by the caller.
+   * without the table-level UNIQUE constraint. `messaging_messages.session_id`
+   * has a foreign key to this table, so `DROP TABLE messaging_sessions`
+   * trips FK enforcement.
+   *
+   * Follows SQLite's official table-rebuild recipe
+   * (https://www.sqlite.org/lang_altertable.html#otheralter): toggle
+   * `foreign_keys` OFF *outside* a transaction, do the rebuild, run
+   * `foreign_key_check` to confirm no orphans, COMMIT, re-enable.
+   * `defer_foreign_keys` isn't enough — it pushes the check to COMMIT but
+   * still fails when the schema flux at rename-time is observed.
+   *
+   * `foreign_key_check` after the rebuild is belt-and-suspenders: if the
+   * copy somehow missed rows the messages reference, fail the migration
+   * loudly rather than commit a half-broken schema.
    */
   private rebuildWithoutTableUnique() {
     console.log("[messaging] migrating messaging_sessions: dropping unconditional UNIQUE constraint");
-    this.db.exec("BEGIN");
+    const fkOriginal = this.db.pragma("foreign_keys", { simple: true });
+    this.db.pragma("foreign_keys = OFF");
     try {
-      this.db.exec(`
-        CREATE TABLE messaging_sessions__new (
-          id TEXT PRIMARY KEY,
-          platform TEXT NOT NULL,
-          channel_id TEXT NOT NULL,
-          thread_id TEXT,
-          user_id TEXT NOT NULL,
-          agent_session_id TEXT,
-          created_at TEXT NOT NULL,
-          last_activity_at TEXT NOT NULL,
-          message_count INTEGER DEFAULT 0,
-          active INTEGER DEFAULT 1
-        );
-        INSERT INTO messaging_sessions__new
-          SELECT id, platform, channel_id, thread_id, user_id, agent_session_id,
-                 created_at, last_activity_at, message_count, active
-          FROM messaging_sessions;
-        DROP TABLE messaging_sessions;
-        ALTER TABLE messaging_sessions__new RENAME TO messaging_sessions;
-        CREATE INDEX IF NOT EXISTS idx_msg_sessions_lookup
-          ON messaging_sessions(platform, channel_id, thread_id, user_id);
-      `);
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
+      this.db.exec("BEGIN");
+      try {
+        this.db.exec(`
+          CREATE TABLE messaging_sessions__new (
+            id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            thread_id TEXT,
+            user_id TEXT NOT NULL,
+            agent_session_id TEXT,
+            created_at TEXT NOT NULL,
+            last_activity_at TEXT NOT NULL,
+            message_count INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1
+          );
+          INSERT INTO messaging_sessions__new
+            SELECT id, platform, channel_id, thread_id, user_id, agent_session_id,
+                   created_at, last_activity_at, message_count, active
+            FROM messaging_sessions;
+          DROP TABLE messaging_sessions;
+          ALTER TABLE messaging_sessions__new RENAME TO messaging_sessions;
+          CREATE INDEX IF NOT EXISTS idx_msg_sessions_lookup
+            ON messaging_sessions(platform, channel_id, thread_id, user_id);
+        `);
+        const violations = this.db.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `FK check failed after migration — ${violations.length} dangling reference(s): ` +
+            JSON.stringify(violations),
+          );
+        }
+        this.db.exec("COMMIT");
+      } catch (err) {
+        this.db.exec("ROLLBACK");
+        throw err;
+      }
+    } finally {
+      if (fkOriginal) this.db.pragma("foreign_keys = ON");
     }
   }
 
