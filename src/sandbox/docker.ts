@@ -171,7 +171,7 @@ export class DockerSandbox {
     const info = this.activeContainers.get(taskId);
     if (!info) throw new Error(`No sandbox for task ${taskId}`);
 
-    const model = opts?.model || "openai/gpt-5.3-codex";
+    const model = opts?.model || "openai/gpt-5.5";
     const timeout = this.config.timeoutSeconds || 1800;
 
     const cmd = [

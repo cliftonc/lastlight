@@ -11,7 +11,7 @@
 
 An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features through an Architect → Executor → Reviewer development cycle.
 
-Built on the [OpenCode](https://github.com/sst/opencode) runtime with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `OPENCODE_MODEL` at any `provider/model` OpenCode supports (defaults to `openai/gpt-5.3-codex`).
+Built on the [OpenCode](https://github.com/sst/opencode) runtime with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `OPENCODE_MODEL` at any `provider/model` OpenCode supports (defaults to `openai/gpt-5.5`).
 
 ## Production Setup (Clean Server)
 
@@ -240,7 +240,7 @@ npx tsx src/cli.ts triage owner/repo
 | `WEBHOOK_SECRET` | Yes | GitHub webhook signature secret |
 | `OPENAI_API_KEY` | One of | API key when using `openai/…` models |
 | `ANTHROPIC_API_KEY` | One of | API key when using `anthropic/…` models |
-| `OPENCODE_MODEL` | No | Default model (default: `openai/gpt-5.3-codex`) |
+| `OPENCODE_MODEL` | No | Default model (default: `openai/gpt-5.5`) |
 | `OPENCODE_MODELS` | No | Per-task overrides as JSON, e.g. `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}` |
 | `OPENCODE_SERVE_PORT` | No | Port for the long-lived chat server (default: `4096`, bound to 127.0.0.1) |
 | `OPENCODE_SERVE_LOGS` | No | Set to `1` to forward chat-server logs to harness stderr |

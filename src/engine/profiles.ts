@@ -19,7 +19,7 @@ export interface ExecutorConfig {
   cwd?: string;
   /** Maximum conversation turns. Unused by OpenCode runtime; kept for API stability. */
   maxTurns?: number;
-  /** Model id passed to the runtime (e.g. "openai/gpt-5.3-codex"). */
+  /** Model id passed to the runtime (e.g. "openai/gpt-5.5"). */
   model?: string;
   /** Path to agent context directory. */
   agentContextDir?: string;

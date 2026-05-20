@@ -4,7 +4,7 @@ import type { ModelConfig } from './config.js';
 
 describe('resolveModel', () => {
   const models: ModelConfig = {
-    default: 'openai/gpt-5.3-codex',
+    default: 'openai/gpt-5.5',
     architect: 'openai/gpt-5.4',
     chat: 'openai/gpt-5.4-mini',
   };
@@ -18,11 +18,11 @@ describe('resolveModel', () => {
   });
 
   it('falls back to default when no override exists', () => {
-    expect(resolveModel(models, 'unknown-type')).toBe('openai/gpt-5.3-codex');
+    expect(resolveModel(models, 'unknown-type')).toBe('openai/gpt-5.5');
   });
 
   it('falls back to default for empty string type', () => {
-    expect(resolveModel(models, '')).toBe('openai/gpt-5.3-codex');
+    expect(resolveModel(models, '')).toBe('openai/gpt-5.5');
   });
 });
 
@@ -39,7 +39,7 @@ describe('loadConfig — model resolution', () => {
   it('returns the OpenCode default model when OPENCODE_MODEL not set', () => {
     vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
-    expect(config.model).toBe('openai/gpt-5.3-codex');
+    expect(config.model).toBe('openai/gpt-5.5');
   });
 
   it('uses OPENCODE_MODEL env var when set', () => {
@@ -60,7 +60,7 @@ describe('loadConfig — model overrides via OPENCODE_MODELS', () => {
     vi.stubEnv('OPENCODE_MODELS', '');
     vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
-    expect(config.models.default).toBe('openai/gpt-5.3-codex');
+    expect(config.models.default).toBe('openai/gpt-5.5');
   });
 
   it('parses valid OPENCODE_MODELS JSON and sets per-type overrides', () => {
@@ -74,7 +74,7 @@ describe('loadConfig — model overrides via OPENCODE_MODELS', () => {
     vi.stubEnv('OPENCODE_MODELS', 'not-valid-json');
     vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
-    expect(config.models.default).toBe('openai/gpt-5.3-codex');
+    expect(config.models.default).toBe('openai/gpt-5.5');
   });
 });
 

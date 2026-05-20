@@ -37,7 +37,7 @@ export interface SetupConfig {
   WEBHOOK_SECRET: string;
   ADMIN_SECRET: string;
   DOMAIN: string;
-  /** OpenCode model id, e.g. "openai/gpt-5.3-codex" or "anthropic/claude-…". */
+  /** OpenCode model id, e.g. "openai/gpt-5.5" or "anthropic/claude-…". */
   OPENCODE_MODEL: string;
   /** Set when the chosen model uses an OpenAI-prefixed provider. */
   OPENAI_API_KEY?: string;
@@ -102,7 +102,7 @@ export function isOpenaiKey(s: string): boolean {
  * Default OpenCode model — kept aligned with `config.ts`'s `OPENCODE_MODEL`
  * default. Update both in lockstep when the canonical default changes.
  */
-export const DEFAULT_OPENCODE_MODEL = "openai/gpt-5.3-codex";
+export const DEFAULT_OPENCODE_MODEL = "openai/gpt-5.5";
 
 export function isSlackBotToken(s: string): boolean {
   return s.startsWith("xoxb-");

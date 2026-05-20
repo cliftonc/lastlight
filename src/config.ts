@@ -160,7 +160,7 @@ export function loadConfig(): LastLightConfig {
     sandboxDir: join(stateDir, "sandboxes"),
     dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db"),
     workflowDir: resolve(process.env.WORKFLOW_DIR || "./workflows"),
-    model: process.env.OPENCODE_MODEL || "openai/gpt-5.3-codex",
+    model: process.env.OPENCODE_MODEL || "openai/gpt-5.5",
     models: parseModelConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
     opencodeServePort: parseInt(process.env.OPENCODE_SERVE_PORT || "4096", 10),
@@ -219,7 +219,7 @@ function parseApprovalGates(): Record<string, boolean> {
  * catch-all when no per-type override matches.
  */
 function parseModelConfig(): ModelConfig {
-  const defaultModel = process.env.OPENCODE_MODEL || "openai/gpt-5.3-codex";
+  const defaultModel = process.env.OPENCODE_MODEL || "openai/gpt-5.5";
   const config: ModelConfig = { default: defaultModel };
 
   const modelsEnv = process.env.OPENCODE_MODELS;

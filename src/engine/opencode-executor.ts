@@ -11,7 +11,7 @@ import {
 } from "./profiles.js";
 import { ClaudeJsonlShim, projectSlugForCwd } from "./opencode-shim.js";
 
-const DEFAULT_MODEL = "openai/gpt-5.3-codex";
+const DEFAULT_MODEL = "openai/gpt-5.5";
 
 /**
  * Cwd inside the sandbox container (matches `WORKSPACE_DIR` in

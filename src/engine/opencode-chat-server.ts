@@ -27,7 +27,7 @@ export interface OpencodeChatServerConfig {
   port: number;
   /** Working dir for the server process — where opencode.json is read. */
   workingDir: string;
-  /** Default model id, format `provider/model` (e.g. "openai/gpt-5.3-codex"). */
+  /** Default model id, format `provider/model` (e.g. "openai/gpt-5.5"). */
   defaultModel: string;
   /** Override the opencode binary path (CI/dev). Defaults to `OPENCODE_BIN` env var or `opencode`. */
   binary?: string;

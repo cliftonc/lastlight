@@ -10,7 +10,7 @@ phase-by-phase.
 ## Runtime
 
 OpenCode is provider-agnostic. The harness defaults to
-`openai/gpt-5.3-codex` and accepts any `provider/model` string OpenCode
+`openai/gpt-5.5` and accepts any `provider/model` string OpenCode
 supports (anthropic/…, openai/…, etc.). API credentials are read from
 `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` on the harness env; pick the
 provider that matches your `OPENCODE_MODEL`. No `claude` CLI, no Anthropic
@@ -244,7 +244,7 @@ Required:
 Models:
 
 - `OPENCODE_MODEL` — default model for sandbox + chat
-  (default: `openai/gpt-5.3-codex`)
+  (default: `openai/gpt-5.5`)
 - `OPENCODE_MODELS` — per-task overrides as JSON, e.g.
   `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}`.
   Keys match phase names or skill types.

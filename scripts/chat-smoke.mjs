@@ -3,7 +3,7 @@ import { OpencodeChatServer } from "../src/engine/opencode-chat-server.ts";
 const server = new OpencodeChatServer({
   port: 4097,
   workingDir: "/tmp/chat-smoke-wd",
-  defaultModel: "openai/gpt-5.3-codex",
+  defaultModel: "openai/gpt-5.5",
   binary: process.cwd() + "/node_modules/.bin/opencode",
   printLogs: process.env.LOGS === "1",
 });
