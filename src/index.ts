@@ -85,9 +85,9 @@ async function main() {
   writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
   console.log(`[config] MCP config written to: ${mcpConfigPath}`);
 
-  // Resolve the claude-home dir once — used by the chat shim writer and
+  // Resolve the opencode-home dir once — used by the chat shim writer and
   // the dashboard reader so they agree on the path.
-  const claudeHomeDir = resolve(process.env.CLAUDE_HOME_DIR || resolve(config.stateDir, "claude-home"));
+  const opencodeHomeDir = resolve(process.env.OPENCODE_HOME_DIR || resolve(config.stateDir, "opencode-home"));
 
   // Long-lived `opencode serve` process backing the chat skill. Its
   // working dir holds the per-process opencode.json (MCP servers) and
@@ -410,7 +410,7 @@ async function main() {
     mountAdmin(githubConnector.honoApp, db, {
       cronScheduler: cron,
       stateDir: config.stateDir,
-      sessionsDir: claudeHomeDir,
+      sessionsDir: opencodeHomeDir,
       adminPassword: process.env.ADMIN_PASSWORD ?? "",
       adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
       slackOAuthClientId: process.env.SLACK_OAUTH_CLIENT_ID,
@@ -576,7 +576,7 @@ async function main() {
           sessionManager,
           {
             chatServer,
-            claudeHomeDir,
+            opencodeHomeDir,
             mcpServerNames: config.githubApp ? ["github"] : [],
           },
           {

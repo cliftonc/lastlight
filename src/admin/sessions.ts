@@ -202,7 +202,7 @@ export function unwrapLine(raw: Record<string, unknown>): JsonlMessage[] {
 }
 
 /**
- * Which on-disk slice of `claude-home/projects` a SessionReader exposes.
+ * Which on-disk slice of `opencode-home/projects` a SessionReader exposes.
  *
  * - `sandbox`: every project dir EXCEPT `-app`. These are workflow runs that
  *   executed inside a per-task docker sandbox; they're what the "Sessions"
@@ -230,19 +230,19 @@ export interface SessionSource {
 }
 
 export class SessionReader implements SessionSource {
-  private claudeHomeDir: string;
+  private sessionsHomeDir: string;
   private scope: SessionReaderScope;
   private metaCache = new Map<string, { meta: SessionMeta; cachedAt: number }>();
   private static CACHE_TTL_MS = 10_000; // 10s cache for session metadata
 
-  constructor(claudeHomeDir: string, scope: SessionReaderScope = "sandbox") {
-    this.claudeHomeDir = claudeHomeDir;
+  constructor(sessionsHomeDir: string, scope: SessionReaderScope = "sandbox") {
+    this.sessionsHomeDir = sessionsHomeDir;
     this.scope = scope;
   }
 
   /** Find the project directories this reader is scoped to. See SessionReaderScope. */
   private projectDirs(): string[] {
-    const projectsDir = path.join(this.claudeHomeDir, "projects");
+    const projectsDir = path.join(this.sessionsHomeDir, "projects");
     try {
       return fs
         .readdirSync(projectsDir)

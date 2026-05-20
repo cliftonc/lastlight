@@ -78,7 +78,7 @@ export class DockerSandbox {
       : dataVolumeRaw;                  // named volume → pass through
 
     const volumes = [
-      `${dataMount}:/data`,                    // shared state (claude-home, sessions)
+      `${dataMount}:/data`,                    // shared state (opencode-home, sessions)
       `${worktreePath}:${WORKSPACE_DIR}`,      // task worktree
     ];
 

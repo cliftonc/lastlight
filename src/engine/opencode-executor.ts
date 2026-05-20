@@ -16,7 +16,7 @@ const DEFAULT_MODEL = "openai/gpt-5.3-codex";
 /**
  * Cwd inside the sandbox container (matches `WORKSPACE_DIR` in
  * `src/sandbox/docker.ts`). Surfaced here so the jsonl shim can pin the
- * right `claude-home/projects/<slug>/` dir, which the dashboard
+ * right `opencode-home/projects/<slug>/` dir, which the dashboard
  * SessionReader scans by directory name.
  */
 const SANDBOX_WORKSPACE_DIR = "/home/agent/workspace";
@@ -243,14 +243,14 @@ async function executeSandboxed(
   let notifiedSessionId = false;
 
   // Dashboard live-tail shim: as we receive OpenCode events, write a
-  // parallel Claude-SDK envelope jsonl into the claude-home projects dir
+  // parallel Claude-SDK envelope jsonl into the opencode-home projects dir
   // the SessionReader already scans. See Phase 2 of the OpenCode fork plan.
   const stateDir = config.stateDir || resolve("data");
-  const claudeHomeDir = process.env.CLAUDE_HOME_DIR
-    ? resolve(process.env.CLAUDE_HOME_DIR)
-    : resolve(stateDir, "claude-home");
+  const homeDir = process.env.OPENCODE_HOME_DIR
+    ? resolve(process.env.OPENCODE_HOME_DIR)
+    : resolve(stateDir, "opencode-home");
   const shim = new ClaudeJsonlShim({
-    claudeHomeDir,
+    homeDir,
     projectSlug: projectSlugForCwd(SANDBOX_WORKSPACE_DIR),
     mcpServerNames: MCP_SERVER_NAMES,
     model: config.model,
@@ -384,12 +384,12 @@ async function executeDirect(
   // Same dashboard live-tail shim as the sandbox path. The cwd here is the
   // harness process working dir, so the project slug differs.
   const stateDir = config.stateDir || resolve("data");
-  const claudeHomeDir = process.env.CLAUDE_HOME_DIR
-    ? resolve(process.env.CLAUDE_HOME_DIR)
-    : resolve(stateDir, "claude-home");
+  const homeDir = process.env.OPENCODE_HOME_DIR
+    ? resolve(process.env.OPENCODE_HOME_DIR)
+    : resolve(stateDir, "opencode-home");
   const directCwd = config.cwd || process.cwd();
   const shim = new ClaudeJsonlShim({
-    claudeHomeDir,
+    homeDir,
     projectSlug: projectSlugForCwd(directCwd),
     mcpServerNames: MCP_SERVER_NAMES,
     model,

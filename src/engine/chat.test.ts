@@ -51,7 +51,7 @@ describe("handleChatMessage", () => {
   });
 
   const baseDeps = () => ({
-    claudeHomeDir: dir,
+    opencodeHomeDir: dir,
     mcpServerNames: ["github"],
   });
 

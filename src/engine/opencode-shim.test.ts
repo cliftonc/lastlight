@@ -110,7 +110,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("writes file under claudeHomeDir/projects/<slug>/<sessionId>.jsonl", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       model: "openai/gpt-5.3-codex",
@@ -124,7 +124,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("emits the initial user prompt as the first envelope", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "run a triage",
@@ -139,7 +139,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("translates `text` events to assistant text envelopes", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       model: "openai/gpt-5.3-codex",
@@ -161,7 +161,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("prepends mcp_ to MCP server tool names but leaves built-ins alone", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",
@@ -186,7 +186,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("emits tool_result envelopes for completed AND error tool calls", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",
@@ -210,7 +210,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("translates error events to assistant isApiErrorMessage envelopes", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",
@@ -224,7 +224,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("step_start / step_finish / reasoning are no-ops", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",
@@ -242,7 +242,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("finalize() appends a `result` envelope", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",
@@ -272,7 +272,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("ignores events with no sessionID", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",
@@ -284,7 +284,7 @@ describe("ClaudeJsonlShim", () => {
 
   it("emits envelopes in feed order", async () => {
     const shim = new ClaudeJsonlShim({
-      claudeHomeDir: dir,
+      homeDir: dir,
       projectSlug: "-home-agent-workspace",
       mcpServerNames: ["github"],
       initialPrompt: "p",

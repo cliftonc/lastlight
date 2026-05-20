@@ -104,7 +104,7 @@ export interface ChatResult {
 export interface HandleChatMessageDeps {
   chatServer: OpencodeChatServer;
   /** Where to write the dashboard-shim jsonl. */
-  claudeHomeDir: string;
+  opencodeHomeDir: string;
   /**
    * MCP server names — passed to the shim so `<server>_<tool>` tool
    * names get the `mcp_` prefix the dashboard classifier expects.
@@ -161,11 +161,11 @@ export async function handleChatMessage(
     const result = chatResultFromTurn(turn, message, startTime);
 
     // Dashboard live-tail shim. ChatSessionReader reads from
-    // `claude-home/projects/-app/<sessionId>.jsonl` directly — match that
+    // `opencode-home/projects/-app/<sessionId>.jsonl` directly — match that
     // hardcoded slug rather than deriving from cwd.
     try {
       await writeChatShim({
-        claudeHomeDir: deps.claudeHomeDir,
+        opencodeHomeDir: deps.opencodeHomeDir,
         mcpServerNames: deps.mcpServerNames ?? [],
         model: result.modelId,
         prompt: message,
@@ -235,13 +235,13 @@ function countSteps(parts: Array<Record<string, unknown>>): number {
 
 /**
  * Build a Phase 2-style envelope jsonl from a chat turn and append it
- * under `claude-home/projects/-app/<sessionId>.jsonl`. Re-uses
+ * under `opencode-home/projects/-app/<sessionId>.jsonl`. Re-uses
  * `ClaudeJsonlShim` but feeds OpenCode-shaped events derived from the
  * blocking turn response (rather than from a live `run --format json`
  * stream).
  */
 async function writeChatShim(opts: {
-  claudeHomeDir: string;
+  opencodeHomeDir: string;
   mcpServerNames: string[];
   model: string;
   prompt: string;
@@ -250,7 +250,7 @@ async function writeChatShim(opts: {
   durationMs: number;
 }): Promise<void> {
   const shim = new ClaudeJsonlShim({
-    claudeHomeDir: opts.claudeHomeDir,
+    homeDir: opts.opencodeHomeDir,
     projectSlug: "-app", // ChatSessionReader hardcodes this slug
     mcpServerNames: opts.mcpServerNames,
     model: opts.model,

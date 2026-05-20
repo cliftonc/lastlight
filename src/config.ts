@@ -160,7 +160,7 @@ export function loadConfig(): LastLightConfig {
     sandboxDir: join(stateDir, "sandboxes"),
     dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db"),
     workflowDir: resolve(process.env.WORKFLOW_DIR || "./workflows"),
-    model: process.env.CLAUDE_MODEL || "openai/gpt-5.3-codex",
+    model: process.env.OPENCODE_MODEL || "openai/gpt-5.3-codex",
     models: parseModelConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
     opencodeServePort: parseInt(process.env.OPENCODE_SERVE_PORT || "4096", 10),
@@ -209,7 +209,7 @@ function parseApprovalGates(): Record<string, boolean> {
 }
 
 /**
- * Parse per-task-type model config from CLAUDE_MODELS env var.
+ * Parse per-task-type model config from OPENCODE_MODELS env var.
  *
  * Format: JSON object mapping session types to OpenCode model IDs (provider/model).
  * Example: {"architect":"openai/gpt-5.4","chat":"openai/gpt-5.4-mini"}
@@ -217,15 +217,12 @@ function parseApprovalGates(): Record<string, boolean> {
  * Session types are arbitrary — they match the `name:` of any phase in your
  * workflows (or any key referenced by `resolveModel`). Use `default` as the
  * catch-all when no per-type override matches.
- *
- * The env var names (CLAUDE_MODEL / CLAUDE_MODELS) are kept on the fork branch
- * for compatibility; they get renamed to OPENCODE_MODEL(S) in Phase 7.
  */
 function parseModelConfig(): ModelConfig {
-  const defaultModel = process.env.CLAUDE_MODEL || "openai/gpt-5.3-codex";
+  const defaultModel = process.env.OPENCODE_MODEL || "openai/gpt-5.3-codex";
   const config: ModelConfig = { default: defaultModel };
 
-  const modelsEnv = process.env.CLAUDE_MODELS;
+  const modelsEnv = process.env.OPENCODE_MODELS;
   if (modelsEnv) {
     try {
       const parsed = JSON.parse(modelsEnv);
@@ -237,7 +234,7 @@ function parseModelConfig(): ModelConfig {
         }
       }
     } catch (err: any) {
-      console.warn(`[config] Invalid CLAUDE_MODELS JSON: ${err.message}`);
+      console.warn(`[config] Invalid OPENCODE_MODELS JSON: ${err.message}`);
     }
   }
 

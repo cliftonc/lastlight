@@ -36,43 +36,43 @@ describe('loadConfig — model resolution', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it('returns the OpenCode default model when CLAUDE_MODEL not set', () => {
-    vi.stubEnv('CLAUDE_MODEL', '');
+  it('returns the OpenCode default model when OPENCODE_MODEL not set', () => {
+    vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
     expect(config.model).toBe('openai/gpt-5.3-codex');
   });
 
-  it('uses CLAUDE_MODEL env var when set', () => {
-    vi.stubEnv('CLAUDE_MODEL', 'openai/gpt-5.4');
+  it('uses OPENCODE_MODEL env var when set', () => {
+    vi.stubEnv('OPENCODE_MODEL', 'openai/gpt-5.4');
     const config = loadConfig();
     expect(config.model).toBe('openai/gpt-5.4');
   });
 });
 
-describe('loadConfig — model overrides via CLAUDE_MODELS', () => {
+describe('loadConfig — model overrides via OPENCODE_MODELS', () => {
   beforeEach(() => {
     vi.stubEnv('GITHUB_APP_ID', '');
     vi.stubEnv('SLACK_BOT_TOKEN', '');
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it('returns default-only model config when CLAUDE_MODELS not set', () => {
-    vi.stubEnv('CLAUDE_MODELS', '');
-    vi.stubEnv('CLAUDE_MODEL', '');
+  it('returns default-only model config when OPENCODE_MODELS not set', () => {
+    vi.stubEnv('OPENCODE_MODELS', '');
+    vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
     expect(config.models.default).toBe('openai/gpt-5.3-codex');
   });
 
-  it('parses valid CLAUDE_MODELS JSON and sets per-type overrides', () => {
-    vi.stubEnv('CLAUDE_MODELS', JSON.stringify({ architect: 'openai/gpt-5.4', chat: 'openai/gpt-5.4-mini' }));
+  it('parses valid OPENCODE_MODELS JSON and sets per-type overrides', () => {
+    vi.stubEnv('OPENCODE_MODELS', JSON.stringify({ architect: 'openai/gpt-5.4', chat: 'openai/gpt-5.4-mini' }));
     const config = loadConfig();
     expect(config.models.architect).toBe('openai/gpt-5.4');
     expect(config.models.chat).toBe('openai/gpt-5.4-mini');
   });
 
-  it('gracefully handles invalid CLAUDE_MODELS JSON and falls back to defaults', () => {
-    vi.stubEnv('CLAUDE_MODELS', 'not-valid-json');
-    vi.stubEnv('CLAUDE_MODEL', '');
+  it('gracefully handles invalid OPENCODE_MODELS JSON and falls back to defaults', () => {
+    vi.stubEnv('OPENCODE_MODELS', 'not-valid-json');
+    vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
     expect(config.models.default).toBe('openai/gpt-5.3-codex');
   });

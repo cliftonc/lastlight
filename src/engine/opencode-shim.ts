@@ -31,8 +31,8 @@ import path from "node:path";
  * matches one of the configured MCP server names.
  */
 export interface ClaudeJsonlShimOptions {
-  /** Root claude-home directory (the dir that contains `projects/`). */
-  claudeHomeDir: string;
+  /** Root session-home directory (the dir that contains `projects/`). */
+  homeDir: string;
   /** Project-dir slug, e.g. "-home-agent-workspace". */
   projectSlug: string;
   /** Names of MCP servers as configured in `opencode.json`. */
@@ -85,7 +85,7 @@ export class ClaudeJsonlShim {
     if (!sessionId) return;
 
     if (!this.filePath) {
-      const dir = path.join(this.opts.claudeHomeDir, "projects", this.opts.projectSlug);
+      const dir = path.join(this.opts.homeDir, "projects", this.opts.projectSlug);
       this.filePath = path.join(dir, `${sessionId}.jsonl`);
     }
 
@@ -265,7 +265,7 @@ function safeStringify(v: unknown): string {
 
 /**
  * Convert a filesystem cwd to the Claude-SDK-convention project-dir
- * slug used under `claude-home/projects/`. The slug is the absolute
+ * slug used under `opencode-home/projects/`. The slug is the absolute
  * path with `/` replaced by `-`.
  *
  *   "/home/agent/workspace" → "-home-agent-workspace"
