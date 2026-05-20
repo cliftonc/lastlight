@@ -188,6 +188,12 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
     issueDir,
     bootstrapLabel: opts.bootstrapLabel || "lastlight:bootstrap",
     contextSnapshot: "",
+    // Preserve the original prePopulateBranch so a resumed run still
+    // gets its workspace pre-cloned (matters for pr-fix re-entry after
+    // an approval gate, where the branch was resolved at first dispatch).
+    prePopulateBranch: typeof stored.prePopulateBranch === "string"
+      ? stored.prePopulateBranch
+      : undefined,
     models: opts.models as unknown as Record<string, unknown>,
     triggerIdOverride: isSlack ? run.triggerId : undefined,
   };

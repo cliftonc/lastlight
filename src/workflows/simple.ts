@@ -246,6 +246,11 @@ export async function runSimpleWorkflow(
     issueDir,
     bootstrapLabel,
     contextSnapshot,
+    // Forwarded to the executor (via gitSandboxAccessForWorkflow) so the
+    // harness pre-clones this branch into the sandbox workspace before
+    // the agent starts. Stored on the workflow_run row above; also lives
+    // on ctx so the runner can read it without an extra DB lookup.
+    prePopulateBranch: request.prePopulateBranch,
     models: models as unknown as Record<string, unknown>,
     // Slack-initiated runs need the runner to pause/resume on the thread id,
     // not on owner/repo#N. Passing the override through here keeps the
