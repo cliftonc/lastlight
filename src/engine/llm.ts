@@ -5,10 +5,11 @@
  *
  *   "anthropic/claude-…" or unprefixed "claude-…"  →  Anthropic Messages API
  *   "openai/gpt-…"      or unprefixed "gpt-…"     →  OpenAI Chat Completions API
+ *   "openrouter/vendor/model"                     →  OpenRouter Chat Completions
  *
- * Scope: this helper supports Anthropic and OpenAI only. OpenCode workflow
- * phases are provider-agnostic (whatever OpenCode supports), but the
- * screener/classifier path is not — an explicit prefix like
+ * Scope: this helper supports Anthropic, OpenAI, and OpenRouter. OpenCode
+ * workflow phases are provider-agnostic (whatever OpenCode supports), but
+ * the screener/classifier path is not — an explicit prefix like
  * `mistral/large` will throw rather than silently route to OpenAI with
  * the wrong model id. Bare ids (no slash) still fall back to OpenAI to
  * keep "gpt-5.5"-style shorthands working.
@@ -37,10 +38,11 @@ export async function callLlm(
   opts: CallLlmOptions = {},
 ): Promise<string> {
   const { provider, modelId } = resolveProvider(model);
-  const call = (signal: AbortSignal) =>
-    provider === "anthropic"
-      ? callAnthropic(modelId, systemPrompt, userPrompt, opts, signal)
-      : callOpenai(modelId, systemPrompt, userPrompt, opts, signal);
+  const call = (signal: AbortSignal) => {
+    if (provider === "anthropic") return callAnthropic(modelId, systemPrompt, userPrompt, opts, signal);
+    if (provider === "openrouter") return callOpenrouter(modelId, systemPrompt, userPrompt, opts, signal);
+    return callOpenai(modelId, systemPrompt, userPrompt, opts, signal);
+  };
   return withRetry(call, opts.timeoutMs ?? 30_000);
 }
 
@@ -78,7 +80,13 @@ async function withRetry(
  * Resolve the model id for a tiny one-shot helper call (classifier / screener).
  * Prefers explicit per-task overrides from OPENCODE_MODELS, then a small model
  * matching whichever provider API key is set — so the helpers work on an
- * OPENAI-only deployment without crashing on a hardcoded Anthropic id.
+ * OPENAI-only or OPENROUTER-only deployment without crashing on a hardcoded
+ * Anthropic id.
+ *
+ * Priority when multiple keys are set: anthropic > openai > openrouter.
+ * Anthropic/OpenAI go to the source; OpenRouter is only chosen when it's
+ * the *only* configured key, to avoid paying OpenRouter's markup when a
+ * direct provider key is already available.
  */
 export function defaultFastModel(taskType?: string): string {
   if (taskType) {
@@ -87,9 +95,13 @@ export function defaultFastModel(taskType?: string): string {
   }
   const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
   const hasOpenai = !!process.env.OPENAI_API_KEY;
-  if (hasAnthropic && !hasOpenai) return "anthropic/claude-haiku-4-5-20251001";
-  if (hasOpenai && !hasAnthropic) return "openai/gpt-5.4-mini";
-  return hasAnthropic ? "anthropic/claude-haiku-4-5-20251001" : "openai/gpt-5.4-mini";
+  const hasOpenrouter = !!process.env.OPENROUTER_API_KEY;
+  if (hasAnthropic) return "anthropic/claude-haiku-4-5-20251001";
+  if (hasOpenai) return "openai/gpt-5.4-mini";
+  if (hasOpenrouter) return "openrouter/google/gemini-2.5-flash";
+  // No keys set — fall back to the OpenAI default; callOpenai will then
+  // throw a clear "OPENAI_API_KEY not set" error at call time.
+  return "openai/gpt-5.4-mini";
 }
 
 function readOpencodeModelOverride(taskType: string): string | undefined {
@@ -104,17 +116,21 @@ function readOpencodeModelOverride(taskType: string): string | undefined {
   }
 }
 
-export function resolveProvider(model: string): { provider: "anthropic" | "openai"; modelId: string } {
+export function resolveProvider(model: string): { provider: "anthropic" | "openai" | "openrouter"; modelId: string } {
   const slash = model.indexOf("/");
   if (slash > 0) {
     const head = model.slice(0, slash).toLowerCase();
     const tail = model.slice(slash + 1);
     if (head === "anthropic") return { provider: "anthropic", modelId: tail };
     if (head === "openai") return { provider: "openai", modelId: tail };
+    // OpenRouter ids are nested: "openrouter/<vendor>/<model>". The
+    // OpenRouter API expects "<vendor>/<model>" in the body, which is
+    // exactly the tail after stripping our prefix.
+    if (head === "openrouter") return { provider: "openrouter", modelId: tail };
     // An explicit prefix we don't handle — fail loudly so the caller
     // notices instead of silently sending e.g. `mistral/large-latest`
     // as an OpenAI model id and getting a confusing 404.
-    throw new Error(`llm helper: unsupported provider prefix "${head}" (only "anthropic" and "openai" are supported)`);
+    throw new Error(`llm helper: unsupported provider prefix "${head}" (only "anthropic", "openai", and "openrouter" are supported)`);
   }
   // Unprefixed — guess from common model name shapes.
   const lower = model.toLowerCase();
@@ -185,6 +201,52 @@ async function callOpenai(
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`openai api ${res.status}: ${text}`);
+  }
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+/**
+ * OpenRouter speaks the OpenAI chat-completions schema but routes to many
+ * underlying providers, so we use `max_tokens` (the cross-provider field)
+ * instead of OpenAI's newer `max_completion_tokens` — the latter isn't
+ * forwarded to non-OpenAI backends.
+ *
+ * `HTTP-Referer` / `X-Title` are optional but OpenRouter recommends them
+ * for usage attribution on their dashboard; harmless when omitted.
+ */
+async function callOpenrouter(
+  modelId: string,
+  systemPrompt: string,
+  userPrompt: string,
+  opts: CallLlmOptions,
+  signal: AbortSignal,
+): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    signal,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+      "HTTP-Referer": "https://github.com/cliftonc/lastlight",
+      "X-Title": "Last Light",
+    },
+    body: JSON.stringify({
+      model: modelId,
+      max_tokens: opts.maxTokens ?? 256,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`openrouter api ${res.status}: ${text}`);
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;

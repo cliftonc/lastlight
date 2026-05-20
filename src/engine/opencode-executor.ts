@@ -104,6 +104,7 @@ export async function executeAgent(
   // mount auth.json instead (not handled here — see Phase 1 docs).
   if (process.env.OPENAI_API_KEY) env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   if (process.env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (process.env.OPENROUTER_API_KEY) env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
   // Pre-populate the workspace with the target branch when the workflow
   // declared one (currently used by review-style workflows that operate on

@@ -7,6 +7,7 @@ import {
   isPemFile,
   isAnthropicKey,
   isOpenaiKey,
+  isOpenrouterKey,
   isSlackBotToken,
   isSlackAppToken,
   buildEnvContent,
@@ -92,7 +93,7 @@ describe("isAnthropicKey", () => {
 });
 
 describe("isOpenaiKey", () => {
-  it("accepts sk- keys that aren't sk-ant-", () => {
+  it("accepts sk- keys that aren't sk-ant- or sk-or-", () => {
     expect(isOpenaiKey("sk-proj-abc123")).toBe(true);
     expect(isOpenaiKey("sk-abcdef")).toBe(true);
   });
@@ -101,9 +102,26 @@ describe("isOpenaiKey", () => {
     expect(isOpenaiKey("sk-ant-foo")).toBe(false);
   });
 
+  it("rejects sk-or- (openrouter) keys", () => {
+    expect(isOpenaiKey("sk-or-v1-foo")).toBe(false);
+  });
+
   it("rejects non-sk- inputs", () => {
     expect(isOpenaiKey("")).toBe(false);
     expect(isOpenaiKey("xoxb-foo")).toBe(false);
+  });
+});
+
+describe("isOpenrouterKey", () => {
+  it("accepts sk-or- keys", () => {
+    expect(isOpenrouterKey("sk-or-v1-abcdef")).toBe(true);
+    expect(isOpenrouterKey("sk-or-abc")).toBe(true);
+  });
+
+  it("rejects other key shapes", () => {
+    expect(isOpenrouterKey("sk-ant-foo")).toBe(false);
+    expect(isOpenrouterKey("sk-proj-foo")).toBe(false);
+    expect(isOpenrouterKey("")).toBe(false);
   });
 });
 
@@ -172,6 +190,20 @@ describe("buildEnvContent", () => {
     expect(content).toContain("OPENCODE_MODEL=anthropic/claude-sonnet-4-6-20251015");
     expect(content).toContain("ANTHROPIC_API_KEY=sk-ant-test");
     expect(content).not.toMatch(/^OPENAI_API_KEY=/m);
+  });
+
+  it("writes OPENROUTER_API_KEY only when an openrouter model is chosen", () => {
+    const config: SetupConfig = {
+      ...baseConfig,
+      OPENCODE_MODEL: "openrouter/anthropic/claude-sonnet-4.5",
+      OPENAI_API_KEY: undefined,
+      OPENROUTER_API_KEY: "sk-or-v1-test",
+    };
+    const content = buildEnvContent(config);
+    expect(content).toContain("OPENCODE_MODEL=openrouter/anthropic/claude-sonnet-4.5");
+    expect(content).toContain("OPENROUTER_API_KEY=sk-or-v1-test");
+    expect(content).not.toMatch(/^OPENAI_API_KEY=/m);
+    expect(content).not.toMatch(/^ANTHROPIC_API_KEY=/m);
   });
 
   it("includes optional ADMIN_PASSWORD when provided", () => {

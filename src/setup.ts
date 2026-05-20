@@ -43,6 +43,8 @@ export interface SetupConfig {
   OPENAI_API_KEY?: string;
   /** Set when the chosen model uses an Anthropic-prefixed provider. */
   ANTHROPIC_API_KEY?: string;
+  /** Set when the chosen model uses an OpenRouter-prefixed provider. */
+  OPENROUTER_API_KEY?: string;
   ADMIN_PASSWORD?: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_APP_TOKEN?: string;
@@ -95,7 +97,11 @@ export function isAnthropicKey(s: string): boolean {
 }
 
 export function isOpenaiKey(s: string): boolean {
-  return s.startsWith("sk-") && !s.startsWith("sk-ant-");
+  return s.startsWith("sk-") && !s.startsWith("sk-ant-") && !s.startsWith("sk-or-");
+}
+
+export function isOpenrouterKey(s: string): boolean {
+  return s.startsWith("sk-or-");
 }
 
 /**
@@ -132,13 +138,16 @@ export function buildEnvContent(config: SetupConfig): string {
     "",
     "# ── Model + provider API key ────────────────────────────────",
     `OPENCODE_MODEL=${config.OPENCODE_MODEL}`,
-    "# Set whichever matches your OPENCODE_MODEL (anthropic/… or openai/…).",
+    "# Set whichever matches your OPENCODE_MODEL (anthropic/…, openai/…, or openrouter/…).",
   ];
   if (config.OPENAI_API_KEY) {
     lines.push(`OPENAI_API_KEY=${config.OPENAI_API_KEY}`);
   }
   if (config.ANTHROPIC_API_KEY) {
     lines.push(`ANTHROPIC_API_KEY=${config.ANTHROPIC_API_KEY}`);
+  }
+  if (config.OPENROUTER_API_KEY) {
+    lines.push(`OPENROUTER_API_KEY=${config.OPENROUTER_API_KEY}`);
   }
   lines.push(
     "",
@@ -432,6 +441,7 @@ async function collectModelAndKey(): Promise<{
   model: string;
   openaiKey?: string;
   anthropicKey?: string;
+  openrouterKey?: string;
 }> {
   p.log.step(gold("Model provider"));
   p.log.info(
@@ -443,6 +453,8 @@ async function collectModelAndKey(): Promise<{
   const fallback = [
     DEFAULT_OPENCODE_MODEL,
     "anthropic/claude-sonnet-4-6-20251015",
+    "openrouter/google/gemini-2.5-pro",
+    "openrouter/anthropic/claude-sonnet-4.5",
   ];
   const catalog = discovered ?? fallback;
   // Surface the configured default at the top, then anything else opencode
@@ -501,12 +513,23 @@ async function collectModelAndKey(): Promise<{
         message: "OPENAI_API_KEY",
         placeholder: "sk-...",
         validate: (v) =>
-          v && isOpenaiKey(v) ? undefined : "Must start with sk- (and not sk-ant-)",
+          v && isOpenaiKey(v) ? undefined : "Must start with sk- (and not sk-ant- or sk-or-)",
       }),
     ) as string;
     return { model, openaiKey: key };
   }
-  // Unknown provider — prompt for either key. Validate that at least one is present.
+  if (provider === "openrouter") {
+    const key = required(
+      await p.text({
+        message: "OPENROUTER_API_KEY",
+        placeholder: "sk-or-v1-...",
+        validate: (v) =>
+          v && isOpenrouterKey(v) ? undefined : "Must start with sk-or-",
+      }),
+    ) as string;
+    return { model, openrouterKey: key };
+  }
+  // Unknown provider — prompt for any key and route by shape.
   p.log.warn(`Provider "${provider}" isn't auto-detected. Enter the API key your model needs.`);
   const key = required(
     await p.text({
@@ -514,9 +537,9 @@ async function collectModelAndKey(): Promise<{
       validate: (v) => (v && v.length > 0 ? undefined : "Enter a non-empty key."),
     }),
   ) as string;
-  return isAnthropicKey(key)
-    ? { model, anthropicKey: key }
-    : { model, openaiKey: key };
+  if (isAnthropicKey(key)) return { model, anthropicKey: key };
+  if (isOpenrouterKey(key)) return { model, openrouterKey: key };
+  return { model, openaiKey: key };
 }
 
 async function collectAdminPassword(): Promise<string | undefined> {
@@ -724,7 +747,7 @@ export async function runSetup(): Promise<void> {
   p.log.success("Secrets auto-generated " + dim("(WEBHOOK_SECRET + ADMIN_SECRET)"));
 
   const { domain, useCaddy } = await collectDomain();
-  const { model, openaiKey, anthropicKey } = await collectModelAndKey();
+  const { model, openaiKey, anthropicKey, openrouterKey } = await collectModelAndKey();
   const adminPassword = await collectAdminPassword();
   const { botToken, appToken, deliveryChannel, allowedUsers } = await collectSlack();
 
@@ -737,6 +760,7 @@ export async function runSetup(): Promise<void> {
     OPENCODE_MODEL: model,
     OPENAI_API_KEY: openaiKey,
     ANTHROPIC_API_KEY: anthropicKey,
+    OPENROUTER_API_KEY: openrouterKey,
     ADMIN_PASSWORD: adminPassword,
     SLACK_BOT_TOKEN: botToken,
     SLACK_APP_TOKEN: appToken,

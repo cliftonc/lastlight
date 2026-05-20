@@ -6,6 +6,12 @@ describe("resolveProvider", () => {
     expect(resolveProvider("anthropic/claude-haiku-4-5")).toEqual({ provider: "anthropic", modelId: "claude-haiku-4-5" });
     expect(resolveProvider("openai/gpt-4o-mini")).toEqual({ provider: "openai", modelId: "gpt-4o-mini" });
   });
+  it("keeps the nested vendor/model tail for openrouter ids", () => {
+    expect(resolveProvider("openrouter/anthropic/claude-sonnet-4.5"))
+      .toEqual({ provider: "openrouter", modelId: "anthropic/claude-sonnet-4.5" });
+    expect(resolveProvider("openrouter/google/gemini-2.5-flash"))
+      .toEqual({ provider: "openrouter", modelId: "google/gemini-2.5-flash" });
+  });
   it("infers from common naming for unprefixed model ids", () => {
     expect(resolveProvider("claude-3-5-haiku")).toEqual({ provider: "anthropic", modelId: "claude-3-5-haiku" });
     expect(resolveProvider("gpt-4o-mini")).toEqual({ provider: "openai", modelId: "gpt-4o-mini" });
@@ -32,6 +38,23 @@ describe("defaultFastModel", () => {
 
   it("picks an Anthropic model when only ANTHROPIC_API_KEY is set", () => {
     process.env.ANTHROPIC_API_KEY = "k";
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_MODELS;
+    expect(defaultFastModel()).toMatch(/^anthropic\//);
+  });
+
+  it("picks an OpenRouter model when only OPENROUTER_API_KEY is set", () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    process.env.OPENROUTER_API_KEY = "sk-or-k";
+    delete process.env.OPENCODE_MODELS;
+    expect(defaultFastModel()).toMatch(/^openrouter\//);
+  });
+
+  it("prefers Anthropic over OpenRouter when both are set (avoids markup)", () => {
+    process.env.ANTHROPIC_API_KEY = "k";
+    process.env.OPENROUTER_API_KEY = "sk-or-k";
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENCODE_MODELS;
     expect(defaultFastModel()).toMatch(/^anthropic\//);
@@ -65,6 +88,8 @@ describe("callLlm", () => {
     await expect(callLlm("anthropic/claude-haiku-4-5", "sys", "hi")).rejects.toThrow(/ANTHROPIC_API_KEY/);
     delete process.env.OPENAI_API_KEY;
     await expect(callLlm("openai/gpt-4o-mini", "sys", "hi")).rejects.toThrow(/OPENAI_API_KEY/);
+    delete process.env.OPENROUTER_API_KEY;
+    await expect(callLlm("openrouter/google/gemini-2.5-flash", "sys", "hi")).rejects.toThrow(/OPENROUTER_API_KEY/);
   });
 
   it("hits the Anthropic endpoint and extracts text from content blocks", async () => {
@@ -107,6 +132,33 @@ describe("callLlm", () => {
     expect(body.model).toBe("gpt-4o-mini");
     expect(body.max_completion_tokens).toBe(256);
     expect(body.max_tokens).toBeUndefined();
+    expect(body.messages).toEqual([
+      { role: "system", content: "sys" },
+      { role: "user", content: "user" },
+    ]);
+  });
+
+  it("hits the OpenRouter endpoint, sends the nested vendor/model tail, and uses max_tokens", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "routed" } }],
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const out = await callLlm("openrouter/anthropic/claude-sonnet-4.5", "sys", "user");
+    expect(out).toBe("routed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect((init as RequestInit).headers).toMatchObject({ authorization: "Bearer sk-or-test" });
+    const body = JSON.parse((init as RequestInit).body as string);
+    // The "openrouter/" prefix is stripped but the nested vendor/model tail
+    // is preserved verbatim — that's the id OpenRouter's API expects.
+    expect(body.model).toBe("anthropic/claude-sonnet-4.5");
+    // OpenRouter forwards to many providers — use the cross-provider field,
+    // not OpenAI's newer `max_completion_tokens`.
+    expect(body.max_tokens).toBe(256);
+    expect(body.max_completion_tokens).toBeUndefined();
     expect(body.messages).toEqual([
       { role: "system", content: "sys" },
       { role: "user", content: "user" },

@@ -11,10 +11,17 @@ phase-by-phase.
 
 OpenCode is provider-agnostic. The harness defaults to
 `openai/gpt-5.5` and accepts any `provider/model` string OpenCode
-supports (anthropic/…, openai/…, etc.). API credentials are read from
-`OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` on the harness env; pick the
-provider that matches your `OPENCODE_MODEL`. No `claude` CLI, no Anthropic
-SDK in the runtime path.
+supports (`anthropic/…`, `openai/…`, `openrouter/<vendor>/<model>`, etc.).
+API credentials are read from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+and/or `OPENROUTER_API_KEY` on the harness env; set whichever provider(s)
+match your `OPENCODE_MODEL` / `OPENCODE_MODELS`. No `claude` CLI, no
+Anthropic SDK in the runtime path.
+
+The cheap-helper path (`src/engine/llm.ts`, used by screener + classifier)
+bypasses OpenCode and dispatches directly to the same three providers.
+`defaultFastModel()` prefers Anthropic > OpenAI > OpenRouter when multiple
+keys are set — direct provider routes avoid OpenRouter's per-token markup
+when possible.
 
 Two execution surfaces:
 - **Sandbox** — `opencode run --format json` invoked per workflow phase
@@ -239,7 +246,9 @@ Required:
 
 - `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 - `WEBHOOK_SECRET` — must match the GitHub App webhook secret
-- One of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` matching your `OPENCODE_MODEL`
+- One of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`
+  matching your `OPENCODE_MODEL` (set multiple if `OPENCODE_MODELS` routes
+  phases to different providers)
 
 Models:
 
