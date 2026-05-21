@@ -1,38 +1,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveModel, loadConfig } from './config.js';
-import type { ModelConfig } from './config.js';
+import { resolveModel, resolveVariant, loadConfig } from './config.js';
+import type { ModelConfig, VariantConfig } from './config.js';
 
 describe('resolveModel', () => {
   const models: ModelConfig = {
-    default: 'claude-sonnet-4-6',
-    architect: 'claude-opus-4-6',
-    chat: 'claude-haiku-4-5-20251001',
+    default: 'openai/gpt-5.5',
+    architect: 'openai/gpt-5.4',
+    chat: 'openai/gpt-5.4-mini',
   };
 
   it('returns per-type override when present', () => {
-    expect(resolveModel(models, 'architect')).toBe('claude-opus-4-6');
+    expect(resolveModel(models, 'architect')).toBe('openai/gpt-5.4');
   });
 
   it('returns per-type override for chat', () => {
-    expect(resolveModel(models, 'chat')).toBe('claude-haiku-4-5-20251001');
+    expect(resolveModel(models, 'chat')).toBe('openai/gpt-5.4-mini');
   });
 
   it('falls back to default when no override exists', () => {
-    expect(resolveModel(models, 'unknown-type')).toBe('claude-sonnet-4-6');
+    expect(resolveModel(models, 'unknown-type')).toBe('openai/gpt-5.5');
   });
 
   it('falls back to default for empty string type', () => {
-    expect(resolveModel(models, '')).toBe('claude-sonnet-4-6');
+    expect(resolveModel(models, '')).toBe('openai/gpt-5.5');
   });
 });
 
 // For loadConfig tests we must ensure GITHUB_APP_ID is unset so the
 // function doesn't try to require companion GitHub App env vars.
-//
-// (Port resolution tests removed: loadConfig sources ./.env at call time
-// and unconditionally overrides empty stubbed env vars from disk, so any
-// dev machine that has WEBHOOK_PORT in its real .env makes the tests
-// flaky. The behaviour is exercised in dev anyway.)
 
 describe('loadConfig — model resolution', () => {
   beforeEach(() => {
@@ -41,45 +36,108 @@ describe('loadConfig — model resolution', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it('returns default model claude-sonnet-4-6 when CLAUDE_MODEL not set', () => {
-    vi.stubEnv('CLAUDE_MODEL', '');
+  it('returns the OpenCode default model when OPENCODE_MODEL not set', () => {
+    vi.stubEnv('OPENCODE_MODEL', '');
     const config = loadConfig();
-    expect(config.model).toBe('claude-sonnet-4-6');
+    expect(config.model).toBe('openai/gpt-5.5');
   });
 
-  it('uses CLAUDE_MODEL env var when set', () => {
-    vi.stubEnv('CLAUDE_MODEL', 'claude-opus-4-6');
+  it('uses OPENCODE_MODEL env var when set', () => {
+    vi.stubEnv('OPENCODE_MODEL', 'openai/gpt-5.4');
     const config = loadConfig();
-    expect(config.model).toBe('claude-opus-4-6');
+    expect(config.model).toBe('openai/gpt-5.4');
   });
 });
 
-describe('loadConfig — model overrides via CLAUDE_MODELS', () => {
+describe('resolveVariant', () => {
+  it('returns per-type override when present', () => {
+    const variants: VariantConfig = { default: 'medium', architect: 'high', triage: 'minimal' };
+    expect(resolveVariant(variants, 'architect')).toBe('high');
+    expect(resolveVariant(variants, 'triage')).toBe('minimal');
+  });
+
+  it('falls back to default when no override exists', () => {
+    const variants: VariantConfig = { default: 'medium', architect: 'high' };
+    expect(resolveVariant(variants, 'unknown')).toBe('medium');
+  });
+
+  it('returns undefined when neither override nor default is set', () => {
+    expect(resolveVariant({}, 'anything')).toBeUndefined();
+  });
+});
+
+describe('loadConfig — variant overrides via OPENCODE_VARIANTS', () => {
   beforeEach(() => {
     vi.stubEnv('GITHUB_APP_ID', '');
     vi.stubEnv('SLACK_BOT_TOKEN', '');
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it('returns default-only model config when CLAUDE_MODELS not set', () => {
-    vi.stubEnv('CLAUDE_MODELS', '');
-    vi.stubEnv('CLAUDE_MODEL', '');
+  it('returns an empty variants config when nothing is set', () => {
+    vi.stubEnv('OPENCODE_VARIANTS', '');
+    vi.stubEnv('OPENCODE_VARIANT', '');
     const config = loadConfig();
-    expect(config.models.default).toBe('claude-sonnet-4-6');
+    expect(config.variants).toEqual({});
   });
 
-  it('parses valid CLAUDE_MODELS JSON and sets per-type overrides', () => {
-    vi.stubEnv('CLAUDE_MODELS', JSON.stringify({ architect: 'claude-opus-4-6', chat: 'claude-haiku-4-5-20251001' }));
+  it('parses OPENCODE_VARIANTS JSON and exposes per-type entries', () => {
+    vi.stubEnv('OPENCODE_VARIANTS', JSON.stringify({ architect: 'high', reviewer: 'high', triage: 'minimal' }));
     const config = loadConfig();
-    expect(config.models.architect).toBe('claude-opus-4-6');
-    expect(config.models.chat).toBe('claude-haiku-4-5-20251001');
+    expect(config.variants.architect).toBe('high');
+    expect(config.variants.reviewer).toBe('high');
+    expect(config.variants.triage).toBe('minimal');
   });
 
-  it('gracefully handles invalid CLAUDE_MODELS JSON and falls back to defaults', () => {
-    vi.stubEnv('CLAUDE_MODELS', 'not-valid-json');
-    vi.stubEnv('CLAUDE_MODEL', '');
+  it('uses OPENCODE_VARIANT as the catch-all default', () => {
+    vi.stubEnv('OPENCODE_VARIANT', 'medium');
+    vi.stubEnv('OPENCODE_VARIANTS', '');
     const config = loadConfig();
-    expect(config.models.default).toBe('claude-sonnet-4-6');
+    expect(config.variants.default).toBe('medium');
+    expect(resolveVariant(config.variants, 'anything')).toBe('medium');
+  });
+
+  it('combines default + per-type, with per-type winning', () => {
+    vi.stubEnv('OPENCODE_VARIANT', 'medium');
+    vi.stubEnv('OPENCODE_VARIANTS', JSON.stringify({ architect: 'high' }));
+    const config = loadConfig();
+    expect(resolveVariant(config.variants, 'architect')).toBe('high');
+    expect(resolveVariant(config.variants, 'triage')).toBe('medium');
+  });
+
+  it('gracefully handles invalid OPENCODE_VARIANTS JSON', () => {
+    vi.stubEnv('OPENCODE_VARIANTS', 'not-json');
+    vi.stubEnv('OPENCODE_VARIANT', '');
+    const config = loadConfig();
+    expect(config.variants).toEqual({});
+  });
+});
+
+describe('loadConfig — model overrides via OPENCODE_MODELS', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('returns default-only model config when OPENCODE_MODELS not set', () => {
+    vi.stubEnv('OPENCODE_MODELS', '');
+    vi.stubEnv('OPENCODE_MODEL', '');
+    const config = loadConfig();
+    expect(config.models.default).toBe('openai/gpt-5.5');
+  });
+
+  it('parses valid OPENCODE_MODELS JSON and sets per-type overrides', () => {
+    vi.stubEnv('OPENCODE_MODELS', JSON.stringify({ architect: 'openai/gpt-5.4', chat: 'openai/gpt-5.4-mini' }));
+    const config = loadConfig();
+    expect(config.models.architect).toBe('openai/gpt-5.4');
+    expect(config.models.chat).toBe('openai/gpt-5.4-mini');
+  });
+
+  it('gracefully handles invalid OPENCODE_MODELS JSON and falls back to defaults', () => {
+    vi.stubEnv('OPENCODE_MODELS', 'not-valid-json');
+    vi.stubEnv('OPENCODE_MODEL', '');
+    const config = loadConfig();
+    expect(config.models.default).toBe('openai/gpt-5.5');
   });
 });
 

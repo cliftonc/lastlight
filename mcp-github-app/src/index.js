@@ -4,8 +4,51 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { execFileSync } from "child_process";
+import { mkdirSync, writeFileSync } from "fs";
+import { dirname, isAbsolute, join } from "path";
 import { GitHubAppAuth } from "./auth.js";
 import { GitHubClient } from "./github.js";
+
+/**
+ * Conservative shape check on a GitHub installation token. The credentials
+ * file contains a URL of the form `https://x-access-token:${token}@github.com`,
+ * so any `@`, `:`, `/`, or newline in the token would break URL parsing or
+ * inject extra entries. Real tokens are alphanumeric (plus `_`); this catches
+ * any future format change before we write a malformed file. Mirrors the
+ * assertion in `src/engine/git-auth.ts` and `deploy/sandbox-entrypoint.sh`.
+ */
+function assertSafeToken(token) {
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error("Refusing to embed a token containing characters outside [A-Za-z0-9_-] into git credentials file");
+  }
+}
+
+/**
+ * Path of the shared `git credential-store` credentials file. The sandbox
+ * entrypoint creates and owns this file; we rewrite it here when refreshing
+ * the token. Falls back to a per-process file when the env var isn't set
+ * (e.g. running outside the sandbox during tests). Whitespace in the path
+ * would break git's helper-arg splitting — assert defensively.
+ */
+function credentialsFilePath() {
+  const p = (process.env.LASTLIGHT_GIT_CREDENTIALS || "").trim()
+    || join(process.env.HOME || "/tmp", ".lastlight-git-credentials");
+  if (/\s/.test(p)) {
+    throw new Error(`LASTLIGHT_GIT_CREDENTIALS contains whitespace; git's helper-arg parsing would break: ${p}`);
+  }
+  return p;
+}
+
+/**
+ * Write the credentials file. Mode 600, single line, no shell anywhere.
+ */
+function writeCredentialsFile(token) {
+  assertSafeToken(token);
+  const credPath = credentialsFilePath();
+  mkdirSync(dirname(credPath), { recursive: true, mode: 0o700 });
+  writeFileSync(credPath, `https://x-access-token:${token}@github.com\n`, { mode: 0o600 });
+  return credPath;
+}
 
 // ── Config from environment ─────────────────────────────────────────
 
@@ -87,18 +130,35 @@ server.tool(
   async ({ owner, repo, branch, path: clonePath }) => {
     try {
       const token = await auth.getToken();
-      const dest = clonePath || repo;
-      const url = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+      // Resolve relative paths against the sandbox workspace, not the
+      // MCP server's inherited cwd. OpenCode spawns MCP tools with cwd
+      // `/tmp/opencode/<scratch>` which isn't writable by the agent user,
+      // so a bare `lastlight-pr51` would fail with EACCES.
+      const baseDir = process.env.LASTLIGHT_WORKSPACE || process.cwd();
+      const requested = clonePath || repo;
+      const dest = isAbsolute(requested) ? requested : join(baseDir, requested);
+
+      // Refresh the shared credentials file with the freshly-minted token,
+      // and point this clone's repo-local helper at the same file. No shell
+      // interp anywhere — `store --file=<path>` is argv-split by git, and
+      // the path has no whitespace (asserted in credentialsFilePath).
+      const credPath = writeCredentialsFile(token);
+      const url = `https://github.com/${owner}/${repo}.git`;
 
       const branchArgs = branch ? ["--branch", branch] : [];
       execFileSync("git", ["clone", ...branchArgs, url, dest], {
         stdio: "pipe",
         timeout: 120_000,
+        // System-level credential.helper from sandbox-entrypoint already
+        // covers this clone, but pass GIT_TERMINAL_PROMPT=0 so a missing
+        // helper fails fast instead of hanging on a TTY prompt.
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
 
-      // Configure credential helper so push/pull get fresh tokens
-      const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token}"; }; f`;
-      execFileSync("git", ["-C", dest, "config", "credential.helper", credHelper], { stdio: "pipe" });
+      // Pin a repo-local helper too, so this clone keeps working even if a
+      // later process clears the system config (e.g. CI scripts that
+      // `git config --system --unset-all`).
+      execFileSync("git", ["-C", dest, "config", "credential.helper", `store --file=${credPath}`], { stdio: "pipe" });
 
       // Set bot identity for commits
       execFileSync("git", ["-C", dest, "config", "user.name", "last-light[bot]"], { stdio: "pipe" });
@@ -107,6 +167,7 @@ server.tool(
       return jsonResult({
         cloned: `${owner}/${repo}`,
         path: dest,
+        credentials_file: credPath,
         branch: branch || "(default)",
         expires_at: auth.expiresAt?.toISOString(),
       });
@@ -125,11 +186,16 @@ server.tool(
   async ({ path: repoPath }) => {
     try {
       const token = await auth.getToken();
-      const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token}"; }; f`;
-      execFileSync("git", ["-C", repoPath, "config", "credential.helper", credHelper], { stdio: "pipe" });
+      // Re-write the shared credentials file with the fresh token. The
+      // existing credential.helper config (system-wide from
+      // sandbox-entrypoint, plus repo-local from clone_repo) already
+      // points at this path, so updating the file body is enough — no
+      // git config changes required.
+      const credPath = writeCredentialsFile(token);
       return jsonResult({
         refreshed: true,
         path: repoPath,
+        credentials_file: credPath,
         expires_at: auth.expiresAt?.toISOString(),
       });
     } catch (e) {
@@ -432,6 +498,22 @@ server.tool(
   { owner: z.string(), repo: z.string(), pull_number: z.number() },
   async ({ owner, repo, pull_number }) =>
     run(() => gh.getPullRequestDiff(owner, repo, pull_number))
+);
+
+server.tool(
+  "list_pull_request_reviews",
+  "List submitted reviews on a pull request (each with state APPROVED/CHANGES_REQUESTED/COMMENTED, reviewer login, body, and commit SHA). Use to check whether the bot has already reviewed this PR, and to learn what prior reviewers flagged.",
+  { owner: z.string(), repo: z.string(), pull_number: z.number() },
+  async ({ owner, repo, pull_number }) =>
+    run(() => gh.listPullRequestReviews(owner, repo, pull_number))
+);
+
+server.tool(
+  "list_pull_request_review_comments",
+  "List line-level review comments on a pull request (each with path, line, body, commit_id, reviewer login). Distinct from issue comments — these are anchored to specific diff lines. Use to avoid duplicating an in-line nit a prior reviewer already raised.",
+  { owner: z.string(), repo: z.string(), pull_number: z.number() },
+  async ({ owner, repo, pull_number }) =>
+    run(() => gh.listPullRequestReviewComments(owner, repo, pull_number))
 );
 
 server.tool(

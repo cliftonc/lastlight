@@ -22,13 +22,13 @@ Git is pre-configured by the harness. Clone, push, pull, and fetch work natively
 git clone https://github.com/owner/repo.git
 ```
 
-If auth fails after ~1 hour, call `refresh_git_auth` MCP tool with the repo path.
+If auth fails after ~1 hour, call `github_refresh_git_auth` MCP tool with the repo path.
 
 ## Phase Guidelines
 
 ### Phase 0: Context Assembly
-- Read issue context via MCP tools (get_issue, list_issue_comments)
-- Clone the repo via `clone_repo` MCP tool
+- Read issue context via MCP tools (github_get_issue, github_list_issue_comments)
+- Clone the repo via `github_clone_repo` MCP tool
 - Check for existing branch: `git branch -a --list '*lastlight/{issue-number}*'`
 - If branch exists, read `.lastlight/issue-{N}/status.md` to resume
 - Read repo docs: CLAUDE.md, AGENTS.md, CONTRIBUTING.md
@@ -63,7 +63,7 @@ If auth fails after ~1 hour, call `refresh_git_auth` MCP tool with the repo path
 - Re-run reviewer after each fix
 
 ### Phase 5: Create PR
-- Use `create_pull_request` MCP tool
+- Use `github_create_pull_request` MCP tool
 - Link to tracking issue with "Closes #N"
 - Include links to plan, summary, and verdict files on the branch
 - Post PR link as comment on the tracking issue
@@ -92,8 +92,8 @@ Update after each phase transition. Commit + push alongside phase artifacts.
 ## Tool Usage
 
 - **GitHub API** (comments, labels, PRs, issues): use MCP tools
-- **Reading repo files**: clone once, read locally. Never use get_file_contents for bulk reads.
-- **Git auth**: pre-configured by harness. Just `git clone`. Call `refresh_git_auth` if auth expires.
+- **Reading repo files**: clone once, read locally. Never use github_get_file_contents for bulk reads.
+- **Git auth**: pre-configured by harness. Just `git clone`. Call `github_refresh_git_auth` if auth expires.
 - **Suppress noise**: `git clone --quiet`, `git push --quiet`, `CI=true npm install`
 
 ## Always Ignore

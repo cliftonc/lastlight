@@ -88,11 +88,11 @@ export interface ExecutionRecord {
   turns?: number;
   durationMs?: number;
   /**
-   * Agent SDK session id captured from the stream-json `system/init` line.
+   * Runtime session id (OpenCode `ses_…`) captured from the event stream.
    * Used by the dashboard to look up the session log for a given phase.
    */
   sessionId?: string;
-  /** Total USD cost reported by Claude on the final result message. */
+  /** Total USD cost reported by the runtime on the final step. Zero under OAuth/subscription auth. */
   costUsd?: number;
   /** Fresh input tokens (no cache hit). */
   inputTokens?: number;
@@ -142,21 +142,6 @@ export class StateDb {
         error TEXT,
         turns INTEGER,
         duration_ms INTEGER
-      );
-
-      CREATE TABLE IF NOT EXISTS rate_limits (
-        resource TEXT PRIMARY KEY,
-        remaining INTEGER,
-        reset_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS system_status (
-        component TEXT PRIMARY KEY,
-        state TEXT NOT NULL,
-        reason TEXT,
-        since TEXT NOT NULL,
-        updated_at TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_executions_trigger ON executions(trigger_type, trigger_id);
@@ -242,9 +227,9 @@ export class StateDb {
       // Column already exists — ignore
     }
 
-    // Per-execution Claude usage metrics, captured from the stream-json
-    // result message. Lets the dashboard show cost / tokens per phase and
-    // lets us aggregate spend later. All additive, safe on existing DBs.
+    // Per-execution runtime usage metrics, captured from the OpenCode
+    // step_finish events. Lets the dashboard show cost / tokens per phase
+    // and lets us aggregate spend later. All additive, safe on existing DBs.
     for (const col of [
       "cost_usd REAL",
       "input_tokens INTEGER",
@@ -589,68 +574,6 @@ export class StateDb {
       else break;
     }
     return count;
-  }
-
-  /** Update rate limit state */
-  updateRateLimit(resource: string, remaining: number, resetAt: string): void {
-    this.db.prepare(`
-      INSERT INTO rate_limits (resource, remaining, reset_at, updated_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(resource) DO UPDATE SET remaining = ?, reset_at = ?, updated_at = ?
-    `).run(resource, remaining, resetAt, new Date().toISOString(), remaining, resetAt, new Date().toISOString());
-  }
-
-  /** Get all rate limit records */
-  getRateLimits(): Array<{ resource: string; remaining: number; reset_at: string; updated_at: string }> {
-    return this.db.prepare(`
-      SELECT resource, remaining, reset_at, updated_at FROM rate_limits
-      ORDER BY resource
-    `).all() as Array<{ resource: string; remaining: number; reset_at: string; updated_at: string }>;
-  }
-
-  // ── System status (component health tracking) ──
-
-  /**
-   * Get the current state of a system component.
-   * Returns null if the component has never reported.
-   */
-  getSystemStatus(component: string): { state: string; reason: string | null; since: string; updated_at: string } | null {
-    const row = this.db.prepare(`
-      SELECT state, reason, since, updated_at FROM system_status WHERE component = ?
-    `).get(component) as { state: string; reason: string | null; since: string; updated_at: string } | undefined;
-    return row || null;
-  }
-
-  /**
-   * Set the state of a system component. If the new state differs from the
-   * current state, updates `since` to now (transition timestamp). Returns
-   * true on transition (state changed), false on refresh (state unchanged).
-   */
-  setSystemStatus(component: string, state: string, reason?: string): boolean {
-    const now = new Date().toISOString();
-    const existing = this.getSystemStatus(component);
-    const transitioned = !existing || existing.state !== state;
-    const since = transitioned ? now : existing!.since;
-
-    this.db.prepare(`
-      INSERT INTO system_status (component, state, reason, since, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(component) DO UPDATE SET
-        state = excluded.state,
-        reason = excluded.reason,
-        since = excluded.since,
-        updated_at = excluded.updated_at
-    `).run(component, state, reason || null, since, now);
-
-    return transitioned;
-  }
-
-  /** List all known component statuses. */
-  listSystemStatus(): Array<{ component: string; state: string; reason: string | null; since: string; updated_at: string }> {
-    return this.db.prepare(`
-      SELECT component, state, reason, since, updated_at FROM system_status
-      ORDER BY component
-    `).all() as Array<{ component: string; state: string; reason: string | null; since: string; updated_at: string }>;
   }
 
   /** Get all executions with pagination */

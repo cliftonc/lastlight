@@ -24,7 +24,7 @@ for pem in "$SECRETS"/*.pem; do
 done
 
 # Ensure state directory structure exists and is owned by lastlight
-mkdir -p "$STATE_DIR"/{sessions,logs,sandboxes,secrets,claude-home}
+mkdir -p "$STATE_DIR"/{sessions,logs,sandboxes,secrets,opencode-home}
 chown -R lastlight:lastlight "$STATE_DIR"
 
 # Copy PEM to the data volume so sandbox containers can access it via shared volume.
@@ -42,13 +42,11 @@ for pem in "$SECRETS"/*.pem; do
   fi
 done
 
-# Persist Claude auth and sessions via the state volume
-# This means `docker exec claude login` survives container restarts
-mkdir -p "$STATE_DIR/claude-home"
-# Remove the dir created by the installer, replace with symlink to volume
-CLAUDE_HOME="${HOME:-/home/lastlight}/.claude"
-rm -rf "$CLAUDE_HOME"
-ln -sfn "$STATE_DIR/claude-home" "$CLAUDE_HOME"
+# Ensure the opencode-home dir exists — harness writes shim envelope jsonl
+# files here (per chat session + per sandbox session). Lives on the state
+# volume so the dashboard's SessionReader sees both fresh and historical runs
+# across harness restarts.
+mkdir -p "$STATE_DIR/opencode-home"
 
 # Source .env if available
 if [ -f "$APP_DIR/.env" ]; then
@@ -64,5 +62,5 @@ if [ -S /var/run/docker.sock ]; then
 fi
 
 echo "Starting Last Light (state: $STATE_DIR)..."
-# Drop to non-root — Claude Code blocks bypassPermissions as root
+# Drop to non-root before exec'ing the harness.
 exec gosu lastlight "$@"

@@ -15,3 +15,4 @@ phases:
     label: Review
     skill: pr-review
     model: "{{models.review}}"
+    variant: "{{variants.review}}"

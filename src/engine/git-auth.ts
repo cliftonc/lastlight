@@ -1,7 +1,8 @@
 import { execFileSync } from "child_process";
 import { createSign } from "crypto";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { dirname, join, resolve } from "path";
 
 export type GitHubPermissionLevel = "read" | "write";
 
@@ -17,30 +18,85 @@ export type GitHubTokenPermissions = Partial<{
 }>;
 
 /**
- * When true, all `git config --global` writes are skipped. The harness still
- * mints installation tokens and passes them to sandboxes via the GIT_TOKEN env
- * var, but the host's `~/.gitconfig` is left untouched. Set
- * `LASTLIGHT_LOCAL_DEV=1` when running the harness on your dev machine so it
- * doesn't overwrite your personal git identity or credential helper.
+ * Whether to write the bot identity + credential helper to the user's
+ * GLOBAL git config (`~/.gitconfig`). Defaults to **false** — the harness
+ * still mints installation tokens and forwards them to sandboxes via the
+ * `GIT_TOKEN` env var, where `sandbox-entrypoint.sh` configures git at the
+ * container's `--system` scope. The host's `~/.gitconfig` is left
+ * untouched.
+ *
+ * Set `LASTLIGHT_WRITE_GLOBAL_GIT=1` only when the harness itself runs git
+ * commands against your real filesystem (e.g. a non-sandboxed direct
+ * execution path). Production Docker doesn't need this — the entrypoint
+ * sets `--system` config inside the container.
+ *
+ * `LASTLIGHT_LOCAL_DEV=1` is accepted as a compat alias for the inverse
+ * (legacy meaning: "skip global writes") and silently ignored; that is
+ * now the default. The flag is harmless if left in place but the
+ * intentional opt-in is `LASTLIGHT_WRITE_GLOBAL_GIT=1`.
  */
-function isLocalDev(): boolean {
-  return process.env.LASTLIGHT_LOCAL_DEV === "1";
+function shouldWriteGlobalGitConfig(): boolean {
+  return process.env.LASTLIGHT_WRITE_GLOBAL_GIT === "1";
 }
 
 /**
- * Configure git globally so that git clone/push/pull work with the
- * GitHub App credentials. Called once before spawning agents.
+ * Conservative shape check on a GitHub installation token. The credentials
+ * file we write contains a single URL of the form
+ * `https://x-access-token:${token}@github.com` — any `@`, `:`, `/`, or
+ * newline in the token would break URL parsing or inject extra entries.
+ * Real GitHub tokens are alphanumeric (plus `_`); this assertion catches
+ * any future format change before we write a malformed credentials file.
+ */
+function assertSafeToken(token: string): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error("Refusing to embed a token containing characters outside [A-Za-z0-9_-] into git credentials file");
+  }
+}
+
+/**
+ * Resolve the path of the shared credentials file used by `credential.helper
+ * store`. Honors `LASTLIGHT_GIT_CREDENTIALS` so the sandbox entrypoint and
+ * the MCP server can agree on a path; falls back to `~/.config/lastlight/
+ * git-credentials` for the opt-in host write.
  *
- * Sets up:
- * - A credential helper that returns a fresh installation token
- * - Bot identity (user.name, user.email) for commits
+ * Whitespace in the path would break git's helper-arg splitting (the
+ * `store --file=<path>` value is shell-split on spaces, not exec'd), so
+ * reject any whitespace defensively.
+ */
+function credentialsFilePath(): string {
+  const fromEnv = process.env.LASTLIGHT_GIT_CREDENTIALS?.trim();
+  const path = fromEnv || join(homedir(), ".config", "lastlight", "git-credentials");
+  if (/\s/.test(path)) {
+    throw new Error(`LASTLIGHT_GIT_CREDENTIALS contains whitespace; git's helper-arg parsing would break: ${path}`);
+  }
+  return path;
+}
+
+/**
+ * Write the credentials file consumed by `credential.helper store`. One
+ * line: `https://x-access-token:${token}@github.com`. File is mode 600,
+ * parent dir mode 700. Returns the absolute path.
+ */
+function writeCredentialsFile(token: string): string {
+  assertSafeToken(token);
+  const credPath = credentialsFilePath();
+  mkdirSync(dirname(credPath), { recursive: true, mode: 0o700 });
+  writeFileSync(credPath, `https://x-access-token:${token}@github.com\n`, { mode: 0o600 });
+  return credPath;
+}
+
+/**
+ * Mint a GitHub App installation token; OPTIONALLY also write the bot
+ * identity + credential helper to the user's global git config.
  *
- * Works in Docker, local dev, CI — no path assumptions.
+ * The default is to leave `~/.gitconfig` alone — every agent run happens
+ * inside a Docker sandbox where `sandbox-entrypoint.sh` configures git at
+ * the container's `--system` scope using the `GIT_TOKEN` env var the
+ * harness forwards. The harness process itself does not need git
+ * credentials for normal operation.
  *
- * In local dev mode (LASTLIGHT_LOCAL_DEV=1) the global git config is NOT
- * modified — the host's identity and credential helper are left alone. The
- * token is still returned and propagates to sandboxes via env, where the
- * sandbox-entrypoint.sh sets up its own per-container credential helper.
+ * Set `LASTLIGHT_WRITE_GLOBAL_GIT=1` only if you have a non-sandboxed
+ * code path that needs the harness user to be able to push as the bot.
  */
 export async function configureGitAuth(config: {
   appId: string;
@@ -57,33 +113,34 @@ export async function configureGitAuth(config: {
 }): Promise<{ token: string; expiresAt: string }> {
   const token = await getInstallationToken(config);
 
-  if (isLocalDev()) {
-    console.log(`[git-auth] LOCAL DEV MODE — skipping global git config writes. ` +
-      `Token is still passed to sandboxes via GIT_TOKEN env (expires: ${token.expiresAt}).`);
+  if (!shouldWriteGlobalGitConfig()) {
+    console.log(`[git-auth] Minted GitHub App token (expires: ${token.expiresAt}). ` +
+      `Global git config left untouched; sandboxes receive the token via GIT_TOKEN. ` +
+      `Set LASTLIGHT_WRITE_GLOBAL_GIT=1 to also write ~/.gitconfig.`);
     return token;
   }
 
-  // Set up credential helper — git will call this for any github.com URL
-  const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token.token}"; }; f`;
-  execGit(["config", "--global", "credential.helper", credHelper]);
+  // Opt-in path: write the token to a 600-mode credentials file and point
+  // git's built-in `store` helper at it. No shell interpolation anywhere
+  // along the way — git invokes `credential-store --file=<path>` as
+  // argv-array, not through a shell.
+  const credPath = writeCredentialsFile(token.token);
+  execGit(["config", "--global", "credential.helper", `store --file=${credPath}`]);
 
-  // Bot identity
   const botName = config.botName || "last-light";
   execGit(["config", "--global", "user.name", `${botName}[bot]`]);
   execGit(["config", "--global", "user.email", `${botName}[bot]@users.noreply.github.com`]);
 
-  console.log(`[git-auth] Configured git with GitHub App token (expires: ${token.expiresAt})`);
+  console.log(`[git-auth] Configured GLOBAL git with GitHub App token (file: ${credPath}, expires: ${token.expiresAt})`);
 
   return token;
 }
 
 /**
- * Refresh the git credential helper with a fresh token.
- * Call this if a push/pull fails with auth errors.
- *
- * In local dev mode the global git config is left alone — the fresh token is
- * returned to the caller (executor.ts) which forwards it to the sandbox via
- * env so the in-container credential helper picks it up.
+ * Mint a fresh installation token. Same opt-in rule as configureGitAuth:
+ * `LASTLIGHT_WRITE_GLOBAL_GIT=1` is required before this rotates the
+ * credential helper in the user's `~/.gitconfig`. Otherwise the token is
+ * just returned (executor.ts forwards it to the sandbox via env).
  */
 export async function refreshGitAuth(config: {
   appId: string;
@@ -99,14 +156,17 @@ export async function refreshGitAuth(config: {
 }): Promise<{ token: string; expiresAt: string }> {
   const token = await getInstallationToken(config);
 
-  if (isLocalDev()) {
+  if (!shouldWriteGlobalGitConfig()) {
     return token;
   }
 
-  const credHelper = `!f() { echo "username=x-access-token"; echo "password=${token.token}"; }; f`;
-  execGit(["config", "--global", "credential.helper", credHelper]);
+  const credPath = writeCredentialsFile(token.token);
+  // The credential.helper config already points at this path from the
+  // initial configureGitAuth call, but set it again so refreshGitAuth is
+  // safe to call standalone (idempotent).
+  execGit(["config", "--global", "credential.helper", `store --file=${credPath}`]);
 
-  console.log(`[git-auth] Refreshed token (expires: ${token.expiresAt})`);
+  console.log(`[git-auth] Refreshed token in GLOBAL git config (file: ${credPath}, expires: ${token.expiresAt})`);
   return token;
 }
 

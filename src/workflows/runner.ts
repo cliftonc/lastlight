@@ -5,12 +5,12 @@ import type {
   ExecutionResult,
   GitAccessProfile,
   GitSandboxAccess,
-} from "../engine/executor.js";
-import { executeAgent } from "../engine/executor.js";
+} from "../engine/profiles.js";
+import { executeAgent } from "../engine/opencode-executor.js";
 import type { StateDb } from "../state/db.js";
 import type { PhaseHistoryEntry } from "../state/db.js";
-import type { ModelConfig } from "../config.js";
-import { resolveModel } from "../config.js";
+import type { ModelConfig, VariantConfig } from "../config.js";
+import { resolveModel, resolveVariant } from "../config.js";
 import { listRunningContainers } from "../admin/docker.js";
 import type { AgentWorkflowDefinition, PhaseDefinition } from "./schema.js";
 import { loadPromptTemplate, loadSkillInstructions } from "./loader.js";
@@ -154,6 +154,7 @@ function gitSandboxAccessForWorkflow(
   workflowName: string,
   owner: string,
   repo: string,
+  prePopulateBranch?: string,
 ): GitSandboxAccess {
   const profile = gitAccessProfileForWorkflow(workflowName);
   return {
@@ -162,6 +163,7 @@ function gitSandboxAccessForWorkflow(
     profile,
     // Only high-trust code-writing workflows get sandbox-side app-key access.
     allowMcpAppAuth: profile === "repo-write",
+    prePopulateBranch,
   };
 }
 
@@ -179,6 +181,7 @@ async function runPhase(
   modelOverride?: string,
   workflowRunId?: string,
   githubAccess?: GitSandboxAccess,
+  variantOverride?: string,
 ): Promise<{ result: ExecutionResult; skipped: false } | { skipped: true; reason: "running" | "done" }> {
   const dedupKey = `${workflowName}:${phaseName}`;
   if (db) {
@@ -209,7 +212,8 @@ async function runPhase(
       workflowRunId,
     });
 
-    const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
+    const baseConfig = modelOverride ? { ...config, model: modelOverride } : config;
+    const phaseConfig = variantOverride ? { ...baseConfig, variant: variantOverride } : baseConfig;
     const result = await executeAgent(prompt, phaseConfig, {
       taskId,
       githubAccess,
@@ -334,6 +338,7 @@ export async function runWorkflow(
   models?: ModelConfig,
   approvalConfig?: ApprovalGateConfig,
   workflowId?: string,
+  variants?: VariantConfig,
 ): Promise<WorkflowResult> {
   const phases: PhaseResult[] = [];
   const phaseOutputs: Record<string, unknown> = {};
@@ -349,13 +354,22 @@ export async function runWorkflow(
     ? { ...(ctx.scratch as Record<string, unknown>) }
     : (db && workflowId ? { ...(db.getWorkflowRun(workflowId)?.scratch ?? {}) } : {});
   ctx.scratch = scratch;
-  const githubAccess = gitSandboxAccessForWorkflow(definition.name, ctx.owner, ctx.repo);
+  // `prePopulateBranch` is set upstream (in src/index.ts dispatch) for
+  // workflows that operate on an existing branch (pr-review, pr-fix). The
+  // executor uses it to clone that branch into the workspace before the
+  // sandbox starts — agent enters a workspace already checked out.
+  const prePopulateBranch = typeof ctx.prePopulateBranch === "string"
+    ? ctx.prePopulateBranch
+    : undefined;
+  const githubAccess = gitSandboxAccessForWorkflow(definition.name, ctx.owner, ctx.repo, prePopulateBranch);
   const notify = callbacks.postComment || (async () => {});
   const onStart = callbacks.onPhaseStart || (async () => {});
   const onEnd = callbacks.onPhaseEnd || (async () => {});
 
   const modelFor = (taskType: string): string | undefined =>
     models ? resolveModel(models, taskType) : undefined;
+  const variantFor = (taskType: string): string | undefined =>
+    variants ? resolveVariant(variants, taskType) : undefined;
 
   /** Render a prompt template with current context. */
   const renderPrompt = (promptPath: string, extraCtx?: Partial<TemplateContext>): string => {
@@ -423,7 +437,7 @@ export async function runWorkflow(
   if (hasDependencies(definition)) {
     return runDagWorkflow(
       definition, ctx, config, callbacks, db, models, approvalConfig, workflowId,
-      { phases, phaseOutputs, triggerId, notify, notifyMessage, onStart, onEnd, modelFor, renderPrompt, persistPhase, failWorkflow, gateEnabled, githubAccess },
+      { phases, phaseOutputs, triggerId, notify, notifyMessage, onStart, onEnd, modelFor, variantFor, renderPrompt, persistPhase, failWorkflow, gateEnabled, githubAccess },
     );
   }
 
@@ -501,9 +515,11 @@ export async function runWorkflow(
             ? buildPhasePrompt(phase, { ...ctx, phaseOutputs }, { fixCycle: fixCycles })
             : renderPrompt(loop.on_request_changes.re_review_prompt, { fixCycle: fixCycles });
 
-        // Resolve model
+        // Resolve model + variant
         const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
         const reviewModel = reviewModelRaw || modelFor(phaseName);
+        const reviewVariantRaw = phase.variant ? renderTemplate(phase.variant, ctx) : undefined;
+        const reviewVariant = reviewVariantRaw || variantFor(phaseName);
 
         const rr = await runPhase(
           definition.name,
@@ -516,6 +532,7 @@ export async function runWorkflow(
           reviewModel,
           workflowId,
           githubAccess,
+          reviewVariant,
         );
 
         if (rr.skipped) {
@@ -594,6 +611,10 @@ export async function runWorkflow(
             ? renderTemplate(loop.on_request_changes.fix_model, ctx)
             : undefined;
           const fixModel = fixModelRaw || modelFor(`${phaseName}_fix`) || modelFor(phaseName);
+          const fixVariantRaw = loop.on_request_changes.fix_variant
+            ? renderTemplate(loop.on_request_changes.fix_variant, ctx)
+            : undefined;
+          const fixVariant = fixVariantRaw || variantFor(`${phaseName}_fix`) || variantFor(phaseName);
 
           const fixPromptRendered = renderPrompt(loop.on_request_changes.fix_prompt, {
             fixCycle: fixCycles,
@@ -610,6 +631,7 @@ export async function runWorkflow(
             fixModel,
             workflowId,
             githubAccess,
+            fixVariant,
           );
 
           if (fr.skipped) {
@@ -690,6 +712,8 @@ export async function runWorkflow(
 
         const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
         const model = modelRaw || modelFor(phaseName);
+        const variantRaw = phase.variant ? renderTemplate(phase.variant, ctx) : undefined;
+        const variant = variantRaw || variantFor(phaseName);
 
         const ir = await runPhase(
           definition.name,
@@ -702,6 +726,7 @@ export async function runWorkflow(
           model,
           workflowId,
           githubAccess,
+          variant,
         );
 
         if (ir.skipped) {
@@ -853,9 +878,11 @@ export async function runWorkflow(
     await onStart(phaseName);
     await notifyMessage(phase.messages?.on_start);
 
-    // Resolve model
+    // Resolve model + variant
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
     const model = modelRaw || modelFor(phaseName);
+    const variantRaw = phase.variant ? renderTemplate(phase.variant, ctx) : undefined;
+    const variant = variantRaw || variantFor(phaseName);
 
     const prompt = buildPhasePrompt(phase, ctx, { phaseOutputs });
 
@@ -870,6 +897,7 @@ export async function runWorkflow(
       model,
       workflowId,
       githubAccess,
+      variant,
     );
 
     if (pr.skipped) {
@@ -1020,6 +1048,7 @@ interface DagRunnerCtx {
   onStart: (phase: string) => Promise<void>;
   onEnd: (phase: string, result: PhaseResult) => Promise<void>;
   modelFor: (taskType: string) => string | undefined;
+  variantFor: (taskType: string) => string | undefined;
   renderPrompt: (promptPath: string, extraCtx?: Partial<TemplateContext>) => string;
   persistPhase: (phase: string, summary?: string) => void;
   failWorkflow: (errorMsg?: string) => void;
@@ -1050,6 +1079,7 @@ async function runDagWorkflow(
     onStart,
     onEnd,
     modelFor,
+    variantFor,
     renderPrompt,
     persistPhase,
     failWorkflow,
@@ -1073,6 +1103,8 @@ async function runDagWorkflow(
     const prompt = buildPhasePrompt(phase, ctx, phaseCtx);
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
     const model = modelRaw || modelFor(phaseName);
+    const variantRaw = phase.variant ? renderTemplate(phase.variant, ctx) : undefined;
+    const variant = variantRaw || variantFor(phaseName);
 
     const pr = await runPhase(
       definition.name,
@@ -1085,6 +1117,7 @@ async function runDagWorkflow(
       model,
       workflowId,
       githubAccess,
+      variant,
     );
 
     if (pr.skipped) {
@@ -1220,6 +1253,8 @@ async function runDagWorkflow(
               : renderPrompt(loop.on_request_changes.re_review_prompt, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
           const reviewModelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
           const reviewModel = reviewModelRaw || modelFor(node.name);
+          const reviewVariantRaw = phase.variant ? renderTemplate(phase.variant, ctx) : undefined;
+          const reviewVariant = reviewVariantRaw || variantFor(node.name);
 
           const rr = await runPhase(
             definition.name,
@@ -1232,6 +1267,7 @@ async function runDagWorkflow(
             reviewModel,
             workflowId,
             githubAccess,
+            reviewVariant,
           );
           if (rr.skipped) {
             approved = true;
@@ -1256,6 +1292,8 @@ async function runDagWorkflow(
             const fixPromptRendered = renderPrompt(loop.on_request_changes.fix_prompt, { phaseOutputs: { ...outputs }, fixCycle: fixCycles });
             const fixModelRaw = loop.on_request_changes.fix_model ? renderTemplate(loop.on_request_changes.fix_model, ctx) : undefined;
             const fixModel = fixModelRaw || modelFor(`${node.name}_fix`) || modelFor(node.name);
+            const fixVariantRaw = loop.on_request_changes.fix_variant ? renderTemplate(loop.on_request_changes.fix_variant, ctx) : undefined;
+            const fixVariant = fixVariantRaw || variantFor(`${node.name}_fix`) || variantFor(node.name);
             const fr = await runPhase(
               definition.name,
               fixLabel,
@@ -1267,6 +1305,7 @@ async function runDagWorkflow(
               fixModel,
               workflowId,
               githubAccess,
+              fixVariant,
             );
             if (!fr.skipped) {
               phases.push({ phase: fixLabel, ...pickResult(fr.result) });
@@ -1305,6 +1344,8 @@ async function runDagWorkflow(
           const iterPrompt = buildPhasePrompt(phase, ctx, iterCtx);
           const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
           const model = modelRaw || modelFor(node.name);
+          const variantRaw = phase.variant ? renderTemplate(phase.variant, ctx) : undefined;
+          const variant = variantRaw || variantFor(node.name);
 
           const ir = await runPhase(
             definition.name,
@@ -1317,6 +1358,7 @@ async function runDagWorkflow(
             model,
             workflowId,
             githubAccess,
+            variant,
           );
           if (ir.skipped) { complete = true; break; }
 

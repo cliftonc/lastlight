@@ -24,9 +24,9 @@ for general issue questions; use this one for questions tied to the diff.
 
 ### 1. Read the PR and the question
 
-- `get_pull_request({ owner, repo, pull_number })` → title, body, base, head
-- `get_pull_request_diff({ owner, repo, pull_number })` → the actual diff
-- `list_pull_request_files({ owner, repo, pull_number })` → file list with
+- `github_get_pull_request({ owner, repo, pull_number })` → title, body, base, head
+- `github_get_pull_request_diff({ owner, repo, pull_number })` → the actual diff
+- `github_list_pull_request_files({ owner, repo, pull_number })` → file list with
   `additions`/`deletions` per file (helps you decide what to read in full)
 
 The triggering comment is in `context.commentBody`. Read it carefully —
@@ -45,13 +45,13 @@ Practical caps:
 - For "does the PR consider X?" questions: also check whether tests cover X
   by reading the relevant test files in the diff.
 - For "regression risk" questions: search for callers of any functions whose
-  signature or behaviour changed (`search_code` is your friend).
+  signature or behaviour changed (`github_search_code` is your friend).
 - Do not clone the repo unless a single-question answer genuinely needs
   cross-file traces no MCP tool can provide. Most don't.
 
 ### 3. Reply with one comment
 
-Use `add_issue_comment` (PRs accept issue comments at this endpoint).
+Use `github_add_issue_comment` (PRs accept issue comments at this endpoint).
 
 Keep the reply tight:
 
@@ -64,7 +64,7 @@ Keep the reply tight:
 
 ### 4. Do NOT
 
-- Do NOT post a full review (no `create_pull_request_review` calls — that's
+- Do NOT post a full review (no `github_create_pull_request_review` calls — that's
   the pr-review skill's job and it would conflict with the blocking check).
 - Do NOT modify code, push commits, or add labels (no write tools beyond the
   one comment).
@@ -75,7 +75,7 @@ Keep the reply tight:
 
 ## Tool Usage
 
-All GitHub operations via `mcp__github_*` MCP tools. Never `gh` CLI, `curl`,
+All GitHub operations via `github_*` MCP tools. Never `gh` CLI, `curl`,
 or raw HTTP.
 
 ## Example shape

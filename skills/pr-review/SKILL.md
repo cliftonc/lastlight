@@ -12,20 +12,56 @@ When asked to review a pull request, or when triggered by a webhook/cron to chec
 
 ## Procedure
 
-### 0. Check if already reviewed
+### Workspace setup
 
-Before reviewing, **always check if the bot has already reviewed this PR**:
-1. Use `list_pull_request_files` to get the PR head SHA
-2. Use `get_pull_request` to check existing reviews
-3. Look for reviews from `last-light[bot]` — if one exists on the current head SHA, **skip this PR**. Do NOT post a duplicate review.
-4. If the PR has new commits since the last bot review, a re-review is appropriate.
+For pr-review runs the harness **pre-clones the PR's head ref into
+`/home/agent/workspace`** before this session starts. Inspect the
+workspace with `glob` / `read` directly. Do NOT call `github_clone_repo`
+— that re-downloads the whole repo wastefully.
+
+If you need to confirm or refresh:
+
+```
+git -C /home/agent/workspace log -1 --oneline
+# if you need newer commits:
+git -C /home/agent/workspace fetch origin <branch> --depth 50
+git -C /home/agent/workspace reset --hard FETCH_HEAD
+```
+
+Only fall back to `github_clone_repo` if the workspace is empty — that
+means the pre-clone failed (look for `[sandbox] Pre-clone … failed` in
+harness logs).
+
+### Target selection
+
+The runner provides PR context vars. Use them in this order:
+
+1. If `prNumber` (or `issueNumber`) > 0 is set in the Context block below, that is your target PR. Go straight to `github_get_pull_request` with that number — do NOT call `github_list_pull_requests` first.
+2. Only if no specific PR is provided, list open PRs in the repo and pick the most recent unreviewed one. When calling `github_list_pull_requests`, omit any filter you don't actually want — never pass empty strings like `head: ""` or `base: ""`, those become literal filters that return nothing.
+
+### 0. Read prior discussion
+
+Before reviewing, fetch the full conversation history. **Do not skip this step** — the goal of a review is to advance the discussion, not restart it.
+
+1. `github_get_pull_request` — head SHA, mergeable state, author, base/head refs.
+2. `github_list_pull_request_reviews` — every prior review (APPROVED / CHANGES_REQUESTED / COMMENTED).
+   - If a review from `last-light[bot]` exists on the **current head SHA**, STOP — do not post a duplicate. (A re-review is fine if new commits landed since.)
+3. `github_list_issue_comments` — top-level conversation thread on the PR.
+4. `github_list_pull_request_review_comments` — line-level review comments anchored to diff positions.
+
+Build a mental model of what's already been said:
+- Which findings did prior reviewers raise? Don't repeat them.
+- Which threads did the author address (with a follow-up commit or explanation)? Treat as resolved unless their fix is wrong.
+- Which threads are still open / unaddressed? Surface those in your summary — that's higher signal than a fresh-eyes nit.
+- Has a human reviewer already approved? Lower your bar for blocking — APPROVE or COMMENT, don't REQUEST_CHANGES on style.
+
+Skip PRs authored by `last-light[bot]` (self-review).
 
 ### 1. Fetch PR metadata
 
 Using MCP tools:
-- Get the PR title, description, author, labels, and linked issues
-- Get the list of changed files and the diff
-- Skip PRs authored by `last-light[bot]` (self-review)
+- Get the PR title, description, labels, and linked issues (from step 0 you already have most of this)
+- Get the list of changed files (`github_list_pull_request_files`) and the diff (`github_get_pull_request_diff`)
 
 ### 2. Analyze the changes
 
@@ -57,11 +93,11 @@ Using MCP tools:
 
 ### 5. Submit the review
 
-Use `create_pull_request_review` MCP tool. Do NOT post as a regular comment.
+Use `github_create_pull_request_review` MCP tool. Do NOT post as a regular comment.
 
 ## Tool Usage
 
-**Always use MCP tools** for all GitHub operations. Never use `gh` CLI, `curl`, or raw HTTP requests.
+**Always use the github MCP server tools** (`github_*`) for all GitHub operations. Never use `gh` CLI, `curl`, or raw HTTP requests.
 
 ## Pitfalls
 - **Never review the same PR twice** at the same commit — always check first

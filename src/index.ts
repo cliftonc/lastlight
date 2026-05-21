@@ -4,7 +4,8 @@ import { randomUUID } from "crypto";
 import { loadConfig, generateMcpConfig, resolveModel } from "./config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
 import { routeEvent } from "./engine/router.js";
-import { handleChatMessage } from "./engine/chat.js";
+import { CHAT_SYSTEM_SUFFIX, handleChatMessage, loadAgentContext } from "./engine/chat.js";
+import { OpencodeChatServer } from "./engine/opencode-chat-server.js";
 import { configureGitAuth } from "./engine/git-auth.js";
 import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
@@ -84,6 +85,36 @@ async function main() {
   writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
   console.log(`[config] MCP config written to: ${mcpConfigPath}`);
 
+  // Resolve the opencode-home dir once — used by the chat shim writer and
+  // the dashboard reader so they agree on the path.
+  const opencodeHomeDir = resolve(process.env.OPENCODE_HOME_DIR || resolve(config.stateDir, "opencode-home"));
+
+  // Long-lived `opencode serve` process backing the chat skill. Its
+  // working dir holds the per-process opencode.json (MCP servers) and
+  // AGENTS.md (chat persona). One server, many concurrent sessions —
+  // one per Slack thread.
+  const chatServeWorkingDir = resolve(config.stateDir, "opencode-serve");
+  const chatServer = new OpencodeChatServer({
+    port: config.opencodeServePort,
+    workingDir: chatServeWorkingDir,
+    defaultModel: resolveModel(config.models, "chat"),
+    agentMarkdown: loadAgentContext() + CHAT_SYSTEM_SUFFIX,
+    mcpServers: config.githubApp ? {
+      github: {
+        type: "local",
+        command: ["node", resolve("mcp-github-app/src/index.js")],
+        enabled: true,
+        environment: {
+          GITHUB_APP_ID: config.githubApp.appId,
+          GITHUB_APP_PRIVATE_KEY_PATH: resolve(config.githubApp.privateKeyPath),
+          GITHUB_APP_INSTALLATION_ID: config.githubApp.installationId,
+        },
+        timeout: 30000,
+      },
+    } : undefined,
+    printLogs: process.env.OPENCODE_SERVE_LOGS === "1",
+  });
+
   // Configure git with GitHub App credentials — agents can git clone/push natively.
   // Non-fatal: the token is refreshed before each agent execution anyway, so a
   // transient failure here (DNS, rate limit) doesn't block startup.
@@ -159,6 +190,8 @@ async function main() {
       triggerId: _triggerId,
       channelId,
       threadId,
+      prePopulateBranch: ctxPrePopulateBranch,
+      branch: ctxBranch,
       ...rest
     } = context;
 
@@ -168,6 +201,42 @@ async function main() {
     const extra: Record<string, unknown> = { ...(rest as Record<string, unknown>) };
     if (typeof channelId === "string") extra.channelId = channelId;
     if (typeof threadId === "string") extra.threadId = threadId;
+
+    // For PR-scoped read workflows, resolve the PR head ref and ask the
+    // sandbox to pre-clone the repo at that branch. The agent then enters
+    // a workspace that's already a checkout of the PR's actual code —
+    // saves a redundant clone_repo MCP call inside the session.
+    //
+    // pr-fix already plumbs `branch` through context (line ~709 below)
+    // because the architect/executor need the branch name to push to;
+    // we honor that here as the pre-populate branch too.
+    let prePopulateBranch: string | undefined =
+      typeof ctxPrePopulateBranch === "string" ? ctxPrePopulateBranch : undefined;
+    if (!prePopulateBranch && typeof ctxBranch === "string" && ctxBranch && workflowName === "pr-fix") {
+      prePopulateBranch = ctxBranch;
+    }
+    if (
+      !prePopulateBranch &&
+      workflowName === "pr-review" &&
+      typeof prNumber === "number" &&
+      github &&
+      owner &&
+      repo
+    ) {
+      try {
+        const pr = await github.getPullRequest(owner, repo, prNumber);
+        prePopulateBranch = pr.head.ref;
+        console.log(
+          `[dispatch] pr-review: pre-populating workspace at ${owner}/${repo}@${prePopulateBranch}`,
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[dispatch] pr-review: could not resolve PR head ref (${msg}); ` +
+          `agent will need to clone via MCP`,
+        );
+      }
+    }
 
     const request: SimpleWorkflowRequest = {
       owner,
@@ -181,6 +250,7 @@ async function main() {
       sender: typeof sender === "string" ? sender : "unknown",
       triggerId: slackTriggerId,
       extra,
+      prePopulateBranch,
     };
 
     // For workflows where the architect/agent needs to see the full issue
@@ -299,6 +369,7 @@ async function main() {
         config.models,
         config.approval,
         config.bootstrapLabel,
+        config.variants,
       );
       const summary = result.phases.map((p) => `${p.phase}=${p.success ? "ok" : "fail"}`).join(", ");
       if (result.paused) {
@@ -379,7 +450,7 @@ async function main() {
     mountAdmin(githubConnector.honoApp, db, {
       cronScheduler: cron,
       stateDir: config.stateDir,
-      sessionsDir: resolve(process.env.CLAUDE_HOME_DIR || "./data/claude-home"),
+      sessionsDir: opencodeHomeDir,
       adminPassword: process.env.ADMIN_PASSWORD ?? "",
       adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
       slackOAuthClientId: process.env.SLACK_OAUTH_CLIENT_ID,
@@ -390,9 +461,6 @@ async function main() {
       githubOAuthClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET,
       githubOAuthRedirectUri: process.env.GITHUB_OAUTH_REDIRECT_URI,
       githubAllowedOrg: process.env.GITHUB_ALLOWED_ORG,
-      adminNotifier: slackConnector
-        ? (msg: string) => slackConnector!.sendToDeliveryChannel(msg)
-        : undefined,
       resumeWorkflow: async (workflowRun, sender) => {
         if (!github) {
           console.warn(`[admin] Cannot resume workflow ${workflowRun.id}: GitHub App not configured`);
@@ -546,6 +614,11 @@ async function main() {
           messagingSessionId,
           sender,
           sessionManager,
+          {
+            chatServer,
+            opencodeHomeDir,
+            mcpServerNames: config.githubApp ? ["github"] : [],
+          },
           {
             mcpConfigPath,
             model: resolveModel(config.models, "chat"),
@@ -1069,23 +1142,22 @@ async function main() {
     console.log("[cron] Webhooks enabled — skipping issue/PR polling crons");
   }
 
-  // API usage/capacity checker — runs every 30 minutes, no sandbox needed.
-  // Passes a Slack notifier so the cron can alert the admin if the host
-  // claude CLI auth degrades (it then halts itself until cleared).
-  const { checkApiUsage } = await import("./cron/rate-limits.js");
-  const adminNotifier = slackConnector
-    ? (msg: string) => slackConnector!.sendToDeliveryChannel(msg)
-    : undefined;
-  cron.registerDirect({
-    name: "check-api-usage",
-    schedule: "*/30 * * * *",
-    handler: () => checkApiUsage(db, adminNotifier),
-  });
-
   // Start everything
   await registry.startAll();
   console.log("[main] All connectors started");
   console.log("[main] Cron jobs registered");
+
+  // Boot the long-lived chat server. Slack/Discord chat turns go to it
+  // over HTTP. Non-fatal if it fails — chat will degrade to error
+  // replies until the next restart, but workflows still run.
+  if (config.slack) {
+    try {
+      await chatServer.start();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[chat-server] startup failed: ${msg}`);
+    }
+  }
 
   // Boot-time recovery: any workflow_runs left in 'running' state from a
   // previous harness lifetime have already had their sandbox containers
@@ -1104,6 +1176,7 @@ async function main() {
       sandboxDir: config.sandboxDir,
     },
     models: config.models,
+    variants: config.variants,
     approvalConfig: config.approval,
     bootstrapLabel: config.bootstrapLabel,
     slackPoster: slackConnector
@@ -1118,6 +1191,10 @@ async function main() {
     console.log("\n[main] Shutting down...");
     cron.stopAll();
     await registry.stopAll();
+    await chatServer.stop().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[chat-server] stop error: ${msg}`);
+    });
     db.close();
     process.exit(0);
   };

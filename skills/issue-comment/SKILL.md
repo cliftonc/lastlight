@@ -15,8 +15,8 @@ When a maintainer @mentions last-light on an issue or PR with a request that is 
 1. **Read the comment** carefully to understand what the maintainer is asking
 2. **Read the issue/PR** context — title, body, existing labels, existing comments
 3. **Execute the request** — limited to lightweight, bounded actions only:
-   - **Close/reopen**: `update_issue`
-   - **Label**: `add_labels` or `remove_label`
+   - **Close/reopen**: `github_update_issue`
+   - **Label**: `github_add_labels` or `github_remove_label`
    - **Duplicate check**: search similar issues, post one short comment with links
    - **Answer a direct question**: a brief reply (≤ 5 sentences), at most 1-2
      file reads. Do NOT survey the codebase to compile a report.
@@ -28,7 +28,7 @@ When a maintainer @mentions last-light on an issue or PR with a request that is 
 
 ## Tool Usage
 
-**Always use MCP tools** (`mcp_github_*`) for all GitHub operations. Never use `gh` CLI, `curl`, or raw HTTP requests. The MCP server handles authentication.
+**Always use the github MCP server tools** (`github_*`) for all GitHub operations. Never use `gh` CLI, `curl`, or raw HTTP requests. The MCP server handles authentication.
 
 ## Pitfalls
 - NEVER make code changes, create branches, or push commits — this is an action-only skill

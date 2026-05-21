@@ -16,7 +16,7 @@ A maintainer can later comment on the summary issue to break selected findings o
 
 ### 1. Clone, find the prior-scan anchor, read SECURITY.md
 
-1. Clone the target repo via `mcp_github_clone_repo`.
+1. Clone the target repo via `github_clone_repo`.
 2. **Find the prior scan anchor.** Query GitHub issues with label `security-scan` (open OR closed), sorted by created descending, and take the most recent. Read its body for the `<!-- lastlight-security-scan-ts: ... -->` HTML comment and use that ISO-8601 timestamp as `priorScanTs`. If no prior scan issue exists, set `priorScanTs = now - 30 days` (bootstrap floor — keeps the first run finite).
 3. Read `SECURITY.md` at the repo root (if present) and parse:
    - **Tool config** — per-tool severity floors (default: `medium`; skip `low`/`info`)
@@ -40,7 +40,7 @@ This step decides what gets reviewed. **Most weeks the diff is dominated by Reno
 
 ### 2. Ensure labels exist
 
-Call `mcp_github_create_label` for each of (idempotent — ignore 422 "already exists"):
+Call `github_create_label` for each of (idempotent — ignore 422 "already exists"):
 
 | Label | Color | Purpose |
 |-------|-------|---------|
@@ -160,7 +160,7 @@ If the filtered-and-capped list is empty, **do not** create the summary issue. W
 
 ### 9. Compose and create the summary issue
 
-Use the exact grammar in **§ Issue format** below. Call `mcp_github_create_issue` with:
+Use the exact grammar in **§ Issue format** below. Call `github_create_issue` with:
 
 - `title`: `Security scan — {YYYY-MM-DD}` (UTC date)
 - `labels`: `["security", "security-scan"]`

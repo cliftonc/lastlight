@@ -11,20 +11,20 @@ import { unwrapLine } from "./sessions.js";
  * unchanged), but listing comes from the executions table grouped by Slack
  * thread, and message reads target the single jsonl file owned by that
  * thread's agent SDK session id — no scanning of unrelated `agent-*.jsonl`
- * sidechain files in `claude-home/projects/-app/`.
+ * sidechain files in `opencode-home/projects/-app/`.
  *
  * Conceptual mapping:
  * - SessionMeta.id      ← messaging_session.id (= Slack thread / executions.trigger_id)
- * - jsonl on disk       ← claude-home/projects/-app/<agent_session_id>.jsonl
+ * - jsonl on disk       ← opencode-home/projects/-app/<agent_session_id>.jsonl
  *                         (resolved via messaging_sessions.agent_session_id)
  */
 export class ChatSessionReader implements SessionSource {
   private db: StateDb;
-  private claudeHomeDir: string;
+  private sessionsHomeDir: string;
 
-  constructor(db: StateDb, claudeHomeDir: string) {
+  constructor(db: StateDb, sessionsHomeDir: string) {
     this.db = db;
-    this.claudeHomeDir = claudeHomeDir;
+    this.sessionsHomeDir = sessionsHomeDir;
   }
 
   /** All chat thread ids (= Slack threads) that have at least one chat execution. */
@@ -76,7 +76,7 @@ export class ChatSessionReader implements SessionSource {
     const thread = this.db.getChatThread(id);
     if (!thread || !thread.agentSessionId) return null;
     const file = path.join(
-      this.claudeHomeDir,
+      this.sessionsHomeDir,
       "projects",
       "-app",
       `${thread.agentSessionId}.jsonl`,

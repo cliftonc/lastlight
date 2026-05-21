@@ -112,7 +112,7 @@ git push -u origin HEAD
 
 The token file (`.gh-token`) and git config (`.gitconfig-bot`) are auto-synced into the sandbox by Hermes before each command via `terminal.credential_files`. To activate:
 
-1. Call `setup_git_auth` MCP tool (refreshes the token)
+1. Call `github_setup_git_auth` MCP tool (refreshes the token)
 2. Run the returned `configure_git` command (one-time per session)
 3. `git push -u origin HEAD` should just work
 
@@ -120,11 +120,11 @@ The token file (`.gh-token`) and git config (`.gitconfig-bot`) are auto-synced i
 
 If `git push` fails with `Invalid username or token` / `Authentication failed`, fall back to the GitHub MCP tools:
 
-1. Create the remote branch with `mcp_github_create_branch`
-2. Push changed files with `mcp_github_push_files`
-3. Open the PR with `mcp_github_create_pull_request`
+1. Create the remote branch with `github_create_branch`
+2. Push changed files with `github_push_files`
+3. Open the PR with `github_create_pull_request`
 
-Limitation: `mcp_github_push_files` supports creating/updating files, but **not deleting/renaming** files. Prefer `git push` when possible.
+Limitation: `github_push_files` supports creating/updating files, but **not deleting/renaming** files. Prefer `git push` when possible.
 
 ### Last resort when no push path works
 

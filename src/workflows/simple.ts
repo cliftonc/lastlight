@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import type { ExecutorConfig } from "../engine/executor.js";
+import type { ExecutorConfig } from "../engine/profiles.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
-import type { ModelConfig } from "../config.js";
+import type { ModelConfig, VariantConfig } from "../config.js";
 import { getWorkflow } from "./loader.js";
 import {
   runWorkflow,
@@ -51,6 +51,14 @@ export interface SimpleWorkflowRequest {
    * pr-fix workflow's failedChecks/branch/prNumber payload.
    */
   extra?: Record<string, unknown>;
+  /**
+   * When set, the harness pre-clones the repo at this branch into the
+   * sandbox workspace before the agent starts. Used by pr-review /
+   * pr-fix so the agent enters a workspace already checked out at the
+   * PR's head ref — saves a redundant `clone_repo` call inside the
+   * session.
+   */
+  prePopulateBranch?: string;
 }
 
 function workflowScopedTaskId(
@@ -82,6 +90,7 @@ export async function runSimpleWorkflow(
   models?: ModelConfig,
   approvalConfig?: ApprovalGateConfig,
   bootstrapLabel = "lastlight:bootstrap",
+  variants?: VariantConfig,
 ): Promise<WorkflowResult> {
   // Kill switch — if an admin has disabled this workflow in the dashboard,
   // skip every trigger source (cron, webhooks, mentions, Slack) without
@@ -107,9 +116,16 @@ export async function runSimpleWorkflow(
       ? `${owner}/${repo}#${number}`
       : `${owner}/${repo}::${workflowName}`);
 
-  const branch = number !== undefined
-    ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
-    : `lastlight/${workflowName}`;
+  // When the dispatcher passes `prePopulateBranch` (set for pr-review /
+  // pr-fix from the actual PR head ref), use that as the `branch` template
+  // var too — the agent's workspace is going to be checked out at that
+  // ref, so the prompt should reflect reality rather than a lastlight/N-slug
+  // name that doesn't exist. Build-style workflows still get the synthesized
+  // lastlight/N-slug branch they create themselves.
+  const branch = request.prePopulateBranch
+    ?? (number !== undefined
+      ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
+      : `lastlight/${workflowName}`);
 
   // ── Resume handling ────────────────────────────────────────────────────────
   //
@@ -162,7 +178,9 @@ export async function runSimpleWorkflow(
         branch,
         taskId,
         issueDir,
+        prePopulateBranch: request.prePopulateBranch,
         models: models as Record<string, unknown> | undefined,
+        variants: variants as Record<string, unknown> | undefined,
         ...request.extra,
       },
       startedAt: new Date().toISOString(),
@@ -230,7 +248,15 @@ export async function runSimpleWorkflow(
     issueDir,
     bootstrapLabel,
     contextSnapshot,
+    // Forwarded to the executor (via gitSandboxAccessForWorkflow) so the
+    // harness pre-clones this branch into the sandbox workspace before
+    // the agent starts. Stored on the workflow_run row above; also lives
+    // on ctx so the runner can read it without an extra DB lookup.
+    prePopulateBranch: request.prePopulateBranch,
     models: models as unknown as Record<string, unknown>,
+    // Reasoning-effort overrides per phase. Empty/undefined entries skip
+    // the --variant flag (model uses its default effort).
+    variants: variants as unknown as Record<string, unknown> | undefined,
     // Slack-initiated runs need the runner to pause/resume on the thread id,
     // not on owner/repo#N. Passing the override through here keeps the
     // runner's triggerId derivation in one place.
@@ -251,6 +277,7 @@ export async function runSimpleWorkflow(
       models,
       approvalConfig,
       workflowId,
+      variants,
     );
 
     if (result.success && !result.paused) {

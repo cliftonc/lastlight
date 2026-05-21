@@ -159,7 +159,7 @@ If any of tests, linting, or type checking are **MISSING** or **BROKEN**:
 
 ### 1. Create a guardrails issue
 
-Use `mcp_github_create_issue` to create an issue in the target repo:
+Use `github_create_issue` to create an issue in the target repo:
 
 ```
 Title: Add missing dev guardrails: {list of missing items}

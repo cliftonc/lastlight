@@ -41,6 +41,12 @@ export interface TemplateContext {
   failedChecks?: string;
   ciSection?: string;
 
+  // Optional: when set, the harness pre-clones the repo at this branch into
+  // the sandbox workspace before the agent starts (see GitSandboxAccess in
+  // src/engine/profiles.ts). Used by pr-review / pr-fix so the agent enters
+  // a workspace already checked out at the PR's head ref.
+  prePopulateBranch?: string;
+
   // Optional: context snapshot (for architect prompt)
   contextSnapshot?: string;
 

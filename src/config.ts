@@ -40,13 +40,30 @@ export interface SlackConfig {
 /**
  * Per-task-type model configuration.
  * Keys are session types (matching admin dashboard labels).
- * Values are Claude model IDs.
+ * Values are OpenCode `provider/model` strings.
  */
 export interface ModelConfig {
   /** Default model for all tasks */
   default: string;
   /** Per-type overrides */
   [taskType: string]: string;
+}
+
+/**
+ * Per-task-type reasoning-effort ("variant") configuration. Maps to
+ * OpenCode's `--variant` flag — a provider-agnostic knob OpenCode
+ * translates into each provider's reasoning-effort API (OpenAI's
+ * `reasoning_effort`, Anthropic's thinking budget, etc.). Common values:
+ * `minimal` / `medium` / `high` / `max`.
+ *
+ * Keys mirror `ModelConfig`: phase names ("architect", "reviewer", …)
+ * or skill types. `default` is the catch-all when no override matches.
+ */
+export interface VariantConfig {
+  /** Default variant for all tasks (unset → no `--variant` flag passed) */
+  default?: string;
+  /** Per-type overrides */
+  [taskType: string]: string | undefined;
 }
 
 export interface LastLightConfig {
@@ -66,12 +83,20 @@ export interface LastLightConfig {
   stateDir: string;
   /** Directory for agent sandboxes (cloned repos per task) */
   sandboxDir: string;
-  /** Default Claude model (used when no per-type override exists) */
+  /** Default model id (used when no per-type override exists) */
   model: string;
   /** Per-task-type model overrides */
   models: ModelConfig;
+  /** Per-task-type reasoning-effort overrides (OpenCode `--variant`) */
+  variants: VariantConfig;
   /** Max agent turns */
   maxTurns: number;
+  /**
+   * Port for the long-lived `opencode serve` chat process. The harness
+   * spawns one of these on boot to back the messaging chat skill. Bound
+   * to 127.0.0.1 only. Override with `OPENCODE_SERVE_PORT`.
+   */
+  opencodeServePort: number;
   /** GitHub App config (optional — not needed for messaging-only mode) */
   githubApp?: {
     appId: string;
@@ -154,9 +179,11 @@ export function loadConfig(): LastLightConfig {
     sandboxDir: join(stateDir, "sandboxes"),
     dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db"),
     workflowDir: resolve(process.env.WORKFLOW_DIR || "./workflows"),
-    model: process.env.CLAUDE_MODEL || "claude-sonnet-4-6",
+    model: process.env.OPENCODE_MODEL || "openai/gpt-5.5",
     models: parseModelConfig(),
+    variants: parseVariantConfig(),
     maxTurns: parseInt(process.env.MAX_TURNS || "200", 10),
+    opencodeServePort: parseInt(process.env.OPENCODE_SERVE_PORT || "4096", 10),
     githubApp,
     slack,
     approval: parseApprovalGates(),
@@ -202,20 +229,20 @@ function parseApprovalGates(): Record<string, boolean> {
 }
 
 /**
- * Parse per-task-type model config from CLAUDE_MODELS env var.
+ * Parse per-task-type model config from OPENCODE_MODELS env var.
  *
- * Format: JSON object mapping session types to model IDs.
- * Example: {"architect":"claude-opus-4-6","chat":"claude-haiku-4-5-20251001"}
+ * Format: JSON object mapping session types to OpenCode model IDs (provider/model).
+ * Example: {"architect":"openai/gpt-5.4","chat":"openai/gpt-5.4-mini"}
  *
  * Session types are arbitrary — they match the `name:` of any phase in your
  * workflows (or any key referenced by `resolveModel`). Use `default` as the
  * catch-all when no per-type override matches.
  */
 function parseModelConfig(): ModelConfig {
-  const defaultModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
+  const defaultModel = process.env.OPENCODE_MODEL || "openai/gpt-5.5";
   const config: ModelConfig = { default: defaultModel };
 
-  const modelsEnv = process.env.CLAUDE_MODELS;
+  const modelsEnv = process.env.OPENCODE_MODELS;
   if (modelsEnv) {
     try {
       const parsed = JSON.parse(modelsEnv);
@@ -227,7 +254,7 @@ function parseModelConfig(): ModelConfig {
         }
       }
     } catch (err: any) {
-      console.warn(`[config] Invalid CLAUDE_MODELS JSON: ${err.message}`);
+      console.warn(`[config] Invalid OPENCODE_MODELS JSON: ${err.message}`);
     }
   }
 
@@ -248,6 +275,44 @@ function requireEnv(name: string): string {
  */
 export function resolveModel(models: ModelConfig, taskType: string): string {
   return models[taskType] || models.default;
+}
+
+/**
+ * Parse `OPENCODE_VARIANTS` into a `VariantConfig`. Same JSON shape as
+ * `OPENCODE_MODELS` — e.g.
+ *   {"architect":"high","reviewer":"high","review":"high","triage":"minimal"}
+ * The optional `OPENCODE_VARIANT` env var sets the catch-all default.
+ */
+function parseVariantConfig(): VariantConfig {
+  const config: VariantConfig = {};
+  const defaultVariant = process.env.OPENCODE_VARIANT?.trim();
+  if (defaultVariant) config.default = defaultVariant;
+
+  const raw = process.env.OPENCODE_VARIANTS;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof value === "string" && value.length > 0) {
+            config[key] = value;
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[config] Invalid OPENCODE_VARIANTS JSON: ${err.message}`);
+    }
+  }
+  return config;
+}
+
+/**
+ * Resolve the variant (reasoning effort) for a given task type.
+ * Checks per-type overrides first, then falls back to default. Returns
+ * `undefined` when neither is set — callers omit the `--variant` flag.
+ */
+export function resolveVariant(variants: VariantConfig, taskType: string): string | undefined {
+  return variants[taskType] || variants.default;
 }
 
 /**

@@ -7,19 +7,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://get.docker.com | sh \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user — Claude Code blocks bypassPermissions as root
-# Add to docker group so they can spawn sandbox containers via socket
+# Create non-root user. Add to docker group so they can spawn sandbox
+# containers via socket.
 RUN useradd -m -s /bin/bash lastlight && usermod -aG docker lastlight
 
-# Install Claude Code CLI for the lastlight user
-USER lastlight
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && test -f /home/lastlight/.local/bin/claude \
-    || (echo "Claude CLI install failed" && exit 1)
-ENV PATH="/home/lastlight/.local/bin:${PATH}"
-USER root
-
 WORKDIR /app
+
+# Make the opencode-ai binary (installed via npm into /app/node_modules)
+# resolvable on PATH for the long-lived `opencode serve` chat supervisor,
+# which spawns plain `opencode` unless OPENCODE_BIN is set.
+ENV PATH="/app/node_modules/.bin:${PATH}"
 
 # MCP server deps — rarely change
 COPY mcp-github-app/package.json mcp-github-app/package.json
@@ -65,7 +62,7 @@ RUN mkdir -p /app/data/sessions /app/data/logs
 VOLUME ["/app/data", "/app/secrets"]
 
 ENV STATE_DIR=/app/data
-ENV CLAUDE_HOME_DIR=/app/data/claude-home
+ENV OPENCODE_HOME_DIR=/app/data/opencode-home
 ENV HOME=/home/lastlight
 ENV NODE_ENV=production
 EXPOSE 8644

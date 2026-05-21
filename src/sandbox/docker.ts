@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFileCb);
  * workspace after volumes are mounted — no post-run docker exec needed.
  *
  * Volumes mounted at runtime:
- * - Shared data volume (/data): Claude auth, secrets (app.pem), session logs
+ * - Shared data volume (/data): secrets (app.pem), session logs
  * - Task worktree (/home/agent/workspace): per-task git repo
  */
 
@@ -27,7 +27,7 @@ export interface SandboxConfig {
   timeoutSeconds?: number;
   /**
    * Per-sandbox memory cap, in Docker's `--memory` format (e.g. "2g", "512m").
-   * Default: 2g — enough headroom for `npm install`, vite build, and a Claude
+   * Default: 2g — enough headroom for `npm install`, vite build, and an
    * agent loop, but small enough that several concurrent sandboxes can't
    * exhaust a 16 GB host. Override via the `SANDBOX_MEMORY_LIMIT` env var.
    */
@@ -60,9 +60,9 @@ export class DockerSandbox {
     const containerName = `lastlight-sandbox-${opts.taskId}-${randomUUID().slice(0, 8)}`;
     const worktreePath = resolve(opts.worktreePath);
 
-    // Shared data — mounted at /data inside the sandbox. Contains claude auth,
-    // session logs, etc. (see deploy/sandbox-entrypoint.sh for the layout it
-    // expects).
+    // Shared data — mounted at /data inside the sandbox. Contains secrets
+    // (app.pem) and the opencode-home session-jsonl tree (see
+    // deploy/sandbox-entrypoint.sh for the layout it expects).
     //
     // SANDBOX_DATA_VOLUME accepts either:
     //   - a Docker named volume name (e.g. "lastlight_agent-data") — used in
@@ -78,7 +78,7 @@ export class DockerSandbox {
       : dataVolumeRaw;                  // named volume → pass through
 
     const volumes = [
-      `${dataMount}:/data`,                    // shared state (claude-home, sessions)
+      `${dataMount}:/data`,                    // shared state (opencode-home, sessions)
       `${worktreePath}:${WORKSPACE_DIR}`,      // task worktree
     ];
 
@@ -109,8 +109,8 @@ export class DockerSandbox {
     ];
 
     try {
-      // The entrypoint handles all setup: claude auth, skills, CLAUDE.md,
-      // .mcp.json, and git config. No docker exec calls needed.
+      // The entrypoint handles all setup: AGENTS.md, opencode.json, app.pem
+      // materialization, and git config. No docker exec calls needed.
       const containerId = execCmd("docker", args).trim();
 
       const info: SandboxInfo = { containerId, containerName, worktreePath };
@@ -129,8 +129,8 @@ export class DockerSandbox {
   }
 
   /**
-   * Wait for the sandbox entrypoint to finish setup.
-   * Polls for the credentials symlink in the agent's home directory.
+   * Wait for the sandbox entrypoint to finish setup. The entrypoint touches
+   * `$WORKSPACE/.ready` as its last step before exec'ing the agent shell.
    */
   private async waitForReady(containerName: string, timeoutMs = 15000): Promise<void> {
     const start = Date.now();
@@ -138,14 +138,12 @@ export class DockerSandbox {
 
     while (Date.now() - start < timeoutMs) {
       try {
-        const { stdout } = await execFileAsync("docker", [
+        await execFileAsync("docker", [
           "exec", "--user", "agent", containerName,
-          "test", "-f", "/home/agent/.claude/.credentials.json",
+          "test", "-f", `${WORKSPACE_DIR}/.ready`,
         ], { timeout: 5000 });
-        // File exists — entrypoint is done
         return;
       } catch {
-        // Not ready yet — wait and retry
         await new Promise((r) => setTimeout(r, interval));
       }
     }
@@ -154,18 +152,26 @@ export class DockerSandbox {
   }
 
   /**
-   * Run the Claude CLI inside the sandbox with a prompt.
+   * Run the OpenCode CLI inside the sandbox with a prompt.
    *
-   * Streams stdout line-by-line so the caller can react to stream-json events
-   * (e.g. capture the session id from the `system/init` line) before the
-   * agent has finished. The full stdout is also buffered and returned for
-   * post-run parsing of the `result` line.
+   * Streams stdout line-by-line so the caller can react to JSON events
+   * (e.g. capture the top-level `sessionID` field) before the agent has
+   * finished. The full stdout is also buffered and returned for post-run
+   * parsing of `step_finish` accounting.
    */
   async runAgent(
     taskId: string,
     prompt: string,
     opts?: {
       model?: string;
+      /**
+       * Reasoning-effort variant. Provider-agnostic per OpenCode's
+       * `--variant` flag (translates to OpenAI's `reasoning_effort`,
+       * Anthropic's thinking budget, etc.). Omit to use the model's
+       * default effort. Validated against an allowlist so a bad value
+       * can't smuggle additional CLI args into the opencode invocation.
+       */
+      variant?: string;
       /** Called for each newline-terminated stdout line as it arrives. */
       onLine?: (line: string) => void;
     },
@@ -173,19 +179,32 @@ export class DockerSandbox {
     const info = this.activeContainers.get(taskId);
     if (!info) throw new Error(`No sandbox for task ${taskId}`);
 
-    const model = opts?.model || "claude-sonnet-4-6";
+    const model = opts?.model || "openai/gpt-5.5";
     const timeout = this.config.timeoutSeconds || 1800;
 
+    // `cmd` is interpolated into `sh -c <cmd>` below, so any value we
+    // append here is shell-parsed. Assert variant matches a tight
+    // allowlist (lowercase letters / digits / `-`, max 16 chars) before
+    // embedding it — defense in depth in case it ever gets sourced from
+    // user input.
+    const variantArgs: string[] = [];
+    if (opts?.variant) {
+      if (!/^[a-z0-9-]{1,16}$/.test(opts.variant)) {
+        throw new Error(`Refusing to pass variant "${opts.variant}" — must match /^[a-z0-9-]{1,16}$/`);
+      }
+      variantArgs.push("--variant", opts.variant);
+    }
+
     const cmd = [
-      "claude",
-      "--print", "--verbose",
+      "opencode", "run",
+      "--format", "json",
+      "-m", model,
+      ...variantArgs,
       "--dangerously-skip-permissions",
-      "--output-format", "stream-json",
-      "--model", model,
     ].join(" ");
 
-    // Run as agent user — Claude Code blocks --dangerously-skip-permissions as root
-    // -i connects stdin so the prompt can be written to the container process
+    // -i connects stdin so the prompt can be written to the container process.
+    // Run as agent user so workspace writes land with the right ownership.
     const args = ["exec", "-i", "--user", "agent", "-w", WORKSPACE_DIR, info.containerName, "sh", "-c", cmd];
 
     return await new Promise<string>((resolvePromise, reject) => {

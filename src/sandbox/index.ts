@@ -1,71 +1,9 @@
 import { execFileSync } from "child_process";
-import { mkdirSync, writeFileSync, chmodSync } from "fs";
+import { mkdirSync } from "fs";
 import { join, resolve, sep } from "path";
 import { DockerSandbox } from "./docker.js";
 
 export { DockerSandbox } from "./docker.js";
-
-/**
- * Refresh the project-local sandbox credentials from the macOS keychain
- * before spawning a sandbox.
- *
- * Why this exists:
- *   In LASTLIGHT_LOCAL_DEV mode the dev-local.sh script seeds
- *   ./data/sandbox-data/claude-home/.credentials.json from the host claude
- *   login at harness startup. But during a long dev session the host's
- *   `claude` CLI will refresh its OAuth token (rotating the access token in
- *   the keychain). When that happens the seeded file becomes stale — the
- *   server invalidates the old access token immediately on rotation, so the
- *   in-sandbox claude starts returning 401 even though the file's recorded
- *   expiresAt is still in the future.
- *
- *   Re-reading the keychain on every sandbox spawn keeps the in-sandbox
- *   credentials current without requiring the user to restart the harness.
- *
- * This is a no-op when:
- *   - LASTLIGHT_LOCAL_DEV is not set (production / Docker harness)
- *   - We're not on macOS
- *   - The keychain entry doesn't exist
- *   - SANDBOX_DATA_VOLUME doesn't look like a host path
- */
-function refreshLocalDevCredentials(): void {
-  if (process.env.LASTLIGHT_LOCAL_DEV !== "1") return;
-  if (process.platform !== "darwin") return;
-
-  const dataVolume = process.env.SANDBOX_DATA_VOLUME;
-  if (!dataVolume) return;
-  // Only path-like values (the bind-mount form used in local dev)
-  if (!dataVolume.startsWith("/") &&
-      !dataVolume.startsWith("./") &&
-      !dataVolume.startsWith("../") &&
-      !dataVolume.startsWith("~")) {
-    return;
-  }
-
-  let dataDir = dataVolume;
-  if (dataDir.startsWith("~")) {
-    dataDir = (process.env.HOME || "") + dataDir.slice(1);
-  }
-  dataDir = resolve(dataDir);
-
-  try {
-    const creds = execFileSync(
-      "security",
-      ["find-generic-password", "-s", "Claude Code-credentials", "-a", process.env.USER || "", "-w"],
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 },
-    ).trim();
-
-    if (!creds) return;
-
-    const credPath = join(dataDir, "claude-home", ".credentials.json");
-    writeFileSync(credPath, creds);
-    chmodSync(credPath, 0o644);
-  } catch {
-    // Keychain entry missing, security command unavailable, or write failed.
-    // Don't fail sandbox creation on this — the existing seeded file may
-    // still be valid.
-  }
-}
 
 /**
  * Clean up orphaned sandbox containers from previous runs.
@@ -145,13 +83,24 @@ export async function createTaskSandbox(opts: {
   stateDir: string;
   sandboxDir?: string;
   env?: Record<string, string>;
+  /**
+   * When set, the harness clones the repo into workDir at the named branch
+   * before starting the sandbox container. The agent then enters a
+   * workspace that's already checked out, avoiding a redundant
+   * `clone_repo` MCP call inside the session.
+   *
+   * Token must be alphanumeric (shape asserted upstream) and is embedded
+   * into the clone URL just for this one-shot operation — git's own
+   * credential.helper inside the sandbox covers subsequent push/pull.
+   */
+  prePopulate?: {
+    owner: string;
+    repo: string;
+    branch: string;
+    token: string;
+  };
 }): Promise<{ sandbox: DockerSandbox; workDir: string; cleanup: () => Promise<void> } | null> {
   if (!sandboxAvailable()) return null;
-
-  // In LASTLIGHT_LOCAL_DEV mode, refresh the project-local claude credentials
-  // from the host keychain before each sandbox spawn (handles token rotation
-  // during long dev sessions). No-op in production.
-  refreshLocalDevCredentials();
 
   const sandboxBase = resolve(opts.sandboxDir || join(opts.stateDir, "sandboxes"));
   mkdirSync(sandboxBase, { recursive: true });
@@ -162,6 +111,10 @@ export async function createTaskSandbox(opts: {
   }
 
   mkdirSync(workDir, { recursive: true });
+
+  if (opts.prePopulate) {
+    prePopulateWorkspace(workDir, opts.prePopulate);
+  }
 
   const sandbox = new DockerSandbox({
     imageName: SANDBOX_IMAGE,
@@ -179,5 +132,52 @@ export async function createTaskSandbox(opts: {
   } catch (err: any) {
     console.warn(`[sandbox] Failed to create sandbox: ${err.message}`);
     return null;
+  }
+}
+
+/**
+ * Shallow-clone the repo into workDir at the given branch. Re-clones if the
+ * workDir already contains a .git (cheaper than a full clone the second time
+ * via `git fetch`, but rare — sandbox dirs are usually one-shot per taskId).
+ */
+export { prePopulateWorkspace as __prePopulateWorkspaceForTest };
+
+function prePopulateWorkspace(
+  workDir: string,
+  pre: { owner: string; repo: string; branch: string; token: string },
+): void {
+  // Token shape is asserted in src/engine/git-auth.ts before we get here,
+  // but re-check the narrow set here too — defense in depth, this string
+  // crosses a process boundary into git's command line.
+  if (!/^[A-Za-z0-9_-]+$/.test(pre.token)) {
+    throw new Error("prePopulate: refusing to embed a token outside [A-Za-z0-9_-]");
+  }
+  const url = `https://x-access-token:${pre.token}@github.com/${pre.owner}/${pre.repo}.git`;
+  const start = Date.now();
+  try {
+    execFileSync(
+      "git",
+      ["clone", "--branch", pre.branch, "--depth", "50", url, workDir],
+      { stdio: "pipe", timeout: 120_000 },
+    );
+    const ms = Date.now() - start;
+    console.log(
+      `[sandbox] Pre-cloned ${pre.owner}/${pre.repo}@${pre.branch} into ${workDir} (${ms}ms)`,
+    );
+  } catch (err: any) {
+    // Don't kill the run on a failed pre-clone — fall through to an empty
+    // workspace and let the agent clone via the MCP path as a backup.
+    //
+    // CRITICAL: execFileSync errors echo the failing command line, which
+    // includes the auth URL `https://x-access-token:<token>@github.com/…`.
+    // Scrub the token (and any incidental occurrences in stdout/stderr)
+    // before anything reaches the logs.
+    const scrub = (s: unknown): string =>
+      typeof s === "string" ? s.replaceAll(pre.token, "[REDACTED-TOKEN]") : "";
+    const safeMessage = scrub(err?.message) || scrub(err?.toString?.()) || "unknown error";
+    console.warn(
+      `[sandbox] Pre-clone of ${pre.owner}/${pre.repo}@${pre.branch} failed (${safeMessage}). ` +
+      `Agent will need to clone via MCP.`,
+    );
   }
 }
