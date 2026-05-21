@@ -20,8 +20,8 @@ const description = "Inside Last Light: EventEnvelope, the YAML workflow engine,
 		<div class="callout-card">
 			<p>This approach was inspired by the <a href="https://x.com/realsigridjin/status/2039472968624185713" target="_blank" rel="noopener">claw-code article</a> by Sigrid Jin, which describes how the <strong>oh-my-codex (OmX)</strong> system rebuilt an entire codebase while the developer slept. The key insight:</p>
 			<blockquote>"The code is a byproduct. The thing worth studying is the system that produced it."</blockquote>
-			<p>The OmX system uses three tools working together: <a href="https://github.com/Yeachan-Heo/oh-my-codex" target="_blank" rel="noopener"><strong>oh-my-codex</strong></a> for workflow orchestration, <a href="https://github.com/Yeachan-Heo/clawhip" target="_blank" rel="noopener"><strong>clawhip</strong></a> for event routing, and <strong>oh-my-openagent</strong> for multi-agent coordination. We adapted the core patterns — role-based agents, closed development loops, and GitHub-first coordination — into a lightweight TypeScript harness built on the <a href="https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/sdk" target="_blank" rel="noopener">Claude Agent SDK</a>.</p>
-			<p>The execution model — spawning Claude Code as an isolated subprocess per task with Docker sandboxing — was inspired by <a href="https://github.com/mattpocock/sandcastle" target="_blank" rel="noopener"><strong>Sandcastle</strong></a> by Matt Pocock, which demonstrated that the Claude CLI can be driven programmatically as a headless agent inside containers, with the harness managing orchestration and the agent managing the work.</p>
+			<p>The OmX system uses three tools working together: <a href="https://github.com/Yeachan-Heo/oh-my-codex" target="_blank" rel="noopener"><strong>oh-my-codex</strong></a> for workflow orchestration, <a href="https://github.com/Yeachan-Heo/clawhip" target="_blank" rel="noopener"><strong>clawhip</strong></a> for event routing, and <strong>oh-my-openagent</strong> for multi-agent coordination. We adapted the core patterns — role-based agents, closed development loops, and GitHub-first coordination — into a lightweight TypeScript harness built on the <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> runtime.</p>
+			<p>The execution model — spawning an isolated agent subprocess per task with Docker sandboxing — was inspired by <a href="https://github.com/mattpocock/sandcastle" target="_blank" rel="noopener"><strong>Sandcastle</strong></a> by Matt Pocock, which demonstrated that a coding-agent CLI can be driven programmatically as a headless agent inside containers, with the harness managing orchestration and the agent managing the work.</p>
 		</div>
 	</section>
 
@@ -483,7 +483,7 @@ reviewer-verdict.md    ← APPROVED or REQUEST_CHANGES, issues list, test result
 			<div class="comparison-row">
 				<span class="comparison-label">Runtime</span>
 				<span>OpenAI Codex CLI + tmux</span>
-				<span>Claude Agent SDK + Docker sandbox</span>
+				<span>OpenCode runtime + Docker sandbox</span>
 			</div>
 			<div class="comparison-row">
 				<span class="comparison-label">Role system</span>

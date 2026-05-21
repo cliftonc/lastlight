@@ -113,9 +113,9 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<p>
 		Not a YAML workflow — Slack messages that don't match any of the above
-		intents are handled by the <strong>chat skill</strong>, which runs the
-		Claude Agent SDK directly in the harness process (no Docker sandbox) for
-		low-latency replies. Each Slack thread maps to one persistent Agent SDK
+		intents are handled by the <strong>chat skill</strong>, which talks to a
+		long-lived <code>opencode serve</code> process over HTTP (no Docker sandbox)
+		for low-latency replies. Each Slack thread maps to one persistent OpenCode
 		session, so the conversation maintains context across messages.
 	</p>
 

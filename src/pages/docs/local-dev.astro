@@ -43,19 +43,27 @@ WEBHOOK_SECRET=your-webhook-secret</code></pre>
 		only need to rebuild it when <code>sandbox.Dockerfile</code> changes.
 	</p>
 
-	<h2>4. Log in to Claude Code (if using subscription auth)</h2>
-
-	<pre><code>claude login</code></pre>
+	<h2>4. Set a model API key</h2>
 
 	<p>
-		The harness reads your host credentials once and seeds them into
-		<code>./data/sandbox-claude-home/</code> on every start. If you later refresh your
-		login, the next <code>npm run dev</code> picks it up automatically.
+		The agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> —
+		provider-agnostic. Drop the matching key into <code>.env</code>:
 	</p>
 
+	<pre><code># Default model is openai/gpt-5.5
+OPENAI_API_KEY=sk-...
+
+# Or, if you'd rather route to Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+OPENCODE_MODEL=anthropic/claude-sonnet-4-6
+
+# Or use OpenRouter — one key, many models
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENCODE_MODEL=openrouter/anthropic/claude-sonnet-4.5</code></pre>
+
 	<p>
-		If you're using API-key mode instead, just set <code>ANTHROPIC_API_KEY</code> in
-		<code>.env</code> and skip this step.
+		No interactive login step. OpenCode reads the API key from the harness env and
+		passes it through to the sandbox container.
 	</p>
 
 	<h2>5. Start the harness</h2>
@@ -71,10 +79,9 @@ npm run dev:dashboard</code></pre>
 
 	<ul>
 		<li>Verifies Docker is running and the sandbox image exists.</li>
-		<li>Re-seeds <code>./data/sandbox-claude-home/.credentials.json</code> from your host credentials.</li>
+		<li>Generates the OpenCode config and the MCP wiring under <code>./data/</code>.</li>
 		<li>
 			Sets safe defaults: <code>LASTLIGHT_LOCAL_DEV=1</code>,
-			<code>SANDBOX_DATA_VOLUME=./data/sandbox-claude-home</code>,
 			<code>STATE_DIR=./data</code>, <code>ENABLE_DIRECT_FALLBACK=false</code>.
 		</li>
 		<li>Launches the harness with <code>tsx watch src/index.ts</code>.</li>
@@ -83,9 +90,8 @@ npm run dev:dashboard</code></pre>
 	<div class="docs-callout tip">
 		<div class="docs-callout-body">
 			<code>LASTLIGHT_LOCAL_DEV=1</code> tells the harness <strong>not</strong> to
-			touch your personal <code>~/.gitconfig</code>, <code>~/.claude/</code> history,
-			or keychain. Everything sandbox-related stays inside
-			<code>./data/</code>. Safe to run on a dev laptop.
+			touch your personal <code>~/.gitconfig</code> or keychain. Everything
+			sandbox-related stays inside <code>./data/</code>. Safe to run on a dev laptop.
 		</div>
 	</div>
 

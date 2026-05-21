@@ -50,8 +50,9 @@ cp ~/path-to/your-app.private-key.pem secrets/</code></pre>
 			<li><strong>GitHub App credentials</strong> — App ID, Installation ID, and private key path</li>
 			<li><strong>Webhook secret</strong> — must match your GitHub App's webhook settings</li>
 			<li><strong>Domain</strong> — your public hostname for automatic TLS (or <code>localhost</code> for dev)</li>
-			<li><strong>Anthropic API key</strong> — for Claude API access (or use <code>claude login</code> for subscription-based auth)</li>
-			<li><strong>Model overrides</strong> (optional) — <code>CLAUDE_MODELS</code> as JSON to route architect/executor/reviewer phases to different models</li>
+			<li><strong>Model API key</strong> — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> matching your <code>OPENCODE_MODEL</code> (the agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a>, provider-agnostic; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc.)</li>
+			<li><strong>Model overrides</strong> (optional) — <code>OPENCODE_MODELS</code> as JSON to route architect/executor/reviewer phases to different <code>provider/model</code> strings</li>
+			<li><strong>Reasoning effort</strong> (optional) — <code>OPENCODE_VARIANT</code> as the default (<code>minimal</code> / <code>medium</code> / <code>high</code> / <code>max</code>), or <code>OPENCODE_VARIANTS</code> JSON for per-phase overrides</li>
 			<li><strong>Approval gates</strong> (optional) — <code>APPROVAL_GATES=post_architect,post_reviewer</code> to pause at human-in-the-loop checkpoints</li>
 			<li><strong>Admin dashboard</strong> (recommended) — <code>ADMIN_PASSWORD</code> and a stable <code>ADMIN_SECRET</code> for persistent login sessions</li>
 			<li><strong>Slack chat</strong> (optional) — <code>SLACK_BOT_TOKEN</code> and <code>SLACK_APP_TOKEN</code> for the in-process chat skill (Socket Mode)</li>
@@ -62,7 +63,7 @@ cp ~/path-to/your-app.private-key.pem secrets/</code></pre>
 
 		<div class="step-block">
 			<h3><span class="step-label">Step 3</span> Build & run</h3>
-		<p class="section-desc">The Docker image is self-contained — Claude Code CLI, the MCP server, all skills, and dependencies are baked in. Secrets are injected at runtime via the mounted volume.</p>
+		<p class="section-desc">The Docker image is self-contained — the OpenCode binary, the MCP server, all skills, and dependencies are baked in. Secrets are injected at runtime via the mounted volume.</p>
 		<pre><code># Set your public domain (for Caddy TLS)
 export DOMAIN=lastlight.example.com
 
@@ -71,10 +72,7 @@ docker compose up -d
 
 # Watch the logs
 docker compose logs -f agent</code></pre>
-		<p class="step-detail">If this is your first time, log in to Claude Code inside the container:</p>
-		<pre><code># One-time auth — persists in the Docker volume
-docker exec -it lastlight-agent-1 claude login</code></pre>
-		<p class="step-detail">Follow the URL in your browser to authenticate. The auth token survives container restarts and rebuilds.</p>
+		<p class="step-detail">No interactive login step — OpenCode authenticates via the <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> / <code>OPENROUTER_API_KEY</code> you put in <code>secrets/.env</code>.</p>
 
 		<p class="step-detail">What happens:</p>
 		<ul class="config-list">
@@ -191,7 +189,7 @@ spec:
 git merge upstream/main
 docker compose build
 docker compose up -d</code></pre>
-				<p>This also updates Claude Code CLI (installed during the build). To pick up the latest CLI without any Last Light changes, just rebuild:</p>
+				<p>This also updates the OpenCode binary (installed during the build). To pick up the latest OpenCode without any Last Light changes, just rebuild:</p>
 				<pre><code>docker compose build --no-cache agent
 docker compose up -d agent</code></pre>
 			</div>
@@ -205,7 +203,7 @@ docker compose up -d agent</code></pre>
 			</div>
 			<div class="tip-card">
 				<h3>LLM costs</h3>
-				<p>Each triage or review is ~1 agent session. Build requests use more tokens. Locally, your Claude Code subscription covers the cost. For production, costs depend on your <code>ANTHROPIC_API_KEY</code> usage.</p>
+				<p>Each triage or review is ~1 agent session. Build requests use more tokens. Costs depend on your configured model provider's API usage (OpenAI / Anthropic / OpenRouter / whichever <code>OPENCODE_MODEL</code> points at). Route cheap models to high-volume phases (triage, screen) via <code>OPENCODE_MODELS</code> to keep the bill down.</p>
 			</div>
 			<div class="tip-card">
 				<h3>Logs</h3>

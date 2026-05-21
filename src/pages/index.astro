@@ -94,8 +94,9 @@ const description = "An open-source agent that keeps the lights on in your GitHu
 	<section class="how-it-works">
 		<h2>How it works</h2>
 		<p class="section-desc">
-			Built on the <a href="https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/sdk" target="_blank" rel="noopener">Claude Agent SDK</a>
-			with a custom MCP server packing 28+ GitHub tools.
+			Built on the <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> runtime —
+			provider-agnostic, runs against OpenAI, Anthropic, <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>, or any other model you wire up — with
+			a custom MCP server packing 28+ GitHub tools.
 			Authenticates as its own GitHub App — every action is clearly from the bot, not you.
 		</p>
 		<div class="architecture">
@@ -139,10 +140,14 @@ const description = "An open-source agent that keeps the lights on in your GitHu
 		</p>
 
 		<div class="step-block">
-			<h3><span class="step-label">Step 1</span> Install Claude Code CLI</h3>
-			<pre><code>curl -fsSL https://claude.ai/install.sh | bash
-claude login</code></pre>
-			<p>The Agent SDK uses your Claude Code login (subscription). No separate API key needed. To use an API key instead, set <code>ANTHROPIC_API_KEY</code> in <code>.env</code>.</p>
+			<h3><span class="step-label">Step 1</span> Set a model API key</h3>
+			<p>Last Light's agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> — provider-agnostic. Set the key matching your chosen model in <code>.env</code>:</p>
+			<pre><code>OPENAI_API_KEY=sk-...
+# or
+ANTHROPIC_API_KEY=sk-ant-...
+# or use one OpenRouter key for Claude / GPT / Gemini / Llama / ...
+OPENROUTER_API_KEY=sk-or-v1-...</code></pre>
+			<p>The default model is <code>openai/gpt-5.5</code>. Override per-phase via <code>OPENCODE_MODEL</code> / <code>OPENCODE_MODELS</code>. Any <code>provider/model</code> string OpenCode supports works.</p>
 		</div>
 
 		<div class="step-block">
@@ -338,7 +343,7 @@ SLACK_DELIVERY_CHANNEL=C01XYZ        # channel for health reports</code></pre>
 				</button>
 				<figcaption>
 					<strong>Sandbox Sessions</strong>
-					<span>Drill into any Docker-sandboxed agent run. Full Agent SDK conversation — assistant thinking, tool calls, reviewer verdicts — filterable by skill, repo, and time range.</span>
+					<span>Drill into any Docker-sandboxed agent run. Full OpenCode conversation — assistant thinking, tool calls, reviewer verdicts — filterable by skill, repo, and time range.</span>
 				</figcaption>
 			</figure>
 
@@ -348,7 +353,7 @@ SLACK_DELIVERY_CHANNEL=C01XYZ        # channel for health reports</code></pre>
 				</button>
 				<figcaption>
 					<strong>Chat Sessions</strong>
-					<span>DB-backed history for every Slack thread. The bot resumes the same Agent SDK session each turn, so one thread = one growing, coherent conversation.</span>
+					<span>DB-backed history for every Slack thread. The bot resumes the same OpenCode session each turn, so one thread = one growing, coherent conversation.</span>
 				</figcaption>
 			</figure>
 		</div>

@@ -14,11 +14,11 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
 	<div class="docs-callout warn">
 		<div class="docs-callout-body">
-			<strong>Deploy on an isolated host.</strong> Last Light runs arbitrary code
-			from Claude inside Docker sandbox containers. While that isolation is strong, it
-			is early-stage software and may have undiscovered weaknesses. Put it on a host
-			that cannot reach your internal systems, databases, or credentials beyond what it
-			explicitly needs.
+			<strong>Deploy on an isolated host.</strong> Last Light runs arbitrary
+			agent-generated code inside Docker sandbox containers. While that isolation is
+			strong, it is early-stage software and may have undiscovered weaknesses. Put it
+			on a host that cannot reach your internal systems, databases, or credentials
+			beyond what it explicitly needs.
 		</div>
 	</div>
 
@@ -32,8 +32,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	<pre><code>npx lastlight setup</code></pre>
 
 	<p>
-		It walks you through entering your GitHub App credentials, Anthropic API key,
-		domain, and optional Slack integration. When done it writes <code>.env</code>,
+		It walks you through entering your GitHub App credentials, model provider
+		API key (OpenAI / Anthropic / OpenRouter), domain, and optional Slack integration. When done it writes <code>.env</code>,
 		copies your PEM key into place, generates the Docker Compose config, and offers
 		to build and start the containers.
 	</p>
@@ -76,13 +76,14 @@ cp /path/to/your-app.private-key.pem secrets/</code></pre>
 		<li><code>GITHUB_APP_ID</code>, <code>GITHUB_APP_INSTALLATION_ID</code>, <code>GITHUB_APP_PRIVATE_KEY_PATH</code></li>
 		<li><code>WEBHOOK_SECRET</code></li>
 		<li><code>DOMAIN</code> — your public hostname, used by Caddy for automatic TLS</li>
-		<li><code>ANTHROPIC_API_KEY</code> — optional; skip if using Claude subscription auth</li>
+		<li><code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> — must match whichever provider <code>OPENCODE_MODEL</code> resolves to (default <code>openai/gpt-5.5</code>). One OpenRouter key covers most providers if you want a single billing surface.</li>
 	</ul>
 
 	<p>
 		See the <a href="/docs/configuration">Configuration reference</a> for every
 		variable the harness understands, including optional knobs like
-		<code>CLAUDE_MODELS</code>, <code>APPROVAL_GATES</code>,
+		<code>OPENCODE_MODEL</code>, <code>OPENCODE_MODELS</code>,
+		<code>OPENCODE_VARIANT</code>, <code>APPROVAL_GATES</code>,
 		<code>ADMIN_PASSWORD</code>, and the Slack OAuth group.
 	</p>
 
@@ -103,22 +104,7 @@ docker compose logs -f agent</code></pre>
 		Encrypt certificate on first start. DNS must already resolve to the host.
 	</p>
 
-	<h3>4. First-time Claude auth (subscription mode)</h3>
-
-	<p>
-		If you're using the Claude subscription (no <code>ANTHROPIC_API_KEY</code>), log
-		in once inside the container. <strong>Always pass <code>--user lastlight</code></strong>
-		— logging in as root corrupts the credentials file and breaks MCP auth.
-	</p>
-
-	<pre><code>docker exec -it --user lastlight lastlight-agent-1 claude login</code></pre>
-
-	<p>
-		Follow the printed URL in your browser. The token persists in the Docker volume
-		and survives restarts and rebuilds.
-	</p>
-
-	<h3>5. Verify it's running</h3>
+	<h3>4. Verify it's running</h3>
 
 	<pre><code>curl https://lastlight.example.com/health
 # &#123; "status": "ok" &#125;
@@ -131,7 +117,7 @@ curl -X POST https://lastlight.example.com/webhooks/github -d '&#123;&#125;'</co
 		Home tab. You should see live activity stats, recent workflows, and resource usage.
 	</p>
 
-	<h3>6. Wire up the webhook</h3>
+	<h3>5. Wire up the webhook</h3>
 
 	<p>Back in your GitHub App settings:</p>
 
@@ -156,7 +142,8 @@ curl -X POST https://lastlight.example.com/webhooks/github -d '&#123;&#125;'</co
 
 	<ul>
 		<li><code>lastlight.db</code> — SQLite: executions, workflow runs, approvals, messaging sessions, rate limits, system status.</li>
-		<li><code>claude-home/projects/</code> — Agent SDK session JSONL files (the full audit trail for every run).</li>
+		<li><code>opencode-home/projects/</code> — OpenCode session JSONL files (Claude-SDK-style envelope — the full audit trail for every run).</li>
+		<li><code>opencode-serve/</code> — working dir for the long-lived <code>opencode serve</code> chat process (generated <code>opencode.json</code> + <code>AGENTS.md</code>).</li>
 		<li><code>sandboxes/</code> — cloned repos, one per task.</li>
 		<li><code>logs/</code> — structured harness logs.</li>
 		<li><code>secrets/app.pem</code> — mode-600 copy of the GitHub App key, used by sandbox containers via the shared volume.</li>

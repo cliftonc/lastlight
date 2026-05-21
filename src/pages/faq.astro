@@ -23,7 +23,7 @@ const description = "Frequently asked questions about Last Light — the open-so
 				<div class="faq-answer">
 					<p>Three things:</p>
 					<ol>
-						<li><a href="https://claude.ai/download" target="_blank" rel="noopener">Claude Code CLI</a> installed and logged in (<code>claude login</code>)</li>
+						<li>An API key for your chosen model provider — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> (the agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a>, provider-agnostic; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc. through a single endpoint)</li>
 						<li>A <a href="https://docs.github.com/en/apps/creating-github-apps" target="_blank" rel="noopener">GitHub App</a> with Issues, PRs, and Contents permissions</li>
 						<li>Node.js 20+ and Docker (for sandbox execution)</li>
 					</ol>
@@ -34,8 +34,8 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>Which LLM does it use?</summary>
 				<div class="faq-answer">
-					<p>Last Light uses Claude via the <a href="https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/sdk" target="_blank" rel="noopener">Claude Agent SDK</a>. The default model is <code>claude-sonnet-4-6</code>, configurable via the <code>CLAUDE_MODEL</code> environment variable.</p>
-					<p>Locally, the Agent SDK uses your Claude Code subscription — no separate API key needed. For production, set <code>ANTHROPIC_API_KEY</code> in <code>.env</code>.</p>
+					<p>The agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> (<code>sst/opencode</code>) — provider-agnostic. The default model is <code>openai/gpt-5.5</code>, configurable via the <code>OPENCODE_MODEL</code> environment variable. Any <code>provider/model</code> string OpenCode supports works (<code>openai/…</code>, <code>anthropic/…</code>, <code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>, etc.).</p>
+					<p>Per-phase overrides go through <code>OPENCODE_MODELS</code> as JSON — e.g. <code>&#123;"architect":"openrouter/anthropic/claude-sonnet-4.5","triage":"openrouter/google/gemini-2.5-flash"&#125;</code>. Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> to match — one OpenRouter key covers most providers.</p>
 				</div>
 			</details>
 
@@ -85,8 +85,8 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>What's the difference between Sandbox Sessions and Chat Sessions?</summary>
 				<div class="faq-answer">
-					<p><strong>Sandbox sessions</strong> are agent runs that executed inside a Docker sandbox — triage, PR review, build, health report, anything driven by a YAML workflow. They are stored as Agent SDK JSONL files on disk and listed on the dashboard's <em>Sandbox Sessions</em> tab.</p>
-					<p><strong>Chat sessions</strong> are conversations from Slack threads. They run the in-process <code>chat</code> skill (not sandboxed) so replies are low-latency, and the harness <strong>resumes the same Agent SDK session</strong> on every turn of a given Slack thread. Every turn is persisted to SQLite (<code>executions</code> table) and one thread becomes one growing, coherent JSONL. They live on the dashboard's <em>Chat Sessions</em> tab.</p>
+					<p><strong>Sandbox sessions</strong> are agent runs that executed inside a Docker sandbox — triage, PR review, build, health report, anything driven by a YAML workflow. Each phase runs <code>opencode run --format json</code> in the container; events are streamed into a Claude-SDK-style JSONL envelope on disk and listed on the dashboard's <em>Sandbox Sessions</em> tab.</p>
+					<p><strong>Chat sessions</strong> are conversations from Slack threads. They talk to a long-lived <code>opencode serve</code> process over HTTP — one OpenCode session per Slack thread, resumed on every turn so context holds for hours or days. Every turn is persisted to SQLite (<code>executions</code> table) and one thread becomes one growing, coherent JSONL. They live on the dashboard's <em>Chat Sessions</em> tab.</p>
 					<p>In short: sandbox sessions are one-shot workflow runs; chat sessions are multi-turn conversations glued to a Slack thread.</p>
 				</div>
 			</details>
@@ -141,16 +141,16 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>How much does it cost to run?</summary>
 				<div class="faq-answer">
-					<p>The main cost is Claude API usage. Each issue triage or PR review is roughly one agent session. For a repo with a few events per day, expect modest API costs. Build requests (cloning, editing, testing) use more tokens but are less frequent.</p>
-					<p>Locally, you can use your Claude Code subscription at no extra cost. For production, set an <code>ANTHROPIC_API_KEY</code> and costs depend on usage.</p>
+					<p>The main cost is model API usage on whichever provider you've configured (OpenAI, Anthropic, OpenRouter, etc.). Each issue triage or PR review is roughly one agent session. For a repo with a few events per day, expect modest API costs. Build requests (cloning, editing, testing) use more tokens but are less frequent.</p>
+					<p>Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> to match your <code>OPENCODE_MODEL</code> and costs depend on usage. Cheap models like <code>anthropic/claude-haiku-4-5-20251001</code> or <code>openrouter/google/gemini-2.5-flash</code> can be routed to high-volume phases (triage, screen) via <code>OPENCODE_MODELS</code> to keep the bill down. OpenRouter adds a small per-token markup over going direct, but in exchange you get a single key + dashboard for every model.</p>
 					<p>The agent itself is free and open-source.</p>
 				</div>
 			</details>
 
 			<details class="faq-item">
-				<summary>What if the Claude API goes down?</summary>
+				<summary>What if the model provider goes down?</summary>
 				<div class="faq-answer">
-					<p>If the Claude API is unavailable, agent sessions will fail and the error is logged. GitHub webhook events are retried by GitHub automatically if your endpoint doesn't respond, so the work will be picked up when service returns. The execution database tracks all attempts for visibility.</p>
+					<p>If the configured model provider is unavailable, agent sessions will fail and the error is logged. GitHub webhook events are retried by GitHub automatically if your endpoint doesn't respond, so the work will be picked up when service returns. Because OpenCode is provider-agnostic, you can flip <code>OPENCODE_MODEL</code> to a different provider during an outage. The execution database tracks all attempts for visibility.</p>
 				</div>
 			</details>
 
