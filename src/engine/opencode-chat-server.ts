@@ -522,9 +522,17 @@ export function buildChatAgentDef(): Record<string, unknown> {
       glob: "allow",
       grep: "allow",
       list: "allow",
-      // Web lookups + internal scratchpad — useful for conversational
-      // responses, no escape from the fence.
-      webfetch: "allow",
+      // `webfetch` is denied: the chat persona has no legitimate use for
+      // freeform HTTP reads (everything it needs from GitHub is covered
+      // by the github_* allow-list below), and leaving it on opens host-
+      // probing vectors — public IP services (ifconfig.me), cloud
+      // metadata endpoints (169.254.169.254), internal network scans —
+      // none of which we want a Slack-driven persona reaching. Sandbox
+      // workflows that DO need webfetch run under a different agent def.
+      webfetch: "deny",
+      // `websearch` stays allowed: it goes through OpenCode's configured
+      // search provider, not arbitrary URLs, so it can't be turned into
+      // a host probe.
       websearch: "allow",
       todowrite: "allow",
       // GitHub MCP — explicit per-tool allow-list. Every tool exposed by

@@ -7,6 +7,22 @@ const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
+// LLMs that see optional fields in a tool's JSON Schema sometimes emit
+// zero / empty-string values for ones they didn't actually want to set
+// (notably gpt-5.5 on `milestone: number`, which triggers GitHub's
+// "milestone: invalid" validation). Strip those before spreading opts
+// into an Octokit call so the API only sees fields the agent meant to
+// pass.
+function omitFalsy(opts) {
+  const out = {};
+  for (const [k, v] of Object.entries(opts ?? {})) {
+    if (v === undefined || v === null || v === "" || v === 0) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 export class GitHubClient {
   constructor(auth) {
     this.auth = auth;
@@ -175,7 +191,7 @@ export class GitHubClient {
     return this._withRetry(async () => {
       const ok = await this.octokit();
       const { data } = await ok.issues.listForRepo({
-        owner, repo, state: "open", per_page: 30, ...opts,
+        owner, repo, state: "open", per_page: 30, ...omitFalsy(opts),
       });
       return data;
     });
@@ -192,7 +208,9 @@ export class GitHubClient {
   async createIssue(owner, repo, title, body, opts = {}) {
     return this._withRetry(async () => {
       const ok = await this.octokit();
-      const { data } = await ok.issues.create({ owner, repo, title, body, ...opts });
+      const { data } = await ok.issues.create({
+        owner, repo, title, body, ...omitFalsy(opts),
+      });
       return data;
     });
   }
@@ -200,7 +218,9 @@ export class GitHubClient {
   async updateIssue(owner, repo, issue_number, updates) {
     return this._withRetry(async () => {
       const ok = await this.octokit();
-      const { data } = await ok.issues.update({ owner, repo, issue_number, ...updates });
+      const { data } = await ok.issues.update({
+        owner, repo, issue_number, ...omitFalsy(updates),
+      });
       return data;
     });
   }
@@ -217,7 +237,7 @@ export class GitHubClient {
     return this._withRetry(async () => {
       const ok = await this.octokit();
       const { data } = await ok.issues.listComments({
-        owner, repo, issue_number, per_page: 30, ...opts,
+        owner, repo, issue_number, per_page: 30, ...omitFalsy(opts),
       });
       return data;
     });

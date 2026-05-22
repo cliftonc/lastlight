@@ -43,10 +43,17 @@ describe("buildChatAgentDef", () => {
     }
   });
 
-  it("allows web lookups, internal scratchpad, and read-only host tools", () => {
-    for (const t of ["read", "glob", "grep", "list", "webfetch", "websearch", "todowrite"]) {
+  it("allows websearch, internal scratchpad, and read-only host tools", () => {
+    for (const t of ["read", "glob", "grep", "list", "websearch", "todowrite"]) {
       expect(def.permission[t]).toBe("allow");
     }
+  });
+
+  it("denies webfetch to block host/cloud-metadata probing from chat", () => {
+    // chat has no legitimate use for freeform HTTP reads — every GitHub
+    // need is covered by the github_* allow-list, and webfetch would
+    // otherwise be a path to ifconfig.me / 169.254.169.254 / etc.
+    expect(def.permission.webfetch).toBe("deny");
   });
 
   it("denies destructive github_* tools (code / branch / PR mutation)", () => {

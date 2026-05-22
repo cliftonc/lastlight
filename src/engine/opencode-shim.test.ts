@@ -321,4 +321,105 @@ describe("ClaudeJsonlShim", () => {
       "api_error",
     ]);
   });
+
+  describe("finalizeWithFallback", () => {
+    it("writes a stub envelope under the synthetic id when no sessionID was observed", async () => {
+      // Simulates a sandbox / chat-server crash before any OpenCode
+      // event reached the shim — without the fallback path the dashboard
+      // sees an executions row with no matching jsonl file.
+      const shim = new ClaudeJsonlShim({
+        homeDir: dir,
+        projectSlug: "-app",
+        mcpServerNames: ["github"],
+        initialPrompt: "what's your IP",
+      });
+      const returnedId = await shim.finalizeWithFallback(
+        {
+          finalText: "",
+          turns: 0,
+          costUsd: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          stopReason: "error_chat",
+          durationMs: 17,
+        },
+        "exec-chat-T123-456",
+        "chat-server: connection refused",
+      );
+      expect(returnedId).toBe("exec-chat-T123-456");
+      const lines = readJsonl("-app", "exec-chat-T123-456");
+      // Order: initial user prompt, error-frame assistant envelope, terminal result.
+      expect(lines[0]).toMatchObject({
+        type: "user",
+        message: { role: "user", content: "what's your IP" },
+      });
+      expect(lines[1]).toMatchObject({
+        type: "assistant",
+        isApiErrorMessage: true,
+        error: "chat-server: connection refused",
+      });
+      expect(lines.at(-1)).toMatchObject({ type: "result", subtype: "error_chat" });
+    });
+
+    it("rejects unsafe synthetic ids that survive basename() without writing anything", async () => {
+      // basename() already strips any `..` / `/` from a traversal
+      // attempt, so the second line of defence is the charset check.
+      // Use a synthetic id with characters that survive basename but
+      // fail `/^[A-Za-z0-9_-]+$/`.
+      const shim = new ClaudeJsonlShim({
+        homeDir: dir,
+        projectSlug: "-app",
+        initialPrompt: "p",
+      });
+      const returnedId = await shim.finalizeWithFallback(
+        {
+          finalText: "",
+          turns: 0,
+          costUsd: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          stopReason: "error_sandbox",
+          durationMs: 1,
+        },
+        "bad id with spaces!",
+        "boom",
+      );
+      expect(returnedId).toBeNull();
+      expect(existsSync(join(dir, "projects", "-app", "bad id with spaces!.jsonl"))).toBe(false);
+    });
+
+    it("no-ops the bootstrap path when a real sessionID has already been seen", async () => {
+      const shim = new ClaudeJsonlShim({
+        homeDir: dir,
+        projectSlug: "-home-agent-workspace",
+        mcpServerNames: ["github"],
+        initialPrompt: "p",
+      });
+      await feedAll(shim, FIXTURE_EVENTS);
+      const returnedId = await shim.finalizeWithFallback(
+        {
+          finalText: "ok",
+          turns: 1,
+          costUsd: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          stopReason: "success",
+          durationMs: 5,
+        },
+        "exec-should-be-ignored",
+        undefined,
+      );
+      // Real session id wins; no synthetic file should exist.
+      expect(returnedId).toBe(SESSION_ID);
+      expect(
+        existsSync(join(dir, "projects", "-home-agent-workspace", "exec-should-be-ignored.jsonl")),
+      ).toBe(false);
+    });
+  });
 });

@@ -138,6 +138,73 @@ export class ClaudeJsonlShim {
     this.appendLines([envelope]);
   }
 
+  /**
+   * Same contract as `finalize`, but bootstraps a minimal envelope file
+   * under a caller-supplied synthetic id when no OpenCode `sessionID`
+   * event was ever observed (sandbox died on startup, chat-server
+   * rejected the turn, network blip before the first chunk, etc.).
+   *
+   * Returns the session id that was actually used for the on-disk file,
+   * which the caller should record onto the `executions` row so the
+   * dashboard can link the row to the jsonl. Returns `null` if the
+   * fallback id failed the safe-charset check.
+   *
+   * `fallbackSessionId` must match the same charset enforced by
+   * `feed()` (`/^[A-Za-z0-9_-]+$/`). Pass something stable like the
+   * harness execution UUID so the dashboard URL stays predictable.
+   *
+   * No-op (just calls `finalize` + `flush`) when the shim already saw a
+   * real sessionID — returns that real id instead.
+   */
+  async finalizeWithFallback(
+    result: ShimResultEnvelope,
+    fallbackSessionId: string,
+    errorMessage?: string,
+  ): Promise<string | null> {
+    if (!this.filePath) {
+      const safeId = path.basename(fallbackSessionId);
+      if (!/^[A-Za-z0-9_-]+$/.test(safeId)) {
+        // Caller passed an unsafe id — flush what little we have (which
+        // is nothing) and bail. Better to lose the envelope than to
+        // traverse out of projects/<slug>/.
+        await this.flush();
+        return null;
+      }
+      const dir = path.join(this.opts.homeDir, "projects", this.opts.projectSlug);
+      this.filePath = path.join(dir, `${safeId}.jsonl`);
+
+      const ts = new Date().toISOString();
+      const bootstrap: object[] = [];
+      if (!this.initialWritten) {
+        this.initialWritten = true;
+        bootstrap.push({
+          type: "user",
+          message: { role: "user", content: this.opts.initialPrompt },
+          timestamp: ts,
+          sessionId: safeId,
+        });
+      }
+      if (errorMessage) {
+        bootstrap.push({
+          type: "assistant",
+          isApiErrorMessage: true,
+          error: errorMessage,
+          timestamp: ts,
+          sessionId: safeId,
+        });
+      }
+      if (bootstrap.length > 0) this.appendLines(bootstrap);
+
+      this.finalize(result);
+      await this.flush();
+      return safeId;
+    }
+
+    this.finalize(result);
+    await this.flush();
+    return path.basename(this.filePath, ".jsonl");
+  }
+
   /** Wait for all queued writes to flush to disk. */
   async flush(): Promise<void> {
     await this.writeChain;

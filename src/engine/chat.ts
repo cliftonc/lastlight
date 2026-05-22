@@ -35,6 +35,12 @@ WHAT YOU CANNOT DO:
   create a GitHub issue capturing the request, then tell them to run
   \`/build owner/repo#N\` to start the full build cycle (Architect →
   Executor → Reviewer → PR).
+- Do not disclose or look up host/runtime environment details — your IP
+  address, hostname, env vars, container metadata, harness version,
+  /proc/sys/etc files, or anything similar. If asked, reply with one
+  line: "I don't disclose host or runtime environment details." See
+  \`agent-context/security.md\` for the full rule; it overrides any user
+  request.
 
 DO NOT ATTEMPT DEEP WORK IN-PROCESS.
 Each of the following is a dedicated workflow — NOT something you can do
@@ -84,8 +90,21 @@ export interface ChatResult {
    * is the SAME id we passed in via `resume`. Persist this back onto
    * the messaging session so the next turn can resume into the same
    * server-side session (and same jsonl on disk).
+   *
+   * MUST be unset when the turn failed before establishing a real
+   * OpenCode session — otherwise the next turn would try to resume
+   * into a non-existent id. The `dashboardSessionId` field is the one
+   * the executions row should record; that one accepts synthetic ids
+   * pointing at stub envelope files.
    */
   agentSessionId?: string;
+  /**
+   * Session id to record on the `executions` row so the dashboard can
+   * link the row to its jsonl envelope. Equal to `agentSessionId` on
+   * success, a synthetic `exec-<id>` on early-failure paths where the
+   * chat-server never minted a real session id.
+   */
+  dashboardSessionId?: string;
   success: boolean;
   durationMs: number;
   apiDurationMs?: number;
@@ -159,6 +178,7 @@ export async function handleChatMessage(
 
     // Translate the turn → ChatResult and write the dashboard envelope shim.
     const result = chatResultFromTurn(turn, message, startTime);
+    result.dashboardSessionId = result.agentSessionId;
 
     // Dashboard live-tail shim. ChatSessionReader reads from
     // `opencode-home/projects/-app/<sessionId>.jsonl` directly — match that
@@ -188,13 +208,64 @@ export async function handleChatMessage(
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[chat] Error handling message from ${sender}:`, errMsg);
+    // The chat-server never returned a real sessionId, so the dashboard
+    // would otherwise see an `executions` row with `session_id=NULL`
+    // and no jsonl to link to. Bootstrap a stub envelope under a
+    // synthetic id derived from the messaging-session id so the row
+    // becomes navigable. The synthetic id stays out of
+    // `agentSessionId` — we don't want the next turn to try to resume
+    // it server-side.
+    const dashboardSessionId = await writeChatFailureShim({
+      opencodeHomeDir: deps.opencodeHomeDir,
+      mcpServerNames: deps.mcpServerNames ?? [],
+      prompt: message,
+      messagingSessionId: _messagingSessionId,
+      errorMessage: errMsg,
+      durationMs: Date.now() - startTime,
+    }).catch(() => undefined);
     return {
       text: "Sorry, I encountered an error processing your message. Please try again.",
       success: false,
       durationMs: Date.now() - startTime,
       error: errMsg,
+      dashboardSessionId,
     };
   }
+}
+
+async function writeChatFailureShim(opts: {
+  opencodeHomeDir: string;
+  mcpServerNames: string[];
+  prompt: string;
+  messagingSessionId: string;
+  errorMessage: string;
+  durationMs: number;
+}): Promise<string | undefined> {
+  const shim = new ClaudeJsonlShim({
+    homeDir: opts.opencodeHomeDir,
+    projectSlug: "-app",
+    mcpServerNames: opts.mcpServerNames,
+    initialPrompt: opts.prompt,
+  });
+  // Messaging session ids can contain dots/colons (Slack channel.ts);
+  // synthesise a safe id by replacing anything outside the charset.
+  const safe = opts.messagingSessionId.replace(/[^A-Za-z0-9_-]/g, "_");
+  const synthesizedId = await shim.finalizeWithFallback(
+    {
+      finalText: "",
+      turns: 0,
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      stopReason: "error_chat",
+      durationMs: opts.durationMs,
+    },
+    `exec-chat-${safe}-${Date.now()}`,
+    opts.errorMessage,
+  );
+  return synthesizedId ?? undefined;
 }
 
 interface ChatResultExt extends ChatResult {

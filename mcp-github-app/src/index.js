@@ -338,15 +338,13 @@ server.tool(
 
 server.tool(
   "create_issue",
-  "Create a new issue",
+  "Create a new issue. Only `owner`, `repo`, and `title` are required; `body` and `labels` are optional. The agent should NOT set milestone or assignees — humans manage those.",
   {
     owner: z.string(),
     repo: z.string(),
     title: z.string(),
     body: z.string().optional(),
     labels: z.array(z.string()).optional(),
-    assignees: z.array(z.string()).optional(),
-    milestone: z.number().optional(),
   },
   async ({ owner, repo, title, body, ...opts }) =>
     run(() => gh.createIssue(owner, repo, title, body, opts))

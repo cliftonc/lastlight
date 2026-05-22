@@ -640,7 +640,10 @@ async function main() {
           error: result.error,
           turns: result.turns,
           durationMs: result.durationMs,
-          sessionId: result.agentSessionId,
+          // Use dashboardSessionId so error rows still link to a (stub)
+          // jsonl envelope. Falls back to agentSessionId for success
+          // rows where the two are equal anyway.
+          sessionId: result.dashboardSessionId ?? result.agentSessionId,
           costUsd: result.costUsd,
           inputTokens: result.inputTokens,
           cacheCreationInputTokens: result.cacheCreationInputTokens,

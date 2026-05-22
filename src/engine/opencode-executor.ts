@@ -1,4 +1,4 @@
-import { resolve } from "path";
+import { resolve, basename } from "path";
 import { randomUUID } from "crypto";
 import { spawn } from "child_process";
 import { createTaskSandbox, type DockerSandbox } from "../sandbox/index.js";
@@ -370,13 +370,40 @@ async function executeSandboxed(
     };
   } catch (err: any) {
     console.error(`  [executor] Sandbox error: ${err.message}`);
-    await shim.flush().catch(() => { /* ignore */ });
+    // If we never received an OpenCode `sessionID` event (sandbox died
+    // on spawn, docker networking issue, parse failure on every line)
+    // the shim's filePath is still null and a plain flush() is a
+    // no-op — leaving the executions row with no jsonl envelope, so
+    // the dashboard can't surface it. Bootstrap a stub envelope under
+    // a synthetic id derived from the taskId so the row links to
+    // *something*.
+    const durationMs = Date.now() - startTime;
+    const fallbackId = `exec-${basename(taskId)}`;
+    const synthesizedId = await shim
+      .finalizeWithFallback(
+        {
+          finalText: "",
+          turns: 0,
+          costUsd: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          stopReason: "error_sandbox",
+          durationMs,
+        },
+        fallbackId,
+        err.message,
+      )
+      .catch(() => null);
     return {
       success: false,
       output: "",
       turns: 0,
       error: err.message,
-      durationMs: Date.now() - startTime,
+      durationMs,
+      sessionId: synthesizedId ?? undefined,
+      stopReason: "error_sandbox",
     };
   } finally {
     await cleanup();
