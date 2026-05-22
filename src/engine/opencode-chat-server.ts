@@ -296,36 +296,86 @@ export class OpencodeChatServer {
     child.on("error", (err) => console.error(`[chat-server] spawn error: ${err.message}`));
 
     this.baseUrl = `http://127.0.0.1:${this.cfg.port}`;
+    // Bind a quick TCP-only check so start() can confirm the listener is up
+    // before returning. We deliberately do NOT block on HTTP readiness here:
+    // opencode's first HTTP response triggers lazy project bootstrap which
+    // can take minutes inside Docker (provider init, plugin load, fs.watcher).
+    // If we waited for HTTP and then SIGKILLed on timeout, we'd tear down a
+    // server that was about to become useful — exactly the prod bug we hit.
+    // Instead, fire-and-forget an HTTP readiness probe that logs when it
+    // succeeds. Callers (postMessage/createSession) get their own 120s
+    // timeout against the live server.
     try {
-      await this.waitForReady();
-      console.log(`[chat-server] ready at ${this.baseUrl}`);
+      await this.waitForTcpListen();
+      console.log(`[chat-server] listening at ${this.baseUrl} (bootstrapping in background)`);
     } catch (err) {
-      // Couldn't reach the server — clean up so a future start() retries cleanly.
       this.baseUrl = null;
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
       this.child = null;
       throw err;
     }
+    this.probeHttpReady().catch(() => { /* logged inside */ });
   }
 
-  private async waitForReady(timeoutMs = 10_000): Promise<void> {
+  /**
+   * Quick "is the TCP port accepting connections" check. Resolves as soon as
+   * a single fetch returns ANY status (or a connect that doesn't get
+   * ECONNREFUSED). Fast — bun binds in <1s on every env we've seen.
+   */
+  private async waitForTcpListen(timeoutMs = 15_000): Promise<void> {
     const base = this.baseUrl!;
     const deadline = Date.now() + timeoutMs;
     let lastErr: unknown = null;
     while (Date.now() < deadline) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1000);
       try {
-        // No documented health endpoint — `/session` (GET) returns 404 or
-        // 405 if not supported, but the response itself proves the server
-        // is listening. Any HTTP response is good enough.
-        const res = await fetch(`${base}/session`, { method: "GET" });
+        const res = await fetch(`${base}/session`, { method: "GET", signal: ctrl.signal });
         if (res.status > 0) return;
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // AbortError means the server accepted TCP but didn't respond in
+        // time — that's still "listening", just bootstrapping. Good enough.
+        if (msg.includes("aborted") || msg.includes("AbortError")) return;
         lastErr = e;
+      } finally {
+        clearTimeout(timer);
       }
       await new Promise((r) => setTimeout(r, 200));
     }
     const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-    throw new Error(`opencode serve not ready within ${timeoutMs}ms (${msg})`);
+    throw new Error(`opencode serve TCP not listening within ${timeoutMs}ms (${msg})`);
+  }
+
+  /**
+   * Background HTTP readiness probe. Doesn't kill anything on failure — just
+   * reports when the server starts responding to real requests. Keeps trying
+   * for up to 10 minutes; chat callers will see real responses long before
+   * that on a healthy server.
+   */
+  private async probeHttpReady(maxMs = 600_000): Promise<void> {
+    if (!this.baseUrl) return;
+    const base = this.baseUrl;
+    const startedAt = Date.now();
+    const deadline = startedAt + maxMs;
+    while (Date.now() < deadline && this.shouldRun && this.child) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      try {
+        const res = await fetch(`${base}/session`, { method: "GET", signal: ctrl.signal });
+        clearTimeout(timer);
+        if (res.status > 0) {
+          const elapsed = Date.now() - startedAt;
+          console.log(`[chat-server] HTTP ready after ${Math.round(elapsed / 1000)}s`);
+          return;
+        }
+      } catch {
+        // ignore — keep probing
+      } finally {
+        clearTimeout(timer);
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
   }
 
   private handleExit(code: number | null, signal: NodeJS.Signals | null): void {
