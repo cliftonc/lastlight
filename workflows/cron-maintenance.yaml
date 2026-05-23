@@ -1,0 +1,6 @@
+kind: cron
+name: weekly-maintenance-scan
+schedule: "0 11 * * 6"
+workflow: maintenance-review
+context:
+  mode: scan

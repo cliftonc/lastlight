@@ -1123,9 +1123,13 @@ describe("runWorkflow — DAG unexpected throws", () => {
   });
 });
 
-describe("gitAccessProfileForWorkflow — security workflows", () => {
+describe("gitAccessProfileForWorkflow — issue-writing workflows", () => {
   it("returns issues-write for security-review", () => {
     expect(gitAccessProfileForWorkflow("security-review")).toBe("issues-write");
+  });
+
+  it("returns issues-write for maintenance-review", () => {
+    expect(gitAccessProfileForWorkflow("maintenance-review")).toBe("issues-write");
   });
 
   it("returns repo-write for security-feedback", () => {
