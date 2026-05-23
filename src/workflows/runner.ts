@@ -409,10 +409,15 @@ export async function runWorkflow(
 
   // Determine resume point from the DB row's currentPhase. If the row doesn't
   // exist (no DB), default to running everything from the first phase.
+  //
+  // `currentPhase` is initialized to `phases[0].name` at row creation, so on a
+  // fresh run it points at the first phase even though nothing has run yet.
+  // We can only treat it as "last completed" once phase_history has at least
+  // one entry (persistPhase only fires when a phase completes successfully).
   let resumeFromIdx = 0;
   if (db && workflowId) {
     const run = db.getWorkflowRun(workflowId);
-    if (run?.currentPhase) {
+    if (run?.currentPhase && run.phaseHistory && run.phaseHistory.length > 0) {
       const next = nextPhaseAfter(definition, run.currentPhase);
       if (next) {
         const idx = phaseIndexInDefinition(definition, next);

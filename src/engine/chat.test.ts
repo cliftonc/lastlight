@@ -93,6 +93,25 @@ describe("handleChatMessage", () => {
     expect(r.stopReason).toBe("error_max_tokens");
   });
 
+  // gpt-5.5 quirk: OpenAI can return finish_reason="tool_calls" on a response
+  // that ALSO carries a terminal text completion with no callable tool_use
+  // parts. OpenCode passes that through as finish="tool-calls". Treat as
+  // success when there's substantive text — otherwise good replies fail.
+  it("treats finish=tool-calls + non-empty text as success (gpt-5.5 quirk)", async () => {
+    const { server } = stubServer(() => turn("here is your answer", { finish: "tool-calls" }));
+    const r = await handleChatMessage("hi", "t", "alice", {} as any, { chatServer: server, ...baseDeps() }, baseConfig);
+    expect(r.success).toBe(true);
+    expect(r.stopReason).toBe("success");
+    expect(r.text).toBe("here is your answer");
+  });
+
+  it("still marks finish=tool-calls + empty text as error (genuine truncation)", async () => {
+    const { server } = stubServer(() => turn("", { finish: "tool-calls", text: "" }));
+    const r = await handleChatMessage("hi", "t", "alice", {} as any, { chatServer: server, ...baseDeps() }, baseConfig);
+    expect(r.success).toBe(false);
+    expect(r.stopReason).toBe("error_tool_calls");
+  });
+
   it("writes the dashboard envelope jsonl under projects/-app/<sessionId>.jsonl", async () => {
     const { server } = stubServer(() =>
       turn("reply text", {

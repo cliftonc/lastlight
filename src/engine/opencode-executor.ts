@@ -219,8 +219,15 @@ class OpencodeAccumulator {
     if (this.lastReason === "max_tokens" || this.lastReason === "length") {
       return "error_max_turns";
     }
-    // "tool-calls" at end of stream means the model wanted to call tools but
-    // got cut off — treat as error.
+    // OpenAI gpt-5 family can return finish_reason="tool_calls" on a response
+    // that ALSO contains a terminal text completion (no actual tool_use parts
+    // to execute). OpenCode then exits the loop with reason="tool-calls" even
+    // though the model is done. If we have substantive final text and no API
+    // errors, treat it as success. Genuine "tool-call truncation" cases still
+    // surface as error_tool_calls because finalText will be empty.
+    if (this.lastReason === "tool-calls" && this.finalText.length > 0) {
+      return "success";
+    }
     return `error_${this.lastReason.replace(/-/g, "_")}`;
   }
 

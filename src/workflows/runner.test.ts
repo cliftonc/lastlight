@@ -146,6 +146,37 @@ describe("runWorkflow — basic phase execution", () => {
     expect(result.phases[0].success).toBe(true);
   });
 
+  // Regression: a fresh workflow row has currentPhase initialized to
+  // phases[0].name. The runner's resume logic must not interpret that as
+  // "phase_0 already completed" and skip it — phase_history is empty on
+  // a fresh run. Symptom in prod: explore workflow's context phase was
+  // silently skipped, so phase_history stayed [] and downstream failures
+  // surfaced with current_phase=phase_0 even though phase_0 never ran.
+  it("runs the first phase on a fresh run despite currentPhase=phase_0 in DB", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult());
+
+    const db = makeMockDb("phase_0");
+    const result = await runWorkflow(
+      SIMPLE_WORKFLOW,
+      BASE_CTX,
+      {} as never,
+      {},
+      db,
+      undefined,
+      undefined,
+      "wf-fresh-1",
+    );
+
+    expect(result.success).toBe(true);
+    // Context phase ran (persistPhase fired) and both agent phases ran.
+    expect(result.phases.map((p) => p.phase)).toEqual(["phase_0", "architect", "executor"]);
+    expect(db.updateWorkflowPhase).toHaveBeenCalledWith(
+      "wf-fresh-1",
+      "phase_0",
+      expect.objectContaining({ phase: "phase_0", success: true }),
+    );
+  });
+
   it("executes agent phases in order", async () => {
     const calls: string[] = [];
     mockExecuteAgent.mockImplementation(async (prompt: string) => {
@@ -345,18 +376,29 @@ const WORKFLOW_WITH_APPROVAL_GATE: AgentWorkflowDefinition = {
  */
 function makeMockDb(currentPhase = "phase_0"): StateDb {
   let phase = currentPhase;
+  // Mirror prod: every `updateWorkflowPhase` call appends to phase_history.
+  // Tests that pass a non-"phase_0" `currentPhase` are simulating a resumed
+  // run, so seed history with one entry so the runner's resume detection
+  // kicks in (it requires phaseHistory.length > 0).
+  const phaseHistory: { phase: string; timestamp: string; success: boolean }[] =
+    currentPhase !== "phase_0"
+      ? [{ phase: currentPhase, timestamp: new Date().toISOString(), success: true }]
+      : [];
   return {
     shouldRunPhase: vi.fn(() => "run"),
     recordStart: vi.fn(),
     recordFinish: vi.fn(),
     markStaleAsFailed: vi.fn(),
     markLatestAsFailed: vi.fn(),
-    updateWorkflowPhase: vi.fn((_id: string, newPhase: string) => { phase = newPhase; }),
+    updateWorkflowPhase: vi.fn((_id: string, newPhase: string, entry?: { phase: string; timestamp: string; success: boolean }) => {
+      phase = newPhase;
+      if (entry) phaseHistory.push(entry);
+    }),
     pauseWorkflowRun: vi.fn(),
     resumeWorkflowRun: vi.fn(),
     finishWorkflowRun: vi.fn(),
     createApproval: vi.fn(),
-    getWorkflowRun: vi.fn(() => ({ currentPhase: phase, status: "running" })),
+    getWorkflowRun: vi.fn(() => ({ currentPhase: phase, phaseHistory, status: "running" })),
     getPendingApprovalForWorkflow: vi.fn(() => null),
   } as unknown as StateDb;
 }

@@ -65,9 +65,20 @@ describe("OpencodeAccumulator", () => {
     len.feed({ type: "step_finish", part: { reason: "max_tokens" } });
     expect(len.stopReason()).toBe("error_max_turns");
 
-    const tool = new Accumulator();
-    tool.feed({ type: "step_finish", part: { reason: "tool-calls" } });
-    expect(tool.stopReason()).toBe("error_tool_calls");
+    // Genuine truncation: model wanted to call tools but the loop ended with
+    // no terminal text to show. Stays an error.
+    const toolNoText = new Accumulator();
+    toolNoText.feed({ type: "step_finish", part: { reason: "tool-calls" } });
+    expect(toolNoText.stopReason()).toBe("error_tool_calls");
+
+    // gpt-5.5 quirk: model emits final text AND finish_reason="tool_calls" in
+    // the same response with no callable tool_use parts. OpenCode terminates
+    // the loop with reason="tool-calls", but the run is actually complete —
+    // treat as success when finalText is non-empty.
+    const toolWithText = new Accumulator();
+    toolWithText.feed({ type: "text", part: { text: "Here is the answer." } });
+    toolWithText.feed({ type: "step_finish", part: { reason: "tool-calls" } });
+    expect(toolWithText.stopReason()).toBe("success");
 
     const errored = new Accumulator();
     errored.feed({ type: "step_finish", part: { reason: "stop" } });
