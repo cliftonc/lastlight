@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage & test artifacts
+coverage/
+.nyc_output/
+test/output/
+
+# Caches
+.npm/
+.eslintcache
+.cache/
+
+# Lock files for other package managers (we use npm)
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
