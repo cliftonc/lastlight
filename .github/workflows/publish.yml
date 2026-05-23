@@ -37,15 +37,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # `release` events default to checking out the release's target
           # commit; `push` tags use GITHUB_REF; `workflow_dispatch` needs
           # the explicit input. This branch handles all three.
           ref: ${{ inputs.ref || github.event.release.tag_name || github.ref }}
 
+      # setup-node@v6 no longer writes the deprecated `always-auth=true`
+      # to .npmrc (fixed in actions/setup-node#1305). The dummy
+      # `_authToken=${NODE_AUTH_TOKEN}` line it does write is harmless
+      # under OIDC trusted publishing per actions/setup-node#1551.
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
