@@ -382,19 +382,22 @@ agentic-pi publishes to npm via a GitHub Actions workflow using **npm
 trusted publishing** (OIDC) — no `NPM_TOKEN` secret is needed in the
 repo.
 
-To cut a release (recommended path):
+To cut a release:
 
-1. Bump `version` in `package.json` — `npm version patch` does this, plus
-   commit and tag, in one step.
-2. Push the commit and tag: `git push --follow-tags`.
-3. Create a GitHub Release on the new tag, e.g.
-   `gh release create v0.2.0 --generate-notes` or via the GitHub web UI.
-4. The `publish.yml` workflow runs on the `release: published` event.
+1. Bump `version` in `package.json` — `npm version patch` (or `minor` /
+   `major`) does the version bump, the commit, and the tag in one step.
+2. Push the commit and tag: `git push --follow-tags`. CI runs against
+   the version-bump commit on `main`.
+3. Create a GitHub Release on the new tag once CI is green:
+   `gh release create v0.2.0 --generate-notes` or via the web UI.
+4. The `publish.yml` workflow runs on the `release: published` event —
+   this is the only auto-trigger. (CI does not re-run; `publish.yml`
+   re-validates type-check, build, and unit tests itself so nothing is
+   skipped.)
 
-The workflow also triggers on bare `v*.*.*` tag pushes and on manual
-`workflow_dispatch`. The `release` event is the preferred path because
-tag-push events get suppressed when a tag is pushed in the same `git
-push` invocation as branch commits — a real GitHub Actions quirk.
+`publish.yml` also accepts a manual `workflow_dispatch` with an explicit
+tag/ref — useful if a release-triggered run failed (network, OIDC config
+not yet set up) and you want to retry without re-cutting the release.
 
 The publish step fails if the tag (or the dispatch `ref` input) doesn't
 match `package.json` version — there is no path that publishes a version
