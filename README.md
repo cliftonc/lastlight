@@ -349,8 +349,32 @@ console.log(result.records.length);      // full event log
 ```bash
 npm install
 npm run build
+npm test                 # full suite — skips integration tests if env not set
+npm run test:unit        # unit only (fast, no API keys, no QEMU)
+npm run test:integration # integration only (needs OPENAI_API_KEY; sandbox also needs QEMU)
+
 echo "hello" | node dist/cli.js run --model anthropic/claude-haiku-4-5 --no-session
 ```
+
+### Tests
+
+The test suite uses Node's built-in test runner (`node:test`) and `tsx`
+to load TypeScript. Files are discovered by `scripts/run-tests.mjs`,
+which walks `test/` for `*.test.ts`.
+
+| File | What it covers | Skip condition |
+| --- | --- | --- |
+| `test/args.test.ts` | CLI flag parsing happy path + every error case | — |
+| `test/emitter.test.ts` | `Emitter`, `CollectorSink`, `TeeSink` contracts | — |
+| `test/models.test.ts` | `provider/id` parsing including openrouter triple-slash | — |
+| `test/extensions/github/profiles.test.ts` | Profile → tool allowlist (counts, superset structure, scope tiering) | — |
+| `test/extensions/github/credentials.test.ts` | `assertSafeToken` and `credentialsFilePath` validation | — |
+| `test/sandbox/preflight.test.ts` | Preflight returns a structured ok\|error result | — |
+| `test/run.integration.test.ts` | Programmatic `run()`: RunResult populated, onEvent fires for every record, **child-process check confirms zero stdout/stderr leak from library** | `OPENAI_API_KEY` not set |
+| `test/run-sandbox.integration.test.ts` | `run({ sandbox: "gondolin" })` boots a VM, agent's `write` tool produces a host file via the mount | `OPENAI_API_KEY` not set OR QEMU/preflight unavailable |
+
+Unit tests run in ~170 ms. Integration tests cost about $0.001 per run on
+`gpt-5.4-nano`.
 
 Project layout:
 

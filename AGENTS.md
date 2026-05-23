@@ -118,9 +118,9 @@ SPIKE-gondolin.md         Spike write-up: why sandbox is native-only.
    streams — by wiring `StdoutSink` and an `onWarn` callback into
    `runOnce`. If you find yourself adding a `console.log` or
    `process.stderr.write` *inside* the runner, sandbox, or extensions,
-   route it through the emitter or the warn callback instead. See
-   `test/programmatic-smoke.mjs` for the contract test that catches
-   stdout/stderr leaks.
+   route it through the emitter or the warn callback instead. The
+   contract test `test/run.integration.test.ts` enforces this by running
+   `run()` in a child process and asserting empty stdout/stderr.
 
 ## Style and conventions
 
@@ -167,15 +167,19 @@ echo "create a file note.txt with 'hello' in it" | node dist/cli.js run \
   --model openai/gpt-5.4-nano --thinking off --no-session \
   --sandbox gondolin --cwd /tmp/scratch
 
-# Programmatic smoke (verifies no stdout/stderr leak + RunResult shape)
-node test/programmatic-smoke.mjs
-
-# Programmatic + sandbox smoke
-node test/programmatic-sandbox-smoke.mjs
+# Tests
+npm test                  # full suite — integration tests skip if env not set
+npm run test:unit         # unit only (~170 ms, no API keys, no QEMU)
+npm run test:integration  # integration only (needs OPENAI_API_KEY; sandbox needs QEMU too)
 
 # Type-check only
 npx tsc --noEmit
 ```
+
+Tests live in `test/` as `*.test.ts` files; integration tests use
+`*.integration.test.ts` so the runner can include / exclude them. Discovery
+is via `scripts/run-tests.mjs` (a tiny walker — Node's `node --test`
+discovery doesn't pick up `.ts` files automatically).
 
 Env vars typically needed (mirror lastlight's `.env` when developing):
 

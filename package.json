@@ -17,7 +17,9 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/cli.js",
-    "test": "node --test --import tsx test/**/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node scripts/run-tests.mjs --unit",
+    "test:integration": "node scripts/run-tests.mjs --integration",
     "check": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
