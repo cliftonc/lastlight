@@ -5,7 +5,51 @@ FROM node:20-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ripgrep curl jq ca-certificates gettext-base gosu \
+    build-essential pkg-config python3 unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# fnm + multiple Node versions so repos pinning a specific Node via .nvmrc /
+# package.json#engines just work. System node from the base image stays at /usr/local/bin
+# (used by opencode itself); fnm-managed versions are pre-installed under
+# FNM_DIR and selected per-shell by the bashrc hook below.
+ENV FNM_DIR=/usr/local/share/fnm
+ENV PATH=$FNM_DIR/aliases/default/bin:$PATH
+RUN curl -fsSL https://fnm.vercel.app/install \
+      | bash -s -- --install-dir "$FNM_DIR" --skip-shell \
+ && ln -s "$FNM_DIR/fnm" /usr/local/bin/fnm \
+ && fnm install 22 \
+ && fnm install 24 \
+ && fnm default 22 \
+ && chmod -R a+rX "$FNM_DIR" \
+ && mkdir -p "$FNM_DIR/multishells" \
+ && chmod 1777 "$FNM_DIR/multishells"
+
+# Source fnm in every bash invocation (interactive or not). BASH_ENV makes
+# non-interactive `bash -c` read this file — that's how opencode's bash tool
+# inherits the right node version when it runs `npm ci` inside a repo with
+# an .nvmrc pinning Node 24.
+RUN printf '%s\n' \
+    'export FNM_DIR=/usr/local/share/fnm' \
+    'export PATH="$FNM_DIR:$PATH"' \
+    '# --shell bash is required: when sourced via BASH_ENV the parent process' \
+    '# is not a shell so fnm cannot auto-detect.' \
+    'eval "$(fnm env --shell bash --use-on-cd --version-file-strategy=recursive)"' \
+    '# The cd hook fires only on cd. opencode often launches `bash -c "..."`' \
+    '# with cwd already set via the spawn options — no cd happens — so also' \
+    '# auto-switch on shell start when the cwd has a version file.' \
+    'if [ -f "$PWD/.nvmrc" ] || [ -f "$PWD/.node-version" ]; then' \
+    '  fnm use --silent-if-unchanged 2>/dev/null \' \
+    '    || { fnm install 2>/dev/null && fnm use --silent-if-unchanged 2>/dev/null; } \' \
+    '    || true' \
+    'fi' \
+    > /etc/bash.bashrc.fnm \
+ && printf '\n[ -r /etc/bash.bashrc.fnm ] && . /etc/bash.bashrc.fnm\n' >> /etc/bash.bashrc \
+ && ln -s /etc/bash.bashrc.fnm /etc/profile.d/fnm.sh
+# Source the fnm file directly — Debian's /etc/bash.bashrc bails early on
+# non-interactive shells (`[ -z "$PS1" ] && return`), so pointing BASH_ENV at
+# it would skip our setup for `bash -c` invocations (which is exactly the
+# path opencode's bash tool uses).
+ENV BASH_ENV=/etc/bash.bashrc.fnm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip pipx \
