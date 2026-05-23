@@ -1,0 +1,17 @@
+kind: health
+name: maintenance-review
+description: |
+  Weekly low-noise continuous maintenance scan for one repository per
+  invocation. Produces or updates one long-lived maintenance dashboard issue
+  with actionable suggestions tied to recently changed human-authored files.
+
+  Triggered by:
+    - weekly cron (fans out over every managed repo)
+    - dashboard run API
+
+phases:
+  - name: scan
+    label: Maintenance scan
+    skill: maintenance-review
+    model: "{{models.health}}"
+    variant: "{{variants.health}}"
