@@ -11,7 +11,7 @@
 
 An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features through an Architect → Executor → Reviewer development cycle.
 
-Built on the [OpenCode](https://github.com/sst/opencode) runtime with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `OPENCODE_MODEL` at any `provider/model` OpenCode supports (defaults to `openai/gpt-5.5`).
+Built on [agentic-pi](https://github.com/cliftonc/agentic-pi) (workflow phases) and [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) (in-process chat) with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `LASTLIGHT_MODEL` at any `provider/model` pi-ai supports (defaults to `anthropic/claude-sonnet-4-6`).
 
 ## Production Setup (Clean Server)
 
@@ -24,20 +24,19 @@ npx lastlight setup
 The setup wizard walks you through:
 
 1. **GitHub App** — enter your App ID, Installation ID, and PEM key path
-2. **Provider API key** — `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY`,
-   whichever your `OPENCODE_MODEL` points at
+2. **Provider API key** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `OPENROUTER_API_KEY`,
+   whichever your `LASTLIGHT_MODEL` points at
 3. **Webhook secret** — auto-generated if you don't have one
 4. **Domain & TLS** — optional Caddy config for automatic HTTPS
 5. **Slack** — optional bot token and app token for Slack integration
 6. **Admin dashboard** — optional password protection
 
-It writes `.env`, copies your PEM into the secrets directory, generates
-`docker-compose.yml` and (optionally) a `Caddyfile`, then offers to build
-and start the containers. When it's done you have a running instance ready
-to receive webhooks.
+It writes `.env`, copies your PEM into the secrets directory, then offers to build and start the Docker stack. When it's done you have a running instance ready to receive webhooks.
 
 > **Requires:** Node.js 20+, Docker, and a GitHub App already created
 > (see [Create a GitHub App](#1-create-a-github-app) below).
+
+For a Docker-free production install (systemd unit, gondolin sandbox), see [Native deploy](#native-systemd-deploy) below.
 
 ---
 
@@ -46,10 +45,10 @@ to receive webhooks.
 ### Prerequisites
 
 - Node.js 20+
-- Docker Desktop (or compatible)
+- Docker Desktop (or compatible) — only needed for `LASTLIGHT_SANDBOX=docker`; gondolin runs without it on macOS/Linux
 - A GitHub App (see [Create a GitHub App](#1-create-a-github-app) below)
-- An API key for whichever provider your chosen `OPENCODE_MODEL` uses
-  (`OPENAI_API_KEY` for openai/…, `ANTHROPIC_API_KEY` for anthropic/…)
+- An API key for whichever provider your chosen `LASTLIGHT_MODEL` uses
+  (`OPENAI_API_KEY` for openai/…, `ANTHROPIC_API_KEY` for anthropic/…, `OPENROUTER_API_KEY` for openrouter/…)
 
 ### Setup
 
@@ -76,23 +75,34 @@ GITHUB_APP_INSTALLATION_ID=789012
 # Webhook secret (required for webhook mode)
 WEBHOOK_SECRET=your-secret-here
 
-# Model provider auth — at least one
-OPENAI_API_KEY=sk-...
-# ANTHROPIC_API_KEY=sk-ant-...
+# Model + provider — pick one matching your key
+LASTLIGHT_MODEL=anthropic/claude-sonnet-4-6
+ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# OPENROUTER_API_KEY=sk-or-...
+
+# Sandbox backend (default: gondolin; alternatives: docker, none)
+# LASTLIGHT_SANDBOX=gondolin
 ```
 
 ### Run
 
-`npm run dev` runs the harness on your host but spawns each agent task in a real Docker sandbox container, exactly like production. It is explicitly safe with your personal config:
+`npm run dev` runs the harness on your host. Sandbox mode is selected by `LASTLIGHT_SANDBOX`:
+
+- **`gondolin`** (default) — agentic-pi spawns a per-phase QEMU micro-VM in-process. Uses HVF on macOS, KVM on Linux. No Docker needed.
+- **`docker`** — agentic-pi runs inside a per-phase sibling Docker container (the `lastlight-sandbox:latest` image). Requires Docker. Useful for prod-like smoke testing.
+- **`none`** — agent runs in-process on your host with no isolation. Dev only — never in production.
+
+The dev script is explicitly safe with your personal config:
 
 | | Touched? |
 |---|---|
 | `~/.gitconfig` (your identity, credential helper) | ❌ skipped (`LASTLIGHT_LOCAL_DEV=1`) |
-| `./data/sandbox-data/` | ✅ project-local bind-mount for sandbox containers |
-| `./data/opencode-home/` | ✅ project-local; shim envelope jsonls for the dashboard live here |
+| `./data/agent-sessions/` | ✅ project-local; shim envelope jsonls for the dashboard live here |
+| `./data/sandbox-data/` | ✅ project-local bind-mount when using `LASTLIGHT_SANDBOX=docker` |
 | `./data/lastlight.db`, `./data/sandboxes/`, `./data/logs/` | ✅ project-local state, gitignored |
 
-One-time setup — build the sandbox image:
+If you want the Docker sandbox mode locally, build the image once first:
 
 ```bash
 docker compose --profile build-only build sandbox
@@ -107,9 +117,9 @@ npm run dev:dashboard  # dashboard only
 ```
 
 Both server scripts call `scripts/dev-local.sh`, which:
-- Verifies Docker is running and the sandbox image exists
-- Copies your `GITHUB_APP_PRIVATE_KEY_PATH` into `./data/sandbox-data/secrets/app.pem` (mode 600) so the in-sandbox GitHub MCP server can authenticate
-- Sets `LASTLIGHT_LOCAL_DEV=1`, `SANDBOX_DATA_VOLUME=./data/sandbox-data`, `STATE_DIR=./data`, `OPENCODE_HOME_DIR=./data/sandbox-data/opencode-home`, and `ENABLE_DIRECT_FALLBACK=false`
+- Verifies the sandbox image exists when `LASTLIGHT_SANDBOX=docker`
+- Copies your `GITHUB_APP_PRIVATE_KEY_PATH` into `./data/sandbox-data/secrets/app.pem` (mode 600) so the sandbox can authenticate to GitHub
+- Sets `LASTLIGHT_LOCAL_DEV=1`, `STATE_DIR=./data`, `LASTLIGHT_SESSIONS_DIR=./data/agent-sessions`
 - Starts the harness with `tsx watch src/index.ts`
 
 #### Triggering work via the CLI
@@ -134,24 +144,25 @@ The default for a single-issue/PR shorthand is the **cheap** action (triage or r
 
 ### Authentication
 
-OpenCode picks credentials from `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` on the harness env. The harness forwards them into each sandbox container so workflow runs can reach the API.
+pi-ai picks credentials from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `OPENROUTER_API_KEY` on the harness env. The harness forwards them into each sandbox container (or VM) so workflow runs can reach the API.
 
 ---
 
 ## Docker Deployment
 
+The docker-compose stack is useful when you want a single `docker compose up -d` deploy. For gondolin (and a smaller deployment surface area), prefer the [native systemd deploy](#native-systemd-deploy) instead.
+
 ### Build and Run
 
-Build both the harness image **and** the sandbox image. The harness spawns a
-sandbox container per workflow run, so `lastlight-sandbox:latest` must exist
-locally before any workflow can execute. The sandbox service is under the
-`build-only` profile so it is never started — it is only built.
+Build both the harness image **and** the sandbox image. The sandbox image is what the harness spawns per phase when `LASTLIGHT_SANDBOX=docker`. The sandbox service is under the `build-only` profile so it is never started — it is only built.
 
 ```bash
 docker compose build agent
 docker compose --profile build-only build sandbox
 docker compose up -d agent
 ```
+
+Set `LASTLIGHT_SANDBOX=docker` in your `.env`. (Inside the harness container, gondolin's QEMU path isn't available unless you do the nested-virt setup yourself — the docker-sandbox path is the practical default for Docker deployments.)
 
 ### Secrets
 
@@ -163,7 +174,7 @@ cp .env secrets/
 cp your-app.private-key.pem secrets/
 ```
 
-The entrypoint symlinks these into the container at startup. Your provider API key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) belongs in `secrets/.env`.
+The entrypoint symlinks these into the container at startup. Your provider API key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`) belongs in `secrets/.env`.
 
 ### Expose Webhooks
 
@@ -174,7 +185,7 @@ To receive GitHub webhooks, the server needs to be publicly reachable. The inclu
 echo "DOMAIN=lastlight.example.com" >> .env
 
 # Start both agent and caddy
-docker-compose up -d
+docker compose up -d
 ```
 
 Or use [ngrok](https://ngrok.com) / [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for testing.
@@ -186,11 +197,11 @@ All persistent state lives in a single Docker volume (`agent-data`), mounted at 
 ```
 data/
   lastlight.db              # SQLite: executions, workflow_runs, approvals, messaging sessions
-  opencode-home/            # Dashboard shim jsonls
-    projects/-app/*.jsonl   # Chat sessions (one per Slack thread)
-    projects/-home-agent-workspace/*.jsonl  # Sandbox sessions
-  opencode-serve/           # Working dir for the long-lived chat server
-  sandboxes/                # Cloned repos per task
+  agent-sessions/           # Dashboard JSONL envelope store (written by event-shim.ts)
+    projects/-app/*.jsonl                    # Chat sessions (one per Slack thread)
+    projects/-home-agent-workspace/*.jsonl   # Sandbox-mode workflow sessions
+  sandboxes/                # Cloned repos per task (gondolin or docker)
+  sandbox-data/             # Shared volume mounted into docker-mode sandboxes
   logs/                     # Structured logs
   secrets/app.pem           # GitHub App PEM (mode 600) for sandbox access
 ```
@@ -211,6 +222,29 @@ npx tsx src/cli.ts https://github.com/owner/repo/issues/42
 # Trigger triage
 npx tsx src/cli.ts triage owner/repo
 ```
+
+---
+
+## Native (systemd) Deploy
+
+For a Linux production host with KVM available (`/dev/kvm`), the native deploy runs the harness directly under systemd and uses gondolin for sandboxing — no Docker required.
+
+See [deploy/native/README.md](deploy/native/README.md) for the full runbook. The short version:
+
+```bash
+git clone https://github.com/cliftonc/lastlight.git /opt/lastlight
+cd /opt/lastlight
+# (optional) install -m 0600 -o root /path/to/app.pem /etc/lastlight/app.pem
+sudo bash deploy/native/install.sh        # scaffolds /etc/lastlight/lastlight.env
+sudo $EDITOR /etc/lastlight/lastlight.env # fill in secrets
+sudo bash deploy/native/install.sh        # second run: starts the service
+```
+
+Re-deploys: `git pull && sudo bash deploy/native/install.sh` (idempotent — rebuilds and restarts the service).
+
+**Required:** the host kernel must expose `/dev/kvm` (bare-metal Linux or KVM-enabled VM). Hetzner Cloud, Cloud Run, Fly Machines (without `--vm-cpu-class shared`), and most managed container hosts do **not** expose nested virt — see `agentic-pi`'s `SPIKE-gondolin.md` for the full constraint matrix.
+
+If KVM isn't available, fall back to the Docker deploy above with `LASTLIGHT_SANDBOX=docker`.
 
 ---
 
@@ -238,6 +272,8 @@ npx tsx src/cli.ts triage owner/repo
 
 ### 2. Environment Variables
 
+Legacy `OPENCODE_*` names are still read as fallbacks for the corresponding `LASTLIGHT_*` names, so existing `.env` files from the OpenCode era keep working.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GITHUB_APP_ID` | Yes | GitHub App ID |
@@ -246,21 +282,20 @@ npx tsx src/cli.ts triage owner/repo
 | `WEBHOOK_SECRET` | Yes | GitHub webhook signature secret |
 | `OPENAI_API_KEY` | One of | API key when using `openai/…` models |
 | `ANTHROPIC_API_KEY` | One of | API key when using `anthropic/…` models |
-| `OPENCODE_MODEL` | No | Default model (default: `openai/gpt-5.5`) |
-| `OPENCODE_MODELS` | No | Per-task overrides as JSON, e.g. `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}` |
-| `OPENCODE_VARIANT` | No | Reasoning-effort default (OpenCode `--variant`), e.g. `minimal`, `medium`, `high`, `max`. Provider-agnostic — OpenCode maps to the right per-provider knob. |
-| `OPENCODE_VARIANTS` | No | Per-task variant overrides as JSON, e.g. `{"architect":"high","reviewer":"high","triage":"minimal"}` |
-| `OPENCODE_SERVE_PORT` | No | Port for the long-lived chat server (default: `4096`, bound to 127.0.0.1) |
-| `OPENCODE_SERVE_LOGS` | No | Set to `1` to forward chat-server logs to harness stderr |
-| `OPENCODE_BIN` | No | Override the opencode binary path (CI/dev) |
+| `OPENROUTER_API_KEY` | One of | API key when using `openrouter/…` models |
+| `LASTLIGHT_MODEL` | No | Default model (default: `anthropic/claude-sonnet-4-6`). Legacy: `OPENCODE_MODEL`. |
+| `LASTLIGHT_MODELS` | No | Per-task model overrides as JSON, e.g. `{"chat":"openai/gpt-5.1-mini","architect":"openai/gpt-5.5"}`. Legacy: `OPENCODE_MODELS`. |
+| `LASTLIGHT_THINKING` | No | Reasoning-effort default (`off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh`). pi-ai translates per-provider. Legacy: `OPENCODE_VARIANT`. |
+| `LASTLIGHT_THINKINGS` | No | Per-task thinking-level overrides as JSON, e.g. `{"architect":"high","reviewer":"high","triage":"minimal"}`. Legacy: `OPENCODE_VARIANTS`. |
+| `LASTLIGHT_SANDBOX` | No | Workflow sandbox backend: `gondolin` (default) \| `docker` \| `none`. |
+| `LASTLIGHT_SESSIONS_DIR` | No | Where the dashboard reads sessions (default: `$STATE_DIR/agent-sessions`). |
 | `PORT` / `WEBHOOK_PORT` | No | Webhook listener port (default: `8644`) |
 | `STATE_DIR` | No | Persistent state directory (default: `./data`) |
-| `OPENCODE_HOME_DIR` | No | Where the dashboard reads sessions (default: `$STATE_DIR/opencode-home`) |
-| `MAX_TURNS` | No | Reserved (unused by OpenCode; kept for API stability) |
+| `DB_PATH` | No | SQLite path (default: `$STATE_DIR/lastlight.db`) |
+| `MAX_TURNS` | No | Reserved (kept for API stability) |
 | `BOT_LOGIN` | No | Bot login name for self-event filtering (default: `last-light[bot]`) |
 | `LASTLIGHT_LOCAL_DEV` | No | Set to `1` on dev machines to skip `git config --global` writes from `git-auth.ts`. The installation token still reaches sandboxes via `GIT_TOKEN`. |
-| `SANDBOX_DATA_VOLUME` | No | Either a Docker named volume name (default: `lastlight_agent-data`, used in production) or a host path (starts with `/`, `./`, `../`, or `~`) to bind-mount as `/data` inside each sandbox. Local dev uses `./data/sandbox-data`. |
-| `ENABLE_DIRECT_FALLBACK` | No | If `true`, the harness spawns `opencode run` directly on the host when no sandbox is available. Local dev sets this to `false` to keep all agent work isolated in containers. |
+| `SANDBOX_DATA_VOLUME` | No | Used only when `LASTLIGHT_SANDBOX=docker`. Either a Docker named volume (default: `lastlight_agent-data`) or a host path (`/`, `./`, `../`, `~`) to bind-mount as `/data` inside each sandbox. Local dev uses `./data/sandbox-data`. |
 
 ### 3. Managed Repositories
 
@@ -300,9 +335,9 @@ Edit `agent-context/rules.md` to list repositories the bot manages:
 │  Event Router (deterministic)           │
 │        ↓                                │
 │  Workflow Runner (YAML phases)          │
-│  - Sandbox: `opencode run --format json`│
-│    in a Docker container per phase      │
-│  - Chat: long-lived `opencode serve`,   │
+│  - Sandbox: `agentic-pi run` per phase  │
+│    in a gondolin VM or docker container │
+│  - Chat: in-process pi-ai loop          │
 │    one session per messaging thread     │
 │        ↓                                │
 │  Sandboxes (git clone per task)         │
@@ -317,8 +352,8 @@ Edit `agent-context/rules.md` to list repositories the bot manages:
 2. **Router** maps event type to skill deterministically (no LLM in the routing loop):
    - `issue.opened` → `issue-triage`
    - `pr.opened` → `pr-review`
-   - `comment.created` with `@last-light` from maintainer → routed by intent classifier (build / explore / triage / review / action)
-3. **Workflow runner** loads the matching YAML, dispatches each phase to `executeAgent` (sandbox `opencode run`) or, for chat, `chatServer.postMessage` (long-lived `opencode serve`)
+   - `comment.created` with `@last-light` from a maintainer → routed by intent classifier (build / explore / triage / review / action)
+3. **Workflow runner** loads the matching YAML, dispatches each phase to `executeAgent` (`src/engine/agent-executor.ts`, which invokes agentic-pi) or, for chat, `ChatRunner` (`src/engine/chat-runner.ts`, in-process pi-ai)
 4. **Build workflow** runs a multi-phase cycle:
    - Phase 1: **Architect** — read-only analysis, writes plan to `.lastlight/issue-N/architect-plan.md`
    - Phase 2: **Executor** — TDD implementation following the plan
@@ -343,7 +378,7 @@ When webhooks are enabled, only the weekly health report runs on cron (issue/PR 
 ```
 lastlight/
   src/
-    index.ts                # Server entry point (also boots opencode serve)
+    index.ts                # Server entry point
     cli.ts                  # CLI client (talks to server)
     config.ts               # Config loader (.env)
     connectors/
@@ -352,19 +387,23 @@ lastlight/
       index.ts              # Connector registry
     engine/
       router.ts             # Deterministic event → skill routing
-      opencode-executor.ts  # Sandbox runtime: opencode run --format json
-      opencode-chat-server.ts  # Long-lived opencode serve supervisor + client
-      chat.ts               # Chat skill (calls the chat server)
-      opencode-shim.ts      # Translates OpenCode events → Claude-SDK
-                            # envelope jsonl for the dashboard reader
+      agent-executor.ts     # Workflow phase runner: invokes agentic-pi
+                            #   (gondolin / docker / none backends)
+      chat-runner.ts        # In-process pi-ai chat loop; one session per
+                            #   Slack/Discord thread, rehydrated from DB
+      chat.ts               # Chat skill (delegates to ChatRunner)
+      github-tools.ts       # Read-only GitHub tools surfaced to chat
+      event-shim.ts         # Translates agentic-pi events → Claude-SDK
+                            #   envelope jsonl for the dashboard reader
       profiles.ts           # ExecutorConfig / ExecutionResult types +
-                            # GITHUB_PERMISSION_PROFILES + loadAgentContext
+                            #   GITHUB_PERMISSION_PROFILES + loadAgentContext
       llm.ts                # One-shot LLM helper for screen + classifier
       screen.ts             # Prompt-injection screener
       classifier.ts         # Intent classifier (build / explore / triage / …)
       git-auth.ts           # GitHub App git credential setup
+      github.ts             # Harness-side Octokit client (comments, etc.)
     workflows/              # YAML workflow runner (see src/workflows/CLAUDE.md)
-    sandbox/                # Docker sandbox lifecycle
+    sandbox/                # Per-task workspace + docker-sandbox lifecycle
     cron/
       scheduler.ts          # Cron with overlap protection
       jobs.ts               # Cron job registry
@@ -392,18 +431,16 @@ lastlight/
     cron-*.yaml             # Cron-kind triggers
     prompts/                # Per-phase prompt templates
 
-  mcp-github-app/           # MCP server: 28+ GitHub tools via Octokit
-    src/
-      index.js              # MCP server entry (clone_repo, refresh_git_auth, etc.)
-      auth.js               # GitHub App JWT + installation token
-      github.js             # Octokit wrapper with retry/backoff
-
   deploy/
-    entrypoint.sh                  # Docker entrypoint
-    sandbox-entrypoint.sh          # Sandbox container entrypoint
-    opencode-config.tmpl.json      # MCP servers config template for sandbox
-  Dockerfile
-  sandbox.Dockerfile
+    entrypoint.sh           # Docker entrypoint (harness container)
+    sandbox-entrypoint.sh   # Sandbox container entrypoint (docker-sandbox mode)
+    native/                 # Native (systemd) deploy artifacts
+      lastlight.service     # systemd unit
+      install.sh            # Idempotent provision + redeploy script
+      lastlight.env.example # Env template for /etc/lastlight/lastlight.env
+      README.md             # Native-deploy operator runbook
+  Dockerfile                # Harness image (test-only; prod uses native deploy)
+  sandbox.Dockerfile        # Sandbox image for LASTLIGHT_SANDBOX=docker
   docker-compose.yml
   Caddyfile                 # Reverse proxy for HTTPS
 ```
@@ -418,11 +455,27 @@ npm run dev:server
 # Look for "Required environment variable not set" errors
 ```
 
-### `npm run dev` says the sandbox image is missing
+### `npm run dev` says the sandbox image is missing (docker-sandbox mode)
 
 ```bash
 docker compose --profile build-only build sandbox
 ```
+
+### Workflow run fails with `exit 127: sh: 1: agentic-pi: not found`
+
+The sandbox image needs `agentic-pi` baked in. Rebuild it:
+
+```bash
+docker compose --profile build-only build sandbox
+```
+
+If you're on an old `lastlight-sandbox:latest`, this picks up the install step that the current `sandbox.Dockerfile` performs.
+
+### Workflow hangs forever with no output (gondolin mode on a host without KVM)
+
+Gondolin requires `/dev/kvm` on Linux or HVF on macOS. Inside a container with no nested virt, `VM.create()` succeeds but the first `vm.exec()` hangs. Symptoms: phase shows "running" indefinitely with no JSONL events after `sandbox_status`.
+
+Either switch to `LASTLIGHT_SANDBOX=docker` (sibling containers via socket) or move the harness to a KVM-capable host. Full analysis: `agentic-pi/SPIKE-gondolin.md`.
 
 ### Agent run fails with a quota / billing error
 
@@ -431,14 +484,12 @@ The runtime surfaces upstream errors as `error_api` with the verbatim provider m
 - OpenAI: "Quota exceeded. Check your plan and billing details." → top up at https://platform.openai.com/account/billing
 - Anthropic: "Credit balance is too low" → top up at https://console.anthropic.com
 
-### Chat replies fail / `opencode serve` won't start
+### Chat replies fail with `error_error`
 
-```bash
-# Smoke-test the supervisor against your local opencode binary
-npx tsx scripts/chat-smoke.mjs
-```
+Check the agent logs for the underlying error — common causes:
 
-If that two-turn probe succeeds in isolation, the issue is environmental (port collision, missing API key) rather than the supervisor itself. Set `OPENCODE_SERVE_LOGS=1` to forward serve logs to the harness stderr for deeper diagnosis.
+- **Wrong key for the chat model.** `LASTLIGHT_MODELS={"chat":"anthropic/…"}` but no `ANTHROPIC_API_KEY` set. Fix the override or add the key.
+- **Model id typo.** Watch for `[config] Model: …` in startup logs to confirm what's actually loaded.
 
 ### Webhooks not arriving
 
@@ -450,9 +501,5 @@ curl http://localhost:8644/health
 curl -X POST http://localhost:8644/webhooks/github -d '{}'
 
 # Check Docker port mapping
-docker-compose ps
+docker compose ps
 ```
-
-### Permission denied on MCP tools
-
-The executor runs OpenCode with `--dangerously-skip-permissions` (non-interactive auto-approve). In Docker this requires a non-root user (the sandbox Dockerfile handles this automatically via gosu).
