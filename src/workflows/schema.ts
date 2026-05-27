@@ -113,6 +113,17 @@ const PhaseDefinitionSchema = z
      * this into each provider's reasoning-effort API.
      */
     variant: z.string().optional(),
+    /**
+     * Bypass the sandbox HTTP egress allowlist for this phase.
+     *
+     * Default: the phase runs with the standard allowlist (GitHub, LLM
+     * providers, public package registries — see
+     * `src/sandbox/egress-allowlist.ts`). Set `unrestricted_egress: true`
+     * for phases that need broad web access, e.g. an `explore` phase that
+     * searches third-party documentation. Use sparingly — this is the
+     * exfil control the allowlist exists to enforce.
+     */
+    unrestricted_egress: z.boolean().optional(),
     /** Named approval gate to pause at after this phase */
     approval_gate: z.string().optional(),
     /** Message template rendered when pausing at this phase's approval gate. */

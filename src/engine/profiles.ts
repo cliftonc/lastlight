@@ -37,6 +37,17 @@ export interface ExecutorConfig {
   sessionsDir?: string;
   /** Workflow sandbox backend (overrides config-level default). */
   sandbox?: SandboxBackend;
+  /**
+   * Bypass the HTTP egress allowlist for this phase. When true:
+   *   - gondolin: `allowedHttpHosts: ["*"]` is passed to agentic-pi.
+   *   - docker:   the sandbox container's HTTPS_PROXY points at the open
+   *               tinyproxy sidecar instead of the strict one.
+   *
+   * Default false. Set via the `unrestricted_egress` field on a workflow
+   * phase — used for phases that need broad web access (e.g. an explore
+   * phase that searches third-party documentation).
+   */
+  unrestrictedEgress?: boolean;
 }
 
 /**

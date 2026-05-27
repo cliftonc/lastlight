@@ -98,6 +98,15 @@ src/
                         per task, mounted data volume, hardened path checks
                         (gitdir mounts validated against sandbox root,
                         taskId traversal rejected).
+    egress-allowlist.ts Single source of truth for HTTP egress hosts.
+                        GITHUB_HOSTS + PROVIDER_HOSTS + PACKAGE_REGISTRY_HOSTS.
+                        Both backends import it: gondolin passes the list to
+                        agentic-pi's `allowedHttpHosts`; docker generates a
+                        tinyproxy filter file from it at boot.
+    tinyproxy-config.ts Generates strict.conf / open.conf / filter.txt under
+                        $STATE_DIR/proxy/ at harness boot. The
+                        tinyproxy-strict / tinyproxy-open services in
+                        docker-compose.yml read those files.
   worktree/             Small helper for per-task git worktree setup inside
                         the sandbox. Implementation detail of `sandbox/`.
   admin/                Admin dashboard API (Hono) + SessionReader /
@@ -180,6 +189,42 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
   (`@last-light approve` / `reject`), Slack slash command (`/approve`,
   `/reject`), or the dashboard. Resume logic is in `src/workflows/resume.ts`
   and is runtime-agnostic — it operates on `ExecutionResult` + DB rows.
+- **Sandbox HTTP egress allowlist** — both backends apply a default-deny
+  HTTP egress policy. The host list lives in `src/sandbox/egress-allowlist.ts`
+  (`GITHUB_HOSTS` + `PROVIDER_HOSTS` + `PACKAGE_REGISTRY_HOSTS`).
+  - **gondolin**: `agent-executor.ts` passes `allowedHttpHosts` to
+    agentic-pi's `run()`. The VM's HTTP interceptor 502s anything off-list.
+  - **docker**: the harness writes `strict.conf` / `open.conf` /
+    `filter-strict.txt` / `filter-open.txt` to `$STATE_DIR/proxy/` at
+    boot from the same source. Sandbox containers attach to the
+    `sandbox-egress` network (declared `internal: true` in
+    docker-compose.yml), and `HTTPS_PROXY` points at the `tinyproxy-strict`
+    (or `tinyproxy-open`) sidecar. Tinyproxy filters by CONNECT target —
+    no TLS interception. The proxies attach to `sandbox-egress` (ingress
+    from sandboxes) + `proxy-egress` (outbound to the public internet)
+    but NOT to `internal` — so docker's embedded DNS won't resolve
+    harness service names (`agent`, `caddy`) from the proxy's
+    perspective and there's no L3 route from the proxy to harness
+    containers. `src/sandbox/docker-compose.test.ts` pins this contract.
+  - **Opting out**: a workflow phase can declare `unrestricted_egress: true`
+    in YAML to bypass the allowlist for that phase only. Gondolin then
+    receives `["*"]` (wildcard allow-all); docker routes through
+    `tinyproxy-open`. Use sparingly — for phases that need broad web
+    access (e.g. an explore phase searching third-party docs).
+  - **Private-IP floor**: `strict.conf` blocks private destinations
+    inherently — anything not in the public-host allowlist is rejected.
+    `open.conf` adds an explicit destination denylist (RFC1918, loopback,
+    link-local IPv4 + IPv6, plus the GCP metadata hostname literals)
+    via tinyproxy `FilterDefaultDeny No` + `filter-open.txt`. Toggle off
+    with `LASTLIGHT_BLOCK_PRIVATE_IPS=0`.
+  - **Caveat (tinyproxy limitation)**: the denylist matches the literal
+    CONNECT target *before* DNS resolution. A hostname like
+    `evil.example.com` whose A record points at `10.0.0.5` slips past
+    these patterns. Catching that requires a resolve-then-check proxy
+    (Envoy with `dns_resolver`, or a custom Go proxy). The current
+    setup defends against the common `curl http://169.254.169.254/`
+    /  metadata-IP-literal cases but is not a complete post-resolve
+    defense.
 
 ## State directory
 
@@ -203,6 +248,10 @@ data/
                             live here.
   sandboxes/                Cloned repos per task (one dir per taskId).
   logs/                     Structured harness logs.
+  proxy/                    Generated tinyproxy configs (docker backend).
+                            Regenerated on every harness boot from
+                            src/sandbox/egress-allowlist.ts. Bind-mounted
+                            read-only into tinyproxy-strict / tinyproxy-open.
   secrets/app.pem           Mode-600 copy of the GitHub App PEM. Copied
                             here by deploy/entrypoint.sh so sandbox
                             containers can read it via the shared volume
@@ -280,6 +329,20 @@ Runtime:
 - `OPENCODE_SERVE_LOGS=1` — forward serve logs to harness stderr
 - `OPENCODE_BIN` — override the opencode binary path (CI/dev)
 - `MCP_CONFIG_PATH` — override generated MCP config path
+
+Sandbox egress (docker backend only):
+
+- `LASTLIGHT_BLOCK_PRIVATE_IPS` — `0`/`false`/`no` disables the RFC1918 +
+  loopback + link-local Deny rules in both tinyproxy configs (default:
+  enabled).
+- `LASTLIGHT_SANDBOX_NETWORK` — docker network sandbox containers attach
+  to (default: `lastlight_sandbox-egress`). Set to `default` to keep
+  containers on the default bridge — only useful when running the harness
+  outside docker-compose where the sandbox-egress network doesn't exist.
+- `LASTLIGHT_PROXY_STRICT` / `LASTLIGHT_PROXY_OPEN` — override the
+  `host:port` of the strict / open tinyproxy sidecar (defaults match
+  the docker-compose service names: `tinyproxy-strict:8888` and
+  `tinyproxy-open:8888`).
 
 Admin dashboard:
 

@@ -32,6 +32,22 @@ export interface SandboxConfig {
    * exhaust a 16 GB host. Override via the `SANDBOX_MEMORY_LIMIT` env var.
    */
   memoryLimit?: string;
+  /**
+   * Docker network to attach the sandbox container to. Defaults to
+   * `LASTLIGHT_SANDBOX_NETWORK` env var or `lastlight_sandbox-egress`
+   * (the `internal: true` network declared in docker-compose.yml). The
+   * sandbox can only reach the public internet through the tinyproxy
+   * sidecars on this network.
+   */
+  network?: string;
+  /**
+   * Hostname:port of the tinyproxy sidecar this sandbox should route
+   * outbound HTTPS through. The harness picks `tinyproxy-strict` for
+   * default-allowlist phases and `tinyproxy-open` when the phase opts
+   * out via `unrestricted_egress: true`. Injected into the sandbox env
+   * as HTTPS_PROXY / HTTP_PROXY.
+   */
+  proxyHost?: string;
 }
 
 export interface SandboxInfo {
@@ -86,14 +102,43 @@ export class DockerSandbox {
     const gitMounts = this.resolveGitMounts(worktreePath);
     volumes.push(...gitMounts);
 
-    // Env flags — passed to entrypoint for MCP config template expansion
-    const envFlags = Object.entries(this.config.env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+    // Env flags — passed to entrypoint for MCP config template expansion.
+    // Proxy env layered on top so the agent's bash + agentic-pi calls route
+    // through tinyproxy when one is configured.
+    const proxyEnv: Record<string, string> = {};
+    if (this.config.proxyHost) {
+      const proxyUrl = `http://${this.config.proxyHost}`;
+      // Lower- and upper-case forms; libraries are inconsistent about which
+      // they honour. NO_PROXY exempts loopback so tooling that talks to
+      // localhost (test runners, dev servers spun up inside the sandbox)
+      // doesn't bounce through the proxy.
+      proxyEnv.HTTPS_PROXY = proxyUrl;
+      proxyEnv.HTTP_PROXY = proxyUrl;
+      proxyEnv.https_proxy = proxyUrl;
+      proxyEnv.http_proxy = proxyUrl;
+      proxyEnv.NO_PROXY = "localhost,127.0.0.1,::1";
+      proxyEnv.no_proxy = proxyEnv.NO_PROXY;
+    }
+    const combinedEnv = { ...this.config.env, ...proxyEnv };
+    const envFlags = Object.entries(combinedEnv).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
 
     // Per-sandbox memory cap. Without this, a runaway agent (or a hot
     // `npm install` / vite build inside the workspace) can OOM the host
     // and take every other container with it. We set --memory-swap to the
     // same value so swap can't be used to silently exceed the cap.
     const memoryLimit = this.config.memoryLimit || "2g";
+
+    // Network attachment. Default is the `internal: true` sandbox-egress
+    // network declared in docker-compose.yml, which has no host route —
+    // the only outbound path is through tinyproxy. Override via
+    // LASTLIGHT_SANDBOX_NETWORK for setups (local dev, alt orchestration)
+    // where the harness was started outside docker-compose and the network
+    // hasn't been created.
+    const network =
+      this.config.network ||
+      process.env.LASTLIGHT_SANDBOX_NETWORK ||
+      "lastlight_sandbox-egress";
+    const networkArgs = network === "default" ? [] : ["--network", network];
 
     // The entrypoint runs as root to fix permissions, then drops to agent via gosu.
     // No --user flag needed.
@@ -102,6 +147,7 @@ export class DockerSandbox {
       "--name", containerName,
       "--memory", memoryLimit,
       "--memory-swap", memoryLimit,
+      ...networkArgs,
       ...envFlags,
       ...volumes.flatMap(v => ["-v", v]),
       "-w", WORKSPACE_DIR,
