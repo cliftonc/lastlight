@@ -187,10 +187,19 @@ export interface GondolinSandboxOptions {
    * (or left at its default), `createHttpHooks({ allowedHosts })` wires
    * up the egress proxy.
    *
-   * Pass `null` to disable HTTP hooks entirely (gondolin will then block
-   * all HTTP egress at the QEMU layer). Pass an explicit array to scope
-   * down or extend the default. Omit to use the GitHub-only default,
-   * which matches agentic-pi's built-in github extension surface.
+   * Accepted shapes:
+   *  - **omit (`undefined`)** — use the built-in `DEFAULT_GUEST_ALLOWED_HOSTS`
+   *    (GitHub + common public package registries).
+   *  - **explicit array** — caller-provided allowlist. Tightens or broadens
+   *    the default. Hosts are matched by exact name plus `*.` wildcards
+   *    (see `@earendil-works/gondolin`'s host pattern docs).
+   *  - **`["*"]`** — wildcard allow-all. Lets the guest reach any host.
+   *    Useful for explore-style phases that need broad web access (e.g.
+   *    a third-party docs search). Skips the QEMU-layer block while
+   *    still routing through the HTTP hook layer (so request shape
+   *    rewrites still apply if you configure them).
+   *  - **`null`** — disable HTTP hooks entirely; gondolin then blocks all
+   *    HTTP egress at the QEMU layer (the strictest setting).
    */
   allowedHttpHosts?: string[] | null;
 }
@@ -278,9 +287,16 @@ export async function buildGondolinSandbox(
   const env = options.env;
   const imagePath = options.imagePath;
 
-  // HTTP egress policy. `undefined` (default) → GitHub-only allowlist via
-  // createHttpHooks; explicit array → caller-provided allowlist; `null` →
-  // skip hooks entirely (gondolin then blocks all HTTP at the QEMU layer).
+  // HTTP egress policy. The four valid input shapes (see GondolinSandboxOptions
+  // for the full rules):
+  //   undefined → default allowlist (GitHub + public registries)
+  //   ["*"]     → wildcard allow-all (matches every hostname)
+  //   [...]     → caller-provided allowlist (exact + wildcard patterns)
+  //   null      → skip hooks entirely; QEMU layer blocks all HTTP egress
+  //
+  // The `"*"` wildcard is recognized by the underlying
+  // `@earendil-works/gondolin` host-pattern matcher: a list containing it
+  // collapses to allow-all, matching any hostname.
   const allowedHosts = options.allowedHttpHosts === undefined
     ? [...DEFAULT_GUEST_ALLOWED_HOSTS]
     : options.allowedHttpHosts;
