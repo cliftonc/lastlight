@@ -13,6 +13,7 @@ import { getJobs } from "./cron/jobs.js";
 import { dispatchCronWorkflow } from "./cron/fanout.js";
 import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
+import { writeProxyConfigs } from "./sandbox/tinyproxy-config.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { screenForInjection, flagPrefix } from "./engine/screen.js";
@@ -80,6 +81,12 @@ async function main() {
   console.log(`[state] State dir: ${config.stateDir}`);
   console.log(`[state] Sessions dir: ${config.sessionsDir}`);
   console.log(`[config] Sandbox backend: ${config.sandbox}`);
+
+  // Regenerate tinyproxy configs from the egress allowlist source of truth.
+  // Only meaningful for the docker backend; cheap enough to do unconditionally
+  // so a backend switch doesn't leave stale configs on disk.
+  const proxyDir = writeProxyConfigs(config.stateDir);
+  console.log(`[state] Proxy configs: ${proxyDir}`);
 
   // Initialize state database first — ChatRunner needs SessionManager
   // (DB-backed) at construction time.

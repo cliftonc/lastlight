@@ -18,6 +18,7 @@ import {
 } from "./profiles.js";
 import { AgenticShim, projectSlugForCwd } from "./event-shim.js";
 import type { SandboxBackend } from "../config.js";
+import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST } from "../sandbox/egress-allowlist.js";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 const DOCKER_WORKSPACE_DIR = "/home/agent/workspace";
@@ -231,6 +232,15 @@ async function executeInProcess(
   let notifiedSessionId = false;
   let result: RunResult;
   try {
+    // HTTP egress allowlist. lastlight owns the policy (rather than relying
+    // on agentic-pi's bundled default) so a single source — `egress-allowlist.ts`
+    // — covers both backends. `unrestrictedEgress` opts a phase out via the
+    // `"*"` sentinel; gondolin (post the upstream allow-all patch) treats it
+    // as "allow every host".
+    const allowedHttpHosts = config.unrestrictedEgress
+      ? [ALLOW_ALL_SENTINEL]
+      : [...DEFAULT_ALLOWLIST];
+
     result = await agenticRun({
       model,
       prompt,
@@ -240,6 +250,7 @@ async function executeInProcess(
       sandboxEnv,
       cwd: ctx.workDir,
       noSession: true,
+      allowedHttpHosts,
       onEvent: (record) => {
         shim.feed(record);
         if (!notifiedSessionId && ctx.onSessionId && record.type === "session" && typeof record.id === "string") {
@@ -290,12 +301,21 @@ async function executeDocker(
     onSessionId?: (sessionId: string) => void;
   },
 ): Promise<ExecutionResult> {
+  // HTTP egress routing — docker analog of the gondolin allowlist. Default
+  // routes through tinyproxy-strict (allowlist enforced); a phase that set
+  // `unrestricted_egress: true` routes through tinyproxy-open instead.
+  // The hostnames here match the service names in docker-compose.yml.
+  const proxyHost = config.unrestrictedEgress
+    ? (process.env.LASTLIGHT_PROXY_OPEN || "tinyproxy-open:8888")
+    : (process.env.LASTLIGHT_PROXY_STRICT || "tinyproxy-strict:8888");
+
   const sbx = await createTaskSandbox({
     taskId: ctx.taskId,
     stateDir: ctx.stateDir,
     sandboxDir: config.sandboxDir,
     env: ctx.env,
     prePopulate: ctx.prePopulate,
+    proxyHost,
   });
   if (!sbx) {
     throw new Error(

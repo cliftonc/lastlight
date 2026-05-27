@@ -65,6 +65,17 @@ function buildPhasePrompt(
 }
 
 /**
+ * Overlay per-phase executor config fields that live on the YAML phase
+ * itself (not on the runner-level config or env). Currently just
+ * `unrestricted_egress`; if more phase-only knobs accumulate, fold them
+ * in here so call sites stay uniform.
+ */
+function phaseConfigFor(config: ExecutorConfig, phase: PhaseDefinition): ExecutorConfig {
+  if (phase.unrestricted_egress === undefined) return config;
+  return { ...config, unrestrictedEgress: phase.unrestricted_egress };
+}
+
+/**
  * Map of approval gate name → enabled. Gate names are arbitrary strings
  * declared in YAML (`phase.approval_gate`, `phase.loop.approval_gate`); a
  * gate pauses only if the corresponding key is `true` here.
@@ -520,7 +531,7 @@ export async function runWorkflow(
           taskId,
           triggerId,
           reviewPrompt,
-          config,
+          phaseConfigFor(config, phase),
           db,
           reviewModel,
           workflowId,
@@ -619,7 +630,7 @@ export async function runWorkflow(
             taskId,
             triggerId,
             fixPromptRendered,
-            config,
+            phaseConfigFor(config, phase),
             db,
             fixModel,
             workflowId,
@@ -721,7 +732,7 @@ export async function runWorkflow(
           taskId,
           triggerId,
           prompt,
-          config,
+          phaseConfigFor(config, phase),
           db,
           model,
           workflowId,
@@ -902,7 +913,7 @@ export async function runWorkflow(
       taskId,
       triggerId,
       prompt,
-      config,
+      phaseConfigFor(config, phase),
       db,
       model,
       workflowId,
@@ -1119,7 +1130,7 @@ async function runDagWorkflow(
       `${taskId}-${phaseName}`,
       triggerId,
       prompt,
-      config,
+      phaseConfigFor(config, phase),
       db,
       model,
       workflowId,
@@ -1269,7 +1280,7 @@ async function runDagWorkflow(
             `${taskId}-${reviewLabel}`,
             triggerId,
             reviewPrompt,
-            config,
+            phaseConfigFor(config, phase),
             db,
             reviewModel,
             workflowId,
@@ -1307,7 +1318,7 @@ async function runDagWorkflow(
               `${taskId}-fix${fixCycles}`,
               triggerId,
               fixPromptRendered,
-              config,
+              phaseConfigFor(config, phase),
               db,
               fixModel,
               workflowId,
@@ -1360,7 +1371,7 @@ async function runDagWorkflow(
             `${taskId}-${iterLabel}`,
             triggerId,
             iterPrompt,
-            config,
+            phaseConfigFor(config, phase),
             db,
             model,
             workflowId,

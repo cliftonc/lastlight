@@ -103,6 +103,27 @@ Three kinds of phase the runner recognises:
 expression (evaluated by `loop-eval.ts`) instead of fixed review/fix
 cycles. Used for custom "retry until X" phases.
 
+## Per-phase egress policy
+
+Any phase can declare `unrestricted_egress: true` to bypass the sandbox
+HTTP egress allowlist for that phase only. Default (field absent or
+`false`) runs with the allowlist from `src/sandbox/egress-allowlist.ts` —
+GitHub, LLM provider hosts, public package registries. When `true`:
+
+- **gondolin**: agentic-pi receives `allowedHttpHosts: ["*"]` (wildcard
+  allow-all). The QEMU-layer block is bypassed but private-IP rules at
+  lower layers still apply.
+- **docker**: `HTTPS_PROXY` is routed to the `tinyproxy-open` sidecar
+  instead of `tinyproxy-strict`. The private-IP floor (RFC1918 +
+  loopback + link-local) is still enforced when
+  `LASTLIGHT_BLOCK_PRIVATE_IPS` is enabled.
+
+Use sparingly — this is the exfil control the allowlist exists to enforce.
+Typical use case is an `explore` phase that needs to search third-party
+documentation. The setting is propagated by `phaseConfigFor()` in
+`runner.ts`, which overlays `phase.unrestricted_egress` onto the
+`ExecutorConfig` before each `runPhase` call.
+
 ## Linear vs DAG runner
 
 `runWorkflow` checks `hasDependencies(definition)`. If any phase has
