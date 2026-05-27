@@ -54,9 +54,16 @@ services:
       - TINYPROXY_CONF=/app/data/proxy/strict.conf
     volumes:
       - agent-data:/app/data:ro
+    # Deliberately NOT on `internal`. If the proxies were attached to the
+    # harness network, docker's embedded DNS would resolve compose service
+    # names (`agent`, `caddy`) from the proxy's perspective, and a sandbox
+    # asking the proxy to fetch `http://agent:8644/` would reach the harness.
+    # Splitting ingress (sandbox-egress) and egress (proxy-egress) onto
+    # separate networks that don't include harness services keeps
+    # compose-internal hostnames unresolvable to the proxy.
     networks:
-      - internal
       - sandbox-egress
+      - proxy-egress
 
   tinyproxy-open:
     image: lastlight-tinyproxy:latest
@@ -68,8 +75,8 @@ services:
     volumes:
       - agent-data:/app/data:ro
     networks:
-      - internal
       - sandbox-egress
+      - proxy-egress
 
   caddy:
     image: caddy:2-alpine
@@ -98,7 +105,15 @@ networks:
   internal:
   # Sandbox containers (created dynamically by src/sandbox/docker.ts) attach
   # to this network only. `internal: true` disables direct host egress, so
-  # the only path to the public internet is through tinyproxy-strict /
-  # tinyproxy-open (which are dual-homed onto both networks).
+  # the only path to the public internet is through the tinyproxy sidecars,
+  # which receive sandbox traffic on this network.
   sandbox-egress:
     internal: true
+  # Egress-only network for the tinyproxy sidecars. Regular bridge (has a
+  # default route to the host's network, so the proxies can reach the public
+  # internet). Critically: NO other compose services attach here. That way
+  # docker's embedded DNS on this network resolves only public names — the
+  # harness service names (`agent`, `caddy`) are not reachable from the
+  # proxies' perspective, so an unrestricted sandbox can't ask the proxy to
+  # bridge into the compose-internal services.
+  proxy-egress:

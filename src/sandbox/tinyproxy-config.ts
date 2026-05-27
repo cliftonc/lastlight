@@ -31,6 +31,14 @@ import { DEFAULT_ALLOWLIST } from "./egress-allowlist.js";
  * custom Go proxy). The current setup raises the bar against the
  * common case (curl-to-metadata-IP-literal) but is not a complete
  * post-resolve defense — track follow-up if we need that.
+ *
+ * Network isolation is the primary defense against compose-internal
+ * names (`agent`, `caddy`): the tinyproxy services are attached to
+ * `sandbox-egress` (ingress from sandboxes) + `proxy-egress` (outbound
+ * to internet) but NOT to `internal`, so docker's embedded DNS doesn't
+ * resolve harness service names from the proxy's perspective and there
+ * is no L3 route from the proxy to harness containers. See
+ * `docker-compose.test.ts` for the regression test that enforces this.
  */
 
 const PROXY_PORT = 8888;

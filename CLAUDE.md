@@ -195,11 +195,17 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
   - **gondolin**: `agent-executor.ts` passes `allowedHttpHosts` to
     agentic-pi's `run()`. The VM's HTTP interceptor 502s anything off-list.
   - **docker**: the harness writes `strict.conf` / `open.conf` /
-    `filter.txt` to `$STATE_DIR/proxy/` at boot from the same source.
-    Sandbox containers attach to the `sandbox-egress` network (declared
-    `internal: true` in docker-compose.yml), and `HTTPS_PROXY` points at
-    the `tinyproxy-strict` (or `tinyproxy-open`) sidecar. Tinyproxy filters
-    by CONNECT target — no TLS interception.
+    `filter-strict.txt` / `filter-open.txt` to `$STATE_DIR/proxy/` at
+    boot from the same source. Sandbox containers attach to the
+    `sandbox-egress` network (declared `internal: true` in
+    docker-compose.yml), and `HTTPS_PROXY` points at the `tinyproxy-strict`
+    (or `tinyproxy-open`) sidecar. Tinyproxy filters by CONNECT target —
+    no TLS interception. The proxies attach to `sandbox-egress` (ingress
+    from sandboxes) + `proxy-egress` (outbound to the public internet)
+    but NOT to `internal` — so docker's embedded DNS won't resolve
+    harness service names (`agent`, `caddy`) from the proxy's
+    perspective and there's no L3 route from the proxy to harness
+    containers. `src/sandbox/docker-compose.test.ts` pins this contract.
   - **Opting out**: a workflow phase can declare `unrestricted_egress: true`
     in YAML to bypass the allowlist for that phase only. Gondolin then
     receives `["*"]` (wildcard allow-all); docker routes through
