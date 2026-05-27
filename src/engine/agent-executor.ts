@@ -459,7 +459,13 @@ function finalizeFromRunResult(
 ): ExecutionResult {
   const durationMs = Date.now() - startTime;
   const stats = result.stats;
-  const stopReason = mapStopReason(result);
+  // pi-agent-core swallows provider API errors (insufficient_quota, rate
+  // limit, auth) inside `handleRunFailure`: it synthesizes an assistant
+  // message with stopReason "error" + errorMessage and emits a clean
+  // agent_end. Without this check the run would map to "success" and the
+  // workflow would silently advance with no output. See message scan below.
+  const agentError = extractAgentError(result);
+  const stopReason = agentError?.stopReason ?? mapStopReason(result);
   const success = stopReason === "success";
 
   const inputTokens = stats?.tokens.input ?? 0;
@@ -485,26 +491,41 @@ function finalizeFromRunResult(
     cacheCreationInputTokens: cacheWrite,
     stopReason,
     durationMs,
+    apiErrorMessage: agentError?.errorMessage,
   });
   void shim.flush();
 
-  const combined = (result.fatalError?.message ?? "" + "\n" + result.finalText).toLowerCase();
+  const combined = [
+    result.fatalError?.message,
+    agentError?.errorMessage,
+    result.finalText,
+  ]
+    .filter((s): s is string => typeof s === "string" && s.length > 0)
+    .join("\n")
+    .toLowerCase();
   const accountError =
     combined.includes("credit balance") ||
     combined.includes("insufficient_quota") ||
+    combined.includes("insufficient quota") ||
     combined.includes("rate limit") ||
-    combined.includes("unauthorized");
+    combined.includes("unauthorized") ||
+    combined.includes("invalid_api_key");
 
+  const errorText =
+    result.fatalError?.message ||
+    agentError?.errorMessage ||
+    result.finalText ||
+    stopReason;
   if (!success || accountError) {
-    const err = result.fatalError?.message || result.finalText || stopReason;
-    if (accountError) console.error(`  [executor] Account error: ${err}`);
+    if (accountError) console.error(`  [executor] Account error: ${errorText}`);
+    else console.error(`  [executor] Run failed (${stopReason}): ${errorText}`);
   }
 
   return {
     success: success && !accountError,
     output: result.finalText,
     turns,
-    error: success && !accountError ? undefined : (result.fatalError?.message || stopReason),
+    error: success && !accountError ? undefined : errorText,
     durationMs,
     sessionId: result.sessionId,
     costUsd: costUsd > 0 ? costUsd : undefined,
@@ -522,6 +543,33 @@ function mapStopReason(result: RunResult): string {
   if (!result.ok) return `error_exit_${result.exitCode}`;
   if (result.agentEnded || result.finalText.length > 0) return "success";
   return "unknown";
+}
+
+/**
+ * Scan agent_end's messages for a failed assistant turn. pi-agent-core's
+ * `handleRunFailure` catches provider errors, synthesizes an assistant
+ * message with stopReason "error"/"aborted" + errorMessage, and emits a
+ * normal agent_end — so the only signal that the run actually failed
+ * lives on the last assistant message.
+ */
+function extractAgentError(
+  result: RunResult,
+): { stopReason: string; errorMessage: string } | undefined {
+  if (!Array.isArray(result.messages)) return undefined;
+  for (let i = result.messages.length - 1; i >= 0; i--) {
+    const m = result.messages[i] as
+      | { role?: string; stopReason?: string; errorMessage?: string }
+      | undefined;
+    if (m?.role !== "assistant") continue;
+    if (m.stopReason === "error" || m.stopReason === "aborted") {
+      return {
+        stopReason: m.stopReason === "aborted" ? "error_aborted" : "error_agent",
+        errorMessage: m.errorMessage || m.stopReason,
+      };
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 function coerceThinking(raw: string | undefined): ThinkingLevel | undefined {

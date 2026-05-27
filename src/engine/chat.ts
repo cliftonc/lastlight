@@ -120,7 +120,7 @@ export async function handleChatMessage(
     const result: ChatResult = {
       text: turn.text || (success
         ? "I wasn't able to generate a response. Please try again."
-        : `Sorry — chat failed (${turn.finish}).`),
+        : formatChatFailure(turn.finish, turn.errors)),
       agentSessionId: turn.agentSessionId,
       dashboardSessionId: turn.agentSessionId,
       success,
@@ -172,6 +172,38 @@ export async function handleChatMessage(
       dashboardSessionId,
     };
   }
+}
+
+/**
+ * Pick a useful Slack message for a failed chat turn. Provider errors
+ * (insufficient_quota, rate limit, auth) get a dedicated line — the
+ * raw error string was previously dropped, leaving users with just
+ * "(error)".
+ */
+function formatChatFailure(finish: string, errors: string[]): string {
+  const first = errors.find((e) => e && e.trim().length > 0)?.trim();
+  if (first) {
+    const lower = first.toLowerCase();
+    if (
+      lower.includes("credit balance") ||
+      lower.includes("insufficient_quota") ||
+      lower.includes("insufficient quota")
+    ) {
+      return `Sorry — the model provider rejected the request: out of credits / quota.\n> ${truncate(first, 300)}`;
+    }
+    if (lower.includes("rate limit") || lower.includes("rate_limit")) {
+      return `Sorry — the model provider is rate-limiting us right now. Try again in a moment.\n> ${truncate(first, 300)}`;
+    }
+    if (lower.includes("unauthorized") || lower.includes("invalid_api_key") || lower.includes("api key")) {
+      return `Sorry — the model provider rejected our API key.\n> ${truncate(first, 300)}`;
+    }
+    return `Sorry — chat failed (${finish}): ${truncate(first, 400)}`;
+  }
+  return `Sorry — chat failed (${finish}).`;
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
 async function writeChatShim(opts: {

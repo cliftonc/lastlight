@@ -46,6 +46,13 @@ export interface ShimResultEnvelope {
   cacheCreationInputTokens: number;
   stopReason: string;
   durationMs: number;
+  /**
+   * Provider-level error (e.g. OpenAI insufficient_quota) extracted from
+   * the last assistant message. When set, an `isApiErrorMessage` envelope
+   * is appended before the `result` line so the dashboard renders the
+   * cause inline instead of showing a silent "success".
+   */
+  apiErrorMessage?: string;
 }
 
 export class AgenticShim {
@@ -113,7 +120,19 @@ export class AgenticShim {
    */
   finalize(result: ShimResultEnvelope): void {
     if (!this.filePath) return;
-    const envelope = {
+    const ts = new Date().toISOString();
+    const lines: object[] = [];
+    if (result.apiErrorMessage) {
+      const sessionId = path.basename(this.filePath, ".jsonl");
+      lines.push({
+        type: "assistant",
+        isApiErrorMessage: true,
+        error: result.apiErrorMessage,
+        timestamp: ts,
+        sessionId,
+      });
+    }
+    lines.push({
       type: "result",
       subtype: result.stopReason === "success" ? "success" : result.stopReason,
       result: result.finalText,
@@ -124,9 +143,9 @@ export class AgenticShim {
       total_cache_read_input_tokens: result.cacheReadInputTokens,
       total_cache_creation_input_tokens: result.cacheCreationInputTokens,
       duration_ms: result.durationMs,
-      timestamp: new Date().toISOString(),
-    };
-    this.appendLines([envelope]);
+      timestamp: ts,
+    });
+    this.appendLines(lines);
   }
 
   /**
