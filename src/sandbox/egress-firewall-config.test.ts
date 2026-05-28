@@ -106,9 +106,11 @@ describe("coredns open Corefile", () => {
   });
 
   it("hard-denies cloud metadata literals even in unrestricted mode", () => {
-    expect(conf).toContain("metadata\\.google\\.internal");
-    expect(conf).toContain("169\\.254\\.169\\.254");
-    expect(conf).toMatch(/rcode\s+NXDOMAIN/);
+    // Each hard-deny host gets its own zone block so CoreDNS's
+    // longest-suffix routing intercepts the apex + subdomains before
+    // the catch-all `.` zone sees them.
+    expect(conf).toMatch(/metadata\.google\.internal:53\s*\{[\s\S]*?rcode\s+NXDOMAIN/);
+    expect(conf).toMatch(/169\.254\.169\.254:53\s*\{[\s\S]*?rcode\s+NXDOMAIN/);
   });
 
   it("returns NOERROR / empty for AAAA so IPv6 doesn't accidentally bypass us", () => {
