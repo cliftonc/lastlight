@@ -61,6 +61,22 @@ export interface RunConfig {
    * entirely. Ignored when `sandbox === "none"`.
    */
   allowedHttpHosts?: string[] | null;
+  /**
+   * Web-search extension toggle. Default: true (auto-enables when a
+   * provider API key env var is present). Pass `--no-web-search` to
+   * force-disable.
+   */
+  webSearch: boolean;
+  /**
+   * Explicit web-search provider. Overrides auto-detection by env var.
+   * Set via `--web-search-provider <tavily|brave|exa>`.
+   */
+  webSearchProvider?: string;
+  /**
+   * Per-run cap on combined web_search + web_fetch calls. Default: 30.
+   * Set via `--web-search-max-calls <n>`.
+   */
+  webSearchMaxCalls?: number;
 }
 
 export function printHelp(): void {
@@ -92,6 +108,15 @@ Flags:
                               Ignored when --sandbox=none.
   --no-network               Disable HTTP egress from the sandbox entirely.
                               Ignored when --sandbox=none.
+  --web-search-provider <p>  Force a web-search provider: tavily | brave | exa.
+                              Default: auto-detect from env (Tavily > Exa > Brave).
+                              Provider's API key env var must be set:
+                              TAVILY_API_KEY, EXA_API_KEY, or BRAVE_SEARCH_API_KEY.
+  --no-web-search            Disable the web-search extension entirely
+                              (web_search / web_fetch tools not registered).
+  --web-search-max-calls <n> Cap combined web_search + web_fetch calls per run.
+                              Default: 30. When exceeded, further calls return a
+                              structured error result.
   --sandbox-image <name>     Image to boot when --sandbox=gondolin. Values:
                               'default' (recommended) — bundled agentic-pi-dev image
                                 with git/gh/node/python/rust baked in (auto-downloaded).
@@ -113,6 +138,7 @@ export function parseArgs(argv: string[]): RunConfig {
     noBuiltinTools: false,
     dangerouslySkipPermissions: false,
     sandbox: "none",
+    webSearch: true,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -205,6 +231,24 @@ export function parseArgs(argv: string[]): RunConfig {
       case "--no-network":
         config.allowedHttpHosts = null;
         break;
+      case "--no-web-search":
+        config.webSearch = false;
+        break;
+      case "--web-search-provider": {
+        const v = next().trim();
+        if (!v) throw new Error("--web-search-provider requires a value");
+        config.webSearchProvider = v;
+        break;
+      }
+      case "--web-search-max-calls": {
+        const v = next();
+        const n = Number(v);
+        if (!Number.isFinite(n) || Math.floor(n) !== n || n < 1) {
+          throw new Error(`--web-search-max-calls must be a positive integer (got '${v}')`);
+        }
+        config.webSearchMaxCalls = n;
+        break;
+      }
       case "-h":
       case "--help":
         printHelp();

@@ -22,6 +22,10 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { RunConfig } from "./args.js";
 import { Emitter, type EmitterSink } from "./emitter.js";
 import { loadGitHubExtension, isMisconfigurationSkip } from "./extensions/github/index.js";
+import {
+  loadWebSearchExtension,
+  isMisconfigurationSkip as isWebSearchMisconfig,
+} from "./extensions/web-search/index.js";
 import { resolveModel } from "./models.js";
 import { buildSandbox, type ImageDescriptor, type SandboxResult } from "./sandbox/index.js";
 import { ensureImage, ImageLoaderError } from "./sandbox/images/loader.js";
@@ -65,6 +69,23 @@ export async function runOnce(
     config.profile
   ) {
     warn(`--profile=${config.profile} set but no GITHUB_APP_* or GITHUB_TOKEN env vars found; GitHub tools disabled`);
+  }
+
+  // Web-search extension. Host-process execution (does not consume the
+  // Gondolin egress allowlist or expose API keys to the VM). Silent skip
+  // when no API key is set; warning when the user explicitly picked a
+  // provider whose key is missing.
+  const webSearch = loadWebSearchExtension({
+    webSearch: config.webSearch,
+    webSearchProvider: config.webSearchProvider,
+    webSearchMaxCalls: config.webSearchMaxCalls,
+  });
+  if (isWebSearchMisconfig(webSearch)) {
+    warn(`web-search extension disabled (${webSearch.reason}): ${webSearch.message ?? ""}`);
+  } else if (webSearch.status === "configured" && webSearch.message) {
+    // e.g. "multiple provider keys present; using tavily — set
+    // WEB_SEARCH_PROVIDER to override". Soft warning, not a misconfig.
+    warn(`web-search: ${webSearch.message}`);
   }
 
   // Compose the env for the sandbox VM. Order (later wins):
@@ -155,7 +176,7 @@ export async function runOnce(
     modelRegistry,
     tools: config.tools,
     noTools: noToolsMode,
-    customTools: [...sandbox.customTools, ...github.customTools],
+    customTools: [...sandbox.customTools, ...github.customTools, ...webSearch.customTools],
   });
 
   const emitter = new Emitter(
@@ -181,6 +202,16 @@ export async function runOnce(
     message: github.message,
     profile: github.profile,
     toolCount: github.toolNames.length,
+  });
+  emitter.event({
+    type: "extension_status",
+    extension: "web-search",
+    status: webSearch.status,
+    reason: webSearch.reason,
+    message: webSearch.message,
+    provider: webSearch.provider,
+    toolCount: webSearch.toolNames.length,
+    maxCalls: webSearch.maxCalls,
   });
 
   let sawError = false;

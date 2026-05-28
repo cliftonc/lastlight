@@ -42,8 +42,8 @@ single line you parse.
 
 Pi explicitly does not support MCP. agentic-pi ships a native Pi extension
 exposing **31 GitHub tools** ported from lastlight's `mcp-github-app`:
-clone/push, issues, PRs, reviews, labels, search. Tools are registered with
-the `github_` prefix to match opencode's MCP-server-name convention.
+clone/push, issues, PRs, reviews, labels, search. Tool names are prefixed
+with `github_`.
 
 Auth is opinionated: **GitHub App credentials preferred**, static
 `GITHUB_TOKEN` only as a low-trust fallback. JWT-minted installation tokens
@@ -81,38 +81,29 @@ The `extension_status` JSONL event always reports `status`, `reason`,
 `message`, `profile`, and `toolCount` so the orchestrator can log the
 outcome programmatically without parsing stderr.
 
-### 5. Models named the way opencode names them
+### 5. Model selection
 
-`--model provider/id` accepts the exact string format opencode used
-(`openai/gpt-5.5`, `anthropic/claude-opus-4-5`, etc.). Credentials come from
-environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`OPENROUTER_API_KEY`) or Pi's `~/.pi/agent/auth.json` if you've logged in
-interactively. Provider/id mapping is delegated to `@earendil-works/pi-ai`'s
-`getModel()`.
+`--model provider/id` (e.g. `anthropic/claude-opus-4-5`, `openai/gpt-4o`).
+Credentials come from environment variables (`OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) or Pi's `~/.pi/agent/auth.json`
+if you've logged in interactively. Provider/id mapping is delegated to
+`@earendil-works/pi-ai`'s `getModel()`.
 
 `--thinking <level>` maps directly to Pi's `thinkingLevel`
 (`off`/`minimal`/`low`/`medium`/`high`/`xhigh`). Per-provider effort is
 handled by Pi.
 
-### 6. Things accepted but ignored for caller-side compatibility
-
-- `--dangerously-skip-permissions` — Pi has no permission prompts to skip
-  ("run in a container" is Pi's design stance). The flag is accepted so a
-  caller that previously spawned opencode does not need to strip it.
-- `--variant <level>` — alias for `--thinking`.
-
-### 7. Defaults that match a containerized sandbox
+### 6. Defaults that match a containerized sandbox
 
 - **`--no-session`** is intended to be the default in sandboxed runs (state
   lives outside the container).
 - **Built-in tools** (read, write, edit, bash, grep, find, ls) are enabled
   by default. Add `--no-builtin-tools` if you want a GitHub-only agent.
 - **`AGENTS.md`** in the working directory is auto-loaded as the agent's
-  system prompt — same convention Pi and opencode share. Drop your
-  workflow's `AGENTS.md` into the mounted workspace and the agent picks it
-  up.
+  system prompt — same convention Pi uses. Drop your workflow's
+  `AGENTS.md` into the mounted workspace and the agent picks it up.
 
-### 8. Optional micro-VM sandboxing via `--sandbox gondolin`
+### 7. Optional micro-VM sandboxing via `--sandbox gondolin`
 
 By default Pi's file and bash tools run on the host. Pass `--sandbox gondolin`
 and they get routed through a per-run [Gondolin](https://github.com/earendil-works/gondolin)
@@ -195,14 +186,73 @@ The **App PEM is never copied into the VM** — only the resulting token,
 which is short-lived. User-supplied `--sandbox-env GITHUB_TOKEN=…`
 overrides the auto-injected value if you need to scope down further.
 
+### 8. Safe web search via the `web-search` extension
+
+agentic-pi can register two native Pi tools — `web_search` and `web_fetch` —
+so the agent can do general-purpose research. Backed by a configurable
+provider:
+
+| Provider | API key env var | Native content extraction |
+| --- | --- | --- |
+| Tavily (default) | `TAVILY_API_KEY` | yes (search + extract) |
+| Exa | `EXA_API_KEY` | yes (search + contents) |
+| Brave Search | `BRAVE_SEARCH_API_KEY` | no — `web_fetch` falls back to a safe HTML→text extractor |
+
+**Auto-enable.** When at least one API key env var is present, the
+extension is configured automatically. With multiple keys set, priority is
+**Tavily → Exa → Brave**; override with `--web-search-provider` or the
+`WEB_SEARCH_PROVIDER` env var. Pass `--no-web-search` to suppress the
+tools entirely.
+
+**Host-process egress.** Both tools run in the agentic-pi process, **not**
+inside the Gondolin guest. That means:
+
+- The provider API host is **not** added to the Gondolin egress
+  allowlist, and the API key is **never** injected into the VM.
+- Behavior is identical under `--sandbox=none`, `--sandbox=gondolin`, and
+  when agentic-pi itself is containerized. The host's own network policy
+  controls reachability to the provider + arbitrary http(s) URLs.
+
+**Safety rails (built-in, non-configurable in v1).**
+
+| Rail | Default |
+| --- | --- |
+| URL scheme allowlist | `http`, `https` only (`web_fetch`) |
+| Request timeout | 15 s |
+| Max response bytes | 1 MiB (streamed, aborted on overflow) |
+| Max redirects | 3 (scheme re-checked at each hop) |
+| Content-type gate (`web_fetch`) | `text/*`, `application/(xhtml+xml\|xml\|json)` |
+| Max search results | 10 (regardless of `max_results` arg) |
+| Extracted text cap | ~200 KiB |
+| HTML cleaning | `<script>`, `<style>`, `<noscript>`, `<iframe>`, comments stripped before extraction |
+| Per-run call budget | 30 combined `web_search` + `web_fetch` calls (override with `--web-search-max-calls`) |
+
+When the call budget is hit, further invocations return a structured
+rate-limit error result so the agent can recover; the run is **not**
+aborted.
+
+**No SSRF blocking.** Loopback / private IP ranges are **not** blocked by
+default. Operators who care should run agentic-pi behind their own
+egress firewall.
+
+**Event stream.** A second `extension_status` event mirrors GitHub's:
+
+```jsonl
+{"type":"extension_status","extension":"web-search","status":"configured","provider":"tavily","toolCount":2,"maxCalls":30,"sessionId":"…","timestamp":"…"}
+```
+
+When skipped (no keys / `--no-web-search`), `status: "skipped"` carries a
+`reason` of `disabled-by-flag` or `no-credentials`. Misconfigurations
+(explicit provider whose key is missing, or an unknown provider name)
+surface as a warning before the run starts.
+
 ## When to use this
 
 - You have an orchestrator that calls a coding agent once per workflow
   phase, in a container, and parses a JSONL stream.
-- You used to call `opencode run --format json` and want a less-opaque
-  replacement built on a more hackable substrate.
 - You need GitHub repo operations available to the agent without standing
   up an MCP server.
+- You want safe, sandbox-mode-agnostic web search available to the agent.
 
 ## When **not** to use this
 
@@ -245,16 +295,19 @@ GITHUB_TOKEN=ghp_…
 | --- | --- |
 | `--model <provider/id>` | Required. e.g. `anthropic/claude-opus-4-5`, `openai/gpt-4o`. |
 | `--thinking <level>` | `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh`. |
-| `--variant <level>` | Alias for `--thinking`. |
 | `--profile <name>` | `read` \| `issues-write` \| `review-write` \| `repo-write`. Omit to disable GitHub tools entirely. |
 | `--cwd <path>` | Working directory for the agent. Default: `$PWD`. |
 | `--no-session` | Ephemeral run — do not persist session jsonl. Recommended in sandboxed containers. |
 | `--session-dir <path>` | Override session storage location. |
 | `--no-builtin-tools` | Disable Pi's `read,write,edit,bash,grep,find,ls`. |
 | `--tools <a,b,c>` | Explicit tool allowlist (combined with profile if set). |
-| `--sandbox <none\|gondolin>` | Route `read`/`write`/`edit`/`bash` through a sandbox backend. Default `none`. `gondolin` boots a QEMU micro-VM mounting cwd at `/workspace`. Requires QEMU on the host; native-only (not Docker-in-Docker). See section 8. |
+| `--sandbox <none\|gondolin>` | Route `read`/`write`/`edit`/`bash` through a sandbox backend. Default `none`. `gondolin` boots a QEMU micro-VM mounting cwd at `/workspace`. Requires QEMU on the host; native-only (not Docker-in-Docker). See section 7. |
 | `--sandbox-env KEY=VAL` | Inject env var into the sandbox VM (repeatable). Ignored when `--sandbox=none`. Auto-injects a minted `GITHUB_TOKEN`/`GH_TOKEN` when `--profile` is also active. |
-| `--dangerously-skip-permissions` | Accepted for caller-side compatibility. No-op. |
+| `--allow-host <host>` | Add host to the sandbox HTTP egress allowlist (repeatable). Ignored when `--sandbox=none`. |
+| `--no-network` | Disable sandbox HTTP egress entirely. Ignored when `--sandbox=none`. |
+| `--web-search-provider <p>` | Force web-search provider: `tavily` \| `brave` \| `exa`. Default: auto-detect by env. See section 8. |
+| `--no-web-search` | Disable the web-search extension (no `web_search`/`web_fetch` tools). |
+| `--web-search-max-calls <n>` | Cap combined `web_search` + `web_fetch` calls per run. Default: 30. |
 
 Reads the prompt from stdin. Emits JSONL on stdout. Exits 0 on `agent_end`,
 1 on fatal error.
@@ -265,6 +318,7 @@ Reads the prompt from stdin. Emits JSONL on stdout. Exits 0 on `agent_end`,
 {"type":"session","version":3,"id":"<uuid>","timestamp":"…","cwd":"…"}
 {"type":"sandbox_status","backend":"none","status":{"backend":"none"},"sessionId":"<uuid>","timestamp":"…"}
 {"type":"extension_status","extension":"github","status":"configured","profile":"read","toolCount":18,"sessionId":"<uuid>","timestamp":"…"}
+{"type":"extension_status","extension":"web-search","status":"configured","provider":"tavily","toolCount":2,"maxCalls":30,"sessionId":"<uuid>","timestamp":"…"}
 {"type":"agent_start","sessionId":"<uuid>","timestamp":"…"}
 {"type":"turn_start","sessionId":"<uuid>","timestamp":"…"}
 {"type":"message_start","message":{…},"sessionId":"<uuid>","timestamp":"…"}
@@ -343,7 +397,8 @@ console.log(result.records.length);      // full event log
 | `messages` | `unknown[]` | Full Pi message array from `agent_end`. |
 | `stats` | `{userMessages, assistantMessages, toolCalls, toolResults, tokens: {input, output, cacheRead, cacheWrite, total}, cost}` \| `undefined` | Token + cost rollup. |
 | `sandbox` | `{backend, status}` \| `undefined` | Mirror of the `sandbox_status` event. |
-| `github` | `{status, reason, profile, toolCount}` \| `undefined` | Mirror of the `extension_status` event. |
+| `github` | `{status, reason, profile, toolCount}` \| `undefined` | Mirror of the GitHub `extension_status` event. |
+| `webSearch` | `{status, reason, provider, toolCount, maxCalls}` \| `undefined` | Mirror of the web-search `extension_status` event. |
 | `records` | `EmitterRecord[]` | Every JSONL record in order. Same shape that the CLI writes. |
 | `warnings` | `string[]` | Warnings that would have gone to stderr in CLI mode. |
 
@@ -394,6 +449,7 @@ which walks `test/` for `*.test.ts`.
 | `test/models.test.ts` | `provider/id` parsing including openrouter triple-slash | — |
 | `test/extensions/github/profiles.test.ts` | Profile → tool allowlist (counts, superset structure, scope tiering) | — |
 | `test/extensions/github/credentials.test.ts` | `assertSafeToken` and `credentialsFilePath` validation | — |
+| `test/extensions/web-search/*.test.ts` | Provider selection, extension wiring, safe-fetch rails, HTML extraction, rate limiter, per-provider normalization (all with injected `fetchImpl`) | — |
 | `test/sandbox/preflight.test.ts` | Preflight returns a structured ok\|error result | — |
 | `test/run.integration.test.ts` | Programmatic `run()`: RunResult populated, onEvent fires for every record, **child-process check confirms zero stdout/stderr leak from library** | `OPENAI_API_KEY` not set |
 | `test/run-sandbox.integration.test.ts` | `run({ sandbox: "gondolin" })` boots a VM, agent's `write` tool produces a host file via the mount | `OPENAI_API_KEY` not set OR QEMU/preflight unavailable |

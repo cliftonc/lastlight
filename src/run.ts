@@ -84,6 +84,26 @@ export interface RunOptions {
    */
   allowedHttpHosts?: string[] | null;
 
+  /**
+   * Web-search extension toggle. Default: `true` (auto-enables when a
+   * provider API key env var is present). Set to `false` to suppress the
+   * `web_search` / `web_fetch` tools entirely.
+   */
+  webSearch?: boolean;
+  /**
+   * Force a specific web-search provider: `"tavily" | "brave" | "exa"`.
+   * Overrides env-var-based auto-detection. The matching API key env var
+   * (`TAVILY_API_KEY`, `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY`) must still
+   * be present; otherwise the extension skips with a warning.
+   */
+  webSearchProvider?: "tavily" | "brave" | "exa";
+  /**
+   * Per-run cap on combined `web_search` + `web_fetch` calls. Default: 30.
+   * Once exceeded, further calls return a structured rate-limit error
+   * payload (the agent can recover).
+   */
+  webSearchMaxCalls?: number;
+
   // ── Observability hooks ─────────────────────────────────────────
   /**
    * Called for every emitted JSONL record in order. Same shape that the
@@ -152,6 +172,14 @@ export interface RunResult {
     profile?: string;
     toolCount: number;
   };
+  webSearch?: {
+    status: "configured" | "skipped";
+    reason?: string;
+    message?: string;
+    provider?: string;
+    toolCount: number;
+    maxCalls?: number;
+  };
 
   /** Every JSONL record the run emitted, in order. */
   records: EmitterRecord[];
@@ -192,6 +220,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
     sandboxEnv: options.sandboxEnv,
     sandboxImage: options.sandboxImage,
     allowedHttpHosts: options.allowedHttpHosts,
+    webSearch: options.webSearch ?? true,
+    webSearchProvider: options.webSearchProvider,
+    webSearchMaxCalls: options.webSearchMaxCalls,
   };
 
   const collector = new CollectorSink(options.onEvent);
@@ -249,6 +280,15 @@ function buildResult(
             message: r.message as string | undefined,
             profile: r.profile as string | undefined,
             toolCount: (r.toolCount as number) ?? 0,
+          };
+        } else if (r.extension === "web-search") {
+          result.webSearch = {
+            status: r.status as "configured" | "skipped",
+            reason: r.reason as string | undefined,
+            message: r.message as string | undefined,
+            provider: r.provider as string | undefined,
+            toolCount: (r.toolCount as number) ?? 0,
+            maxCalls: r.maxCalls as number | undefined,
           };
         }
         break;
