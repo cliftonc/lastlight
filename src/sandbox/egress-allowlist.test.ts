@@ -25,12 +25,23 @@ describe("egress-allowlist source of truth", () => {
   it("covers the critical host categories the runtime depends on", () => {
     // Wildcard `.github.com` covers api.github.com, codeload.github.com, etc.
     expect(GITHUB_HOSTS).toContain(".github.com");
-    // Exact provider hostnames — the docker backend dials these from
-    // inside the sandbox container.
-    expect(PROVIDER_HOSTS).toContain("api.anthropic.com");
-    expect(PROVIDER_HOSTS).toContain("api.openai.com");
-    // npm registry — agentic-pi-dev image runs `npm install` for many phases.
-    expect(PACKAGE_REGISTRY_HOSTS).toContain("registry.npmjs.org");
+    // Provider hosts — the docker backend dials these from inside the
+    // sandbox container. Wildcarded so auth/docs/api subdomains all match.
+    expect(PROVIDER_HOSTS).toContain(".anthropic.com");
+    expect(PROVIDER_HOSTS).toContain(".openai.com");
+    // npm — agentic-pi-dev image runs `npm install` for many phases.
+    // Wildcard covers registry, auth, and www subdomains.
+    expect(PACKAGE_REGISTRY_HOSTS).toContain(".npmjs.org");
+  });
+
+  it("every package-registry and provider entry is a wildcard", () => {
+    // Defense against accidental tightening to exact match — wildcards
+    // are the chosen default for registries (auth/CDN subdomains) and
+    // providers (docs/console subdomains). Add new exact-match entries
+    // here only deliberately.
+    for (const host of [...PROVIDER_HOSTS, ...PACKAGE_REGISTRY_HOSTS]) {
+      expect(isWildcardHost(host)).toBe(true);
+    }
   });
 
   it("rejects accidental whitespace or empty entries", () => {

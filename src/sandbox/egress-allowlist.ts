@@ -50,30 +50,38 @@ export const GITHUB_HOSTS: readonly string[] = [
  * cover both paths without surprises.
  */
 export const PROVIDER_HOSTS: readonly string[] = [
-  "api.anthropic.com",
-  "api.openai.com",
-  "openrouter.ai",
+  // Leading-dot wildcards cover api + console + docs + auth subdomains
+  // without listing each one. Doesn't meaningfully widen the attack
+  // surface — anyone with control of `*.openai.com` DNS also controls
+  // `api.openai.com` and would pwn an exact-match config too.
+  ".anthropic.com",
+  ".openai.com",
+  ".openrouter.ai",
 ];
 
-/** Public package registries the executor may hit during `npm install`, etc. */
+/**
+ * Public package registries the executor may hit during `npm install`,
+ * etc. Wildcarded by default so auth / CDN / mirror subdomains don't
+ * need separate entries (e.g. npm's auth endpoint, pypi's docs site,
+ * alpine's per-region mirrors).
+ */
 export const PACKAGE_REGISTRY_HOSTS: readonly string[] = [
-  // npm / yarn / pnpm
-  "registry.npmjs.org",
-  "registry.yarnpkg.com",
-  // Python
-  "pypi.org",
-  "files.pythonhosted.org",
-  // Rust
+  // npm / yarn / pnpm — covers registry, auth, www.
+  ".npmjs.org",
+  ".yarnpkg.com",
+  // Python — pypi.org + files.pythonhosted.org are the two big ones;
+  // the wildcards also cover docs.pypi.org etc.
+  ".pypi.org",
+  ".pythonhosted.org",
+  // Rust — static.crates.io, index.crates.io, crates.io itself.
   ".crates.io",
-  // Go modules
-  "proxy.golang.org",
-  "sum.golang.org",
+  // Go modules — covers proxy.golang.org, sum.golang.org, plus golang.org docs.
+  ".golang.org",
   // Ruby
-  "rubygems.org",
-  // Alpine apk + Debian apt
-  "dl-cdn.alpinelinux.org",
-  "deb.debian.org",
-  "security.debian.org",
+  ".rubygems.org",
+  // Alpine apk + Debian apt — wildcards cover the regional mirror subdomains.
+  ".alpinelinux.org",
+  ".debian.org",
 ];
 
 /**
