@@ -223,6 +223,15 @@ export class DockerSandbox {
        * before shell interpolation.
        */
       sandboxEnv?: Record<string, string>;
+      /**
+       * Enable agentic-pi's web-search extension. When false (or omitted),
+       * `--no-web-search` is appended to suppress auto-enable. When true,
+       * the flag is omitted and agentic-pi auto-detects the provider from
+       * whichever `*_API_KEY` env var the container received.
+       */
+      webSearch?: boolean;
+      /** Force a specific web-search provider. Validated against a closed set. */
+      webSearchProvider?: "tavily" | "brave" | "exa";
       /** Called for each newline-terminated stdout line as it arrives. */
       onLine?: (line: string) => void;
     },
@@ -239,6 +248,7 @@ export class DockerSandbox {
     // of these ever gets sourced from user input.
     const THINKING = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
     const PROFILES = new Set(["read", "issues-write", "review-write", "repo-write"]);
+    const WEB_SEARCH_PROVIDERS = new Set(["tavily", "brave", "exa"]);
 
     const extraArgs: string[] = [];
     if (opts?.thinking) {
@@ -252,6 +262,22 @@ export class DockerSandbox {
         throw new Error(`Refusing to pass profile "${opts.profile}" — must be one of ${[...PROFILES].join("|")}`);
       }
       extraArgs.push("--profile", opts.profile);
+    }
+    // Web search defaults off — agentic-pi's auto-enable triggers on any
+    // provider key env var, so silence it explicitly when the caller didn't
+    // opt in. When opted in, omit the flag and let agentic-pi pick up the
+    // forwarded TAVILY_API_KEY / BRAVE_SEARCH_API_KEY / EXA_API_KEY.
+    if (opts?.webSearch === true) {
+      if (opts.webSearchProvider) {
+        if (!WEB_SEARCH_PROVIDERS.has(opts.webSearchProvider)) {
+          throw new Error(
+            `Refusing to pass web-search-provider "${opts.webSearchProvider}" — must be one of ${[...WEB_SEARCH_PROVIDERS].join("|")}`,
+          );
+        }
+        extraArgs.push("--web-search-provider", opts.webSearchProvider);
+      }
+    } else {
+      extraArgs.push("--no-web-search");
     }
     if (!/^[A-Za-z0-9/_.-]+$/.test(model)) {
       throw new Error(`Refusing to pass model "${model}" — bad charset`);

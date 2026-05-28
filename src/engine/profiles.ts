@@ -48,6 +48,19 @@ export interface ExecutorConfig {
    * phase that searches third-party documentation).
    */
   unrestrictedEgress?: boolean;
+  /**
+   * Enable agentic-pi's web-search extension (`web_search` / `web_fetch`
+   * tools). Default false. agentic-pi auto-enables web search whenever a
+   * provider env var (`TAVILY_API_KEY`, `BRAVE_SEARCH_API_KEY`,
+   * `EXA_API_KEY`) is present, so we pass an explicit `false` downstream
+   * to suppress auto-enable for non-explore workflows.
+   */
+  webSearch?: boolean;
+  /**
+   * Force a specific web-search provider. When unset, agentic-pi picks
+   * one based on which API key env var is present (Tavily > Exa > Brave).
+   */
+  webSearchProvider?: "tavily" | "brave" | "exa";
 }
 
 /**

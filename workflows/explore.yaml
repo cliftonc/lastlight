@@ -19,6 +19,7 @@ phases:
     prompt: prompts/explore-read.md
     model: "{{models.explore}}"
     output_var: baseline
+    unrestricted_egress: true
     messages:
       on_start: "Cloning `{{owner}}/{{repo}}` and reading the codebase..."
 
@@ -26,6 +27,7 @@ phases:
     label: Socratic questioning
     prompt: prompts/explore-ask.md
     model: "{{models.explore}}"
+    unrestricted_egress: true
     generic_loop:
       max_iterations: 8
       until: "output.contains('READY')"
@@ -41,6 +43,7 @@ phases:
     prompt: prompts/explore-synthesize.md
     model: "{{models.architect}}"
     output_var: spec
+    unrestricted_egress: true
     messages:
       on_start: "Writing up the spec from our conversation..."
 

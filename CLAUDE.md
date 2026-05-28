@@ -354,6 +354,19 @@ Sandbox egress (docker backend only):
   coredns sidecar passed to `docker run --dns ...` (defaults: `172.30.0.10`
   and `172.30.0.11`, matching the static IPs in docker-compose.yml).
 
+Web search (optional, scoped to the `explore` workflow):
+
+- `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY` / `EXA_API_KEY` — set any one
+  to enable agentic-pi's `web_search` and `web_fetch` tools during
+  explore runs. Provider auto-detected from whichever key is present
+  (Tavily > Exa > Brave). Other workflows pass an explicit
+  `webSearch: false` to agentic-pi so they ignore these keys. Explore
+  phases (`read_context`, `socratic`, `synthesize`) declare
+  `unrestricted_egress: true` in `workflows/explore.yaml` so the provider
+  API calls — and any `web_fetch` to third-party docs — flow through the
+  open-mode firewall (coredns-open + nginx-egress-open) rather than the
+  strict allowlist. The `publish` phase stays on the strict allowlist.
+
 Admin dashboard:
 
 - `ADMIN_PASSWORD` — if set, login required

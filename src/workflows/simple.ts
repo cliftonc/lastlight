@@ -6,6 +6,7 @@ import { getWorkflow } from "./loader.js";
 import {
   runWorkflow,
   nextPhaseAfter,
+  webSearchEnabledForWorkflow,
   type ApprovalGateConfig,
   type RunnerCallbacks,
   type WorkflowResult,
@@ -267,11 +268,21 @@ export async function runSimpleWorkflow(
     ...(request.extra || {}),
   };
 
+  // Overlay per-workflow capabilities onto the base ExecutorConfig.
+  // Today: only explore opts into agentic-pi's web-search extension.
+  // Explicit `false` for everything else is load-bearing — without it,
+  // agentic-pi auto-enables web search whenever a provider API key env
+  // var is present in the harness process.
+  const workflowConfig: ExecutorConfig = {
+    ...config,
+    webSearch: webSearchEnabledForWorkflow(workflowName),
+  };
+
   try {
     const result = await runWorkflow(
       definition,
       ctx,
-      config,
+      workflowConfig,
       callbacks,
       db,
       models,

@@ -161,6 +161,17 @@ export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProf
   }
 }
 
+/**
+ * Whether agentic-pi's web-search extension (`web_search` / `web_fetch`
+ * tools) should be enabled for this workflow. Returns `true` only for
+ * the explore workflow today — every other workflow gets an explicit
+ * `false` downstream, which suppresses agentic-pi's env-var-triggered
+ * auto-enable.
+ */
+export function webSearchEnabledForWorkflow(workflowName: string): boolean {
+  return workflowName === "explore";
+}
+
 function gitSandboxAccessForWorkflow(
   workflowName: string,
   owner: string,

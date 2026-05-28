@@ -113,6 +113,16 @@ export async function executeAgent(
   if (process.env.ANTHROPIC_API_KEY) ghEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.OPENROUTER_API_KEY) ghEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
+  // Web-search provider keys. Forwarded only when the workflow opted into
+  // web search (scoped to explore today; see webSearchEnabledForWorkflow
+  // in workflows/runner.ts). agentic-pi auto-detects the provider from
+  // whichever key is present (Tavily > Exa > Brave by default).
+  if (config.webSearch) {
+    if (process.env.TAVILY_API_KEY) ghEnv.TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+    if (process.env.BRAVE_SEARCH_API_KEY) ghEnv.BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY;
+    if (process.env.EXA_API_KEY) ghEnv.EXA_API_KEY = process.env.EXA_API_KEY;
+  }
+
   const prePopulate =
     access?.prePopulateBranch && mintedToken
       ? {
@@ -251,6 +261,12 @@ async function executeInProcess(
       cwd: ctx.workDir,
       noSession: true,
       allowedHttpHosts,
+      // Explicit boolean — without it, agentic-pi auto-enables web search
+      // when any provider key is in process.env. We forwarded those keys
+      // above only for opted-in workflows, but `process.env` on the harness
+      // host carries them regardless, so we must opt-out explicitly.
+      webSearch: config.webSearch === true,
+      webSearchProvider: config.webSearchProvider,
       onEvent: (record) => {
         shim.feed(record);
         if (!notifiedSessionId && ctx.onSessionId && record.type === "session" && typeof record.id === "string") {
@@ -365,6 +381,8 @@ async function executeDocker(
       thinking,
       profile,
       sandboxEnv,
+      webSearch: config.webSearch === true,
+      webSearchProvider: config.webSearchProvider,
       onLine: (line) => {
         if (!line.startsWith("{")) return;
         let record: Record<string, unknown>;
