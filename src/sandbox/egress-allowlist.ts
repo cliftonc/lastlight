@@ -14,16 +14,19 @@
  * (e.g. a read-only profile that doesn't need package registries). The
  * everyday default is `DEFAULT_ALLOWLIST`.
  *
- * ## Wildcard syntax
+ * ## Convention: every entry matches the apex AND all subdomains
  *
- * A leading dot (`.github.com`) denotes "this domain and any subdomain":
+ * `openai.com`  → matches openai.com, api.openai.com, platform.openai.com, …
+ * `npmjs.org`   → matches npmjs.org, registry.npmjs.org, auth.npmjs.org, …
  *
- *     "api.github.com"   → matches exactly api.github.com
- *     ".github.com"      → matches github.com, api.github.com, foo.bar.github.com, …
+ * Bare hostnames only — no leading dot, no `*.` prefix. The config
+ * generator emits the right syntax for each backend (nginx's
+ * `.example.com` map form, CoreDNS regex `(^|\.)example\.com\.$`).
  *
- * The leading-dot convention matches nginx's own `map` directive syntax,
- * keeps the generated configs minimal, and is unambiguous (a real hostname
- * can never start with a dot).
+ * Exact-only matching isn't currently supported because we haven't
+ * needed it — every host in the list is one we want apex+subdomain
+ * access to. If we ever do, we'd add an explicit type (e.g. an `exact:`
+ * prefix) so the loose-by-default convention stays unambiguous.
  *
  * A workflow phase can declare `unrestricted_egress: true` to bypass the
  * allowlist entirely — see `src/workflows` for the phase schema.
@@ -31,11 +34,10 @@
 
 /** GitHub HTTPS endpoints used by `git`, `gh`, and agentic-pi's github tools. */
 export const GITHUB_HOSTS: readonly string[] = [
-  // Leading dot covers github.com plus every subdomain we care about
-  // (api, codeload, raw, objects, gist, …) without listing each one.
-  ".github.com",
+  // Covers github.com plus api.github.com, codeload.github.com, raw.…, gist.…
+  "github.com",
   // *.githubusercontent.com — release artifacts, raw blobs, avatars.
-  ".githubusercontent.com",
+  "githubusercontent.com",
 ];
 
 /**
@@ -50,47 +52,38 @@ export const GITHUB_HOSTS: readonly string[] = [
  * cover both paths without surprises.
  */
 export const PROVIDER_HOSTS: readonly string[] = [
-  // Leading-dot wildcards cover api + console + docs + auth subdomains
-  // without listing each one. Doesn't meaningfully widen the attack
-  // surface — anyone with control of `*.openai.com` DNS also controls
-  // `api.openai.com` and would pwn an exact-match config too.
-  ".anthropic.com",
-  ".openai.com",
-  ".openrouter.ai",
+  "anthropic.com",
+  "openai.com",
+  "openrouter.ai",
 ];
 
 /**
  * Public package registries the executor may hit during `npm install`,
- * etc. Wildcarded by default so auth / CDN / mirror subdomains don't
- * need separate entries (e.g. npm's auth endpoint, pypi's docs site,
- * alpine's per-region mirrors).
+ * etc. Apex-plus-subdomain matching covers auth / CDN / mirror
+ * subdomains without needing separate entries.
  */
 export const PACKAGE_REGISTRY_HOSTS: readonly string[] = [
-  // npm / yarn / pnpm — covers registry, auth, www.
-  ".npmjs.org",
-  ".yarnpkg.com",
-  // Python — pypi.org + files.pythonhosted.org are the two big ones;
-  // the wildcards also cover docs.pypi.org etc.
-  ".pypi.org",
-  ".pythonhosted.org",
+  // npm / yarn / pnpm
+  "npmjs.org",
+  "yarnpkg.com",
+  // Python — pypi.org + files.pythonhosted.org are the two big ones.
+  "pypi.org",
+  "pythonhosted.org",
   // Rust — static.crates.io, index.crates.io, crates.io itself.
-  ".crates.io",
-  // Go modules — covers proxy.golang.org, sum.golang.org, plus golang.org docs.
-  ".golang.org",
+  "crates.io",
+  // Go modules — covers proxy.golang.org, sum.golang.org, plus golang.org.
+  "golang.org",
   // Ruby
-  ".rubygems.org",
-  // Alpine apk + Debian apt — wildcards cover the regional mirror subdomains.
-  ".alpinelinux.org",
-  ".debian.org",
+  "rubygems.org",
+  // Alpine apk + Debian apt — apex covers the regional mirror subdomains.
+  "alpinelinux.org",
+  "debian.org",
 ];
 
 /**
  * Combined allowlist used by both backends when a phase has not opted into
  * unrestricted egress. Order is preserved across imports so generated
  * configs are stable.
- *
- * Entries may be exact hostnames or wildcard patterns with a leading dot
- * (see the file docstring).
  */
 export const DEFAULT_ALLOWLIST: readonly string[] = [
   ...GITHUB_HOSTS,
@@ -106,11 +99,3 @@ export const DEFAULT_ALLOWLIST: readonly string[] = [
  * nginx-egress + coredns-open pair — this sentinel is for gondolin only.
  */
 export const ALLOW_ALL_SENTINEL = "*";
-
-/**
- * Returns true if `entry` is a wildcard match (leading-dot form).
- * Helper for the egress-firewall config generator.
- */
-export function isWildcardHost(entry: string): boolean {
-  return entry.startsWith(".");
-}

@@ -10,12 +10,10 @@ import {
   renderNginxStrictConf,
   SANDBOX_EGRESS_SUBNET,
 } from "./egress-firewall-config.js";
-import { DEFAULT_ALLOWLIST, isWildcardHost } from "./egress-allowlist.js";
+import { DEFAULT_ALLOWLIST } from "./egress-allowlist.js";
 
 describe("static IP constants", () => {
   it("all four service IPs sit inside the sandbox-egress subnet", () => {
-    // Cheap CIDR check: subnet is 172.30.0.0/24, so every IP must start
-    // with 172.30.0.
     const prefix = SANDBOX_EGRESS_SUBNET.split("/")[0].split(".").slice(0, 3).join(".");
     for (const ip of [COREDNS_STRICT_IP, COREDNS_OPEN_IP, NGINX_STRICT_IP, NGINX_OPEN_IP]) {
       expect(ip.startsWith(prefix + ".")).toBe(true);
@@ -37,25 +35,15 @@ describe("nginx strict config", () => {
   });
 
   it("defaults unknown SNIs to a black-hole upstream (instant reset)", () => {
-    // Anything not in the map is sunk to 127.0.0.1:1 — a port nothing is
-    // listening on. The connection resets immediately; no bytes leave.
     expect(conf).toMatch(/default\s+127\.0\.0\.1:1;/);
   });
 
-  it("emits a map entry per allowlist host", () => {
-    for (const entry of DEFAULT_ALLOWLIST) {
-      if (isWildcardHost(entry)) {
-        // Wildcard: leading-dot form, upstream uses the live SNI.
-        expect(conf).toContain(`${entry} $ssl_preread_server_name:443;`);
-      } else {
-        // Exact: pin the upstream hostname (defence in depth).
-        expect(conf).toContain(`${entry} ${entry}:443;`);
-      }
+  it("emits a leading-dot map entry per allowlist host (apex+subdomain match)", () => {
+    for (const host of DEFAULT_ALLOWLIST) {
+      // nginx's `.foo.com` syntax matches `foo.com` and any subdomain.
+      // Upstream is the live SNI value, not pinned at config time.
+      expect(conf).toContain(`.${host} $ssl_preread_server_name:443;`);
     }
-  });
-
-  it("has at least one wildcard entry (else the test is vacuous)", () => {
-    expect(DEFAULT_ALLOWLIST.some(isWildcardHost)).toBe(true);
   });
 
   it("uses docker's embedded DNS as the upstream resolver", () => {
@@ -80,31 +68,25 @@ describe("nginx open config", () => {
 describe("coredns strict Corefile", () => {
   const conf = renderCorefileStrict();
 
-  it("emits a template block per allowlist host pointing at nginx-strict", () => {
-    for (const entry of DEFAULT_ALLOWLIST) {
-      const bare = isWildcardHost(entry) ? entry.slice(1) : entry;
-      // The generated regex escapes dots as `\.` (one backslash + dot
-      // in the literal config file). In a JS string that's "\\.".
-      const escaped = bare.replaceAll(".", "\\.");
-      expect(conf).toContain(escaped);
+  it("uses a SINGLE template block with one match line per allowlist host", () => {
+    // CoreDNS only honours one `template` block per (class, type, zone) —
+    // multiple blocks silently shadow each other. Catching a regression
+    // matters because we hit this exact bug in prod.
+    const templateBlocks = conf.match(/template\s+IN\s+A\s*\{/g) || [];
+    expect(templateBlocks.length).toBe(1);
+
+    for (const host of DEFAULT_ALLOWLIST) {
+      const escaped = host.replaceAll(".", "\\.");
+      expect(conf).toContain(`(^|\\.)${escaped}\\.$`);
     }
+  });
+
+  it("answers with the nginx-strict IP", () => {
     expect(conf).toContain(`IN A ${NGINX_STRICT_IP}`);
   });
 
   it("catches every unmatched query with an NXDOMAIN template", () => {
     expect(conf).toMatch(/template\s+IN\s+ANY\s*\{[\s\S]*rcode\s+NXDOMAIN[\s\S]*\}/);
-  });
-
-  it("wildcard entries get the `(^|\\.)` prefix; exact entries get `^`", () => {
-    for (const entry of DEFAULT_ALLOWLIST) {
-      const bare = isWildcardHost(entry) ? entry.slice(1) : entry;
-      const escaped = bare.replaceAll(".", "\\.");
-      if (isWildcardHost(entry)) {
-        expect(conf).toContain(`(^|\\.)${escaped}\\.$`);
-      } else {
-        expect(conf).toContain(`^${escaped}\\.$`);
-      }
-    }
   });
 });
 
@@ -116,7 +98,6 @@ describe("coredns open Corefile", () => {
   });
 
   it("hard-denies cloud metadata literals even in unrestricted mode", () => {
-    // Two patterns we always block regardless of mode.
     expect(conf).toContain("metadata\\.google\\.internal");
     expect(conf).toContain("169\\.254\\.169\\.254");
     expect(conf).toMatch(/rcode\s+NXDOMAIN/);
@@ -127,21 +108,19 @@ describe("coredns open Corefile", () => {
   });
 });
 
-describe("wildcard expansion sanity", () => {
-  // The whole point of the wildcard support is *.github.com etc.
-  // Pin behaviour with a hand-checked example.
+describe("apex + subdomain match sanity", () => {
+  // Pin behaviour: a bare entry like "github.com" must match both
+  // the apex and any subdomain in both backends.
 
-  it("'.github.com' generates a wildcard nginx map entry", () => {
+  it("'github.com' generates an nginx leading-dot map entry", () => {
     const conf = renderNginxStrictConf();
-    // Leading-dot form is nginx's native subdomain wildcard. Both the
-    // apex and every subdomain match this single line.
     expect(conf).toMatch(/\s\.github\.com\s+\$ssl_preread_server_name:443;/);
   });
 
-  it("'.github.com' generates a CoreDNS pattern matching apex + subdomains", () => {
+  it("'github.com' generates a CoreDNS pattern matching apex + subdomains", () => {
     const conf = renderCorefileStrict();
-    // The regex (^|\.)github\.com\.$ matches both "github.com." and
-    // "api.github.com." in dnssec-aware FQDN form.
+    // (^|\.)github\.com\.$ matches both "github.com." and "api.github.com."
+    // in FQDN-with-trailing-dot form.
     expect(conf).toContain("(^|\\.)github\\.com\\.$");
   });
 });

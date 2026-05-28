@@ -46,12 +46,35 @@ services:
   #
   # The sandbox sees no proxy at all. Works for any SDK regardless of
   # whether it honours HTTP(S)_PROXY env vars.
+
+  # One-shot init that writes nginx-strict.conf / nginx-open.conf /
+  # Corefile.strict / Corefile.open into the agent-data volume before
+  # coredns + nginx try to read them. Without this, the firewall
+  # services boot first, fail to find the configs, and run with empty
+  # state (returning NXDOMAIN for everything) — even after the harness
+  # later writes the files, the running processes never re-read them.
+  # `condition: service_completed_successfully` on the firewalls below
+  # makes them wait for this to exit 0.
+  egress-init:
+    image: lastlight-agent
+    restart: "no"
+    command:
+      ["node", "-e",
+       "require('/app/dist/sandbox/egress-firewall-config.js').writeEgressFirewallConfigs(process.env.STATE_DIR||'/app/data')"]
+    volumes:
+      - agent-data:/app/data
+    depends_on:
+      - agent          # ensures the image has been built when init runs
+
   coredns-strict:
     image: coredns/coredns:1.11.3
     restart: unless-stopped
     command: ["-conf", "/app/data/proxy/Corefile.strict"]
     volumes:
       - agent-data:/app/data:ro
+    depends_on:
+      egress-init:
+        condition: service_completed_successfully
     networks:
       sandbox-egress:
         ipv4_address: 172.30.0.10
@@ -62,6 +85,9 @@ services:
     command: ["-conf", "/app/data/proxy/Corefile.open"]
     volumes:
       - agent-data:/app/data:ro
+    depends_on:
+      egress-init:
+        condition: service_completed_successfully
     networks:
       sandbox-egress:
         ipv4_address: 172.30.0.11
@@ -73,6 +99,9 @@ services:
       ["nginx", "-c", "/app/data/proxy/nginx-strict.conf", "-g", "daemon off;"]
     volumes:
       - agent-data:/app/data:ro
+    depends_on:
+      egress-init:
+        condition: service_completed_successfully
     # Deliberately NOT on `internal`. Splitting ingress (sandbox-egress)
     # and egress (proxy-egress) onto separate networks that don't include
     # harness services keeps compose-internal hostnames unresolvable to
@@ -90,6 +119,9 @@ services:
       ["nginx", "-c", "/app/data/proxy/nginx-open.conf", "-g", "daemon off;"]
     volumes:
       - agent-data:/app/data:ro
+    depends_on:
+      egress-init:
+        condition: service_completed_successfully
     networks:
       sandbox-egress:
         ipv4_address: 172.30.0.21
