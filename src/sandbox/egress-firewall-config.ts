@@ -107,9 +107,14 @@ stream {
   # Runtime resolver for upstream hostnames (docker's embedded DNS).
   resolver 127.0.0.11 valid=30s ipv6=off;
 
-  # Allowlist. Leading-dot entries (e.g. ".github.com") match the apex
-  # plus any subdomain via nginx's built-in map wildcard syntax.
+  # Allowlist. The \`hostnames\` directive enables nginx's wildcard
+  # hostname match: a key like ".github.com" matches "github.com" AND
+  # any subdomain. WITHOUT \`hostnames\`, map does exact string match
+  # only and ".github.com" never matches anything real (we hit this
+  # exact bug in prod — every allowlisted host fell through to the
+  # black hole).
   map $ssl_preread_server_name $upstream_target {
+    hostnames;
 ${mapLines}
     # Anything else → black hole. The connection resets immediately;
     # no data ever leaves the sandbox-egress network.

@@ -49,6 +49,14 @@ describe("nginx strict config", () => {
   it("uses docker's embedded DNS as the upstream resolver", () => {
     expect(conf).toMatch(/resolver\s+127\.0\.0\.11/);
   });
+
+  it("declares `hostnames` in the map block so leading-dot wildcards work", () => {
+    // Without `hostnames;`, nginx's `map` does exact string match only —
+    // `.github.com` becomes a literal key that never matches anything.
+    // We hit this in prod: every allowlisted host fell through to the
+    // black-hole default. Pin the contract so it can't regress.
+    expect(conf).toMatch(/map\s+\$ssl_preread_server_name\s+\$upstream_target\s*\{\s*\n\s*hostnames;/);
+  });
 });
 
 describe("nginx open config", () => {
