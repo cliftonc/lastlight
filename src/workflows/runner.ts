@@ -72,9 +72,13 @@ function buildPhasePrompt(
     const others = rest.length
       ? `Other skills available if you need them: ${rest.join(", ")}.`
       : "";
+    // The staged skill is listed in pi-coding-agent's `<available_skills>`
+    // system-prompt catalogue, and the agent loads SKILL.md on demand —
+    // so we only name the primary skill and pass context. No need to
+    // spell out the file path; that just burns a tool call telling the
+    // agent to do what its progressive-disclosure loop already does.
     return [
       `Use the **${primary}** skill to handle this request.`,
-      `Read \`.agents/skills/${primary}/SKILL.md\` for the full instructions${rest.length ? "; the other skills work the same way" : ""}.`,
       others,
       "",
       "Context:",
