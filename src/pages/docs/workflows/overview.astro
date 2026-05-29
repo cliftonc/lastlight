@@ -113,10 +113,11 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<p>
 		Not a YAML workflow — Slack messages that don't match any of the above
-		intents are handled by the <strong>chat skill</strong>, which talks to a
-		long-lived <code>opencode serve</code> process over HTTP (no Docker sandbox)
-		for low-latency replies. Each Slack thread maps to one persistent OpenCode
-		session, so the conversation maintains context across messages.
+		intents are handled by the <strong>chat skill</strong>, which runs an
+		in-process <code>@earendil-works/pi-ai</code> chat loop (no sandbox spawn)
+		for low-latency replies. Each Slack thread maps to one persistent pi-ai
+		conversation, rehydrated from the <code>messaging_messages</code> SQLite
+		table on every turn, so context holds across messages.
 	</p>
 
 	<p>

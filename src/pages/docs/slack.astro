@@ -13,10 +13,11 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	<ol>
 		<li>
 			<strong>Socket Mode chat</strong> — the bot listens for messages and
-			@mentions, classifies intent, and talks to a long-lived <code>opencode serve</code>
-			process to reply. Every Slack thread becomes a growing, DB-backed conversation
-			that resumes the same OpenCode session on every turn, so context stays coherent
-			across hours or days.
+			@mentions, classifies intent, and runs an in-process <code>@earendil-works/pi-ai</code>
+			chat loop to reply. Every Slack thread becomes a growing, DB-backed
+			conversation; the harness rehydrates the message history from the
+			<code>messaging_messages</code> SQLite table on every turn, so context stays
+			coherent across hours or days.
 		</li>
 		<li>
 			<strong>OAuth dashboard login</strong> — the admin dashboard offers "Login
@@ -80,7 +81,7 @@ SLACK_DELIVERY_CHANNEL=C01XYZ      # Channel for cron health reports</code></pre
 	<div class="docs-callout tip">
 		<div class="docs-callout-body">
 			The <code>chat</code> skill is intentionally not overridden with a small/cheap
-			model in <code>OPENCODE_MODELS</code> — small models tend to refuse MCP tool
+			model in <code>LASTLIGHT_MODELS</code> — small models tend to refuse tool
 			calls on the assumption they lack permission, creating false "I can't do that"
 			replies. Leave it on the default mid/large-tier model.
 		</div>

@@ -10,13 +10,18 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	<h2>A host machine</h2>
 	<p>
 		Last Light runs as a single Node process (locally) or a single Docker container
-		(in production). It spawns Docker sandbox containers for every agent task, so the
-		host needs Docker installed and the Docker socket reachable by the harness.
+		(in production). Each workflow phase runs inside its own isolated sandbox so the
+		agent cannot touch your host filesystem, credentials, or git identity. The
+		sandbox backend is selected by <code>LASTLIGHT_SANDBOX</code>:
+		<code>gondolin</code> (default — QEMU micro-VM via agentic-pi, uses HVF on macOS
+		and KVM on Linux, no Docker needed), <code>docker</code> (sibling Docker container
+		per phase), or <code>none</code> (in-process, dev only).
 	</p>
 
 	<ul>
 		<li><strong>Node.js 20+</strong> — for local development (<code>npm run dev</code>).</li>
-		<li><strong>Docker</strong> — required in both dev and production. Agent tasks run inside sandbox containers so the bot cannot touch your host filesystem, credentials, or git identity.</li>
+		<li><strong>Docker</strong> — required only when <code>LASTLIGHT_SANDBOX=docker</code> or for the bundled docker-compose deploy. The default gondolin sandbox does not need it.</li>
+		<li><strong>KVM (Linux) or HVF (macOS)</strong> — required by gondolin for nested virtualisation. Bare-metal Linux and Apple Silicon Macs both have it; most managed container hosts do not.</li>
 		<li><strong>Git</strong> — for cloning the repo you want to deploy.</li>
 	</ul>
 
@@ -45,23 +50,23 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
 	<h2>Model provider credentials</h2>
 	<p>
-		The agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> —
-		provider-agnostic, so any <code>provider/model</code> string it supports works
+		The agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a> —
+		provider-agnostic, so any <code>provider/model</code> string pi-ai supports works
 		(<code>openai/…</code>, <code>anthropic/…</code>, etc.). The default is
-		<code>openai/gpt-5.5</code>. Set the matching API key in <code>.env</code>:
+		<code>anthropic/claude-sonnet-4-6</code>. Set the matching API key in <code>.env</code>:
 	</p>
 	<ul>
-		<li><code>OPENAI_API_KEY</code> — required if <code>OPENCODE_MODEL</code> resolves to an OpenAI model.</li>
-		<li><code>ANTHROPIC_API_KEY</code> — required if <code>OPENCODE_MODEL</code> resolves to an Anthropic model.</li>
-		<li><code>OPENROUTER_API_KEY</code> — required if <code>OPENCODE_MODEL</code> resolves to an OpenRouter model (<code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>). One key gives you access to Claude, GPT, Gemini, Llama, Mistral, DeepSeek, and most others through a single endpoint — at a small per-token markup over going direct. Sign up at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>.</li>
-		<li>You can set all three — phases routed via <code>OPENCODE_MODELS</code> JSON can mix providers freely.</li>
+		<li><code>OPENAI_API_KEY</code> — required if <code>LASTLIGHT_MODEL</code> resolves to an OpenAI model.</li>
+		<li><code>ANTHROPIC_API_KEY</code> — required if <code>LASTLIGHT_MODEL</code> resolves to an Anthropic model.</li>
+		<li><code>OPENROUTER_API_KEY</code> — required if <code>LASTLIGHT_MODEL</code> resolves to an OpenRouter model (<code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>). One key gives you access to Claude, GPT, Gemini, Llama, Mistral, DeepSeek, and most others through a single endpoint — at a small per-token markup over going direct. Sign up at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>.</li>
+		<li>You can set all three — phases routed via <code>LASTLIGHT_MODELS</code> JSON can mix providers freely.</li>
 	</ul>
 
 	<div class="docs-callout">
 		<div class="docs-callout-body">
-			No interactive login step. OpenCode reads provider API keys directly from
-			the harness env — the same keys are passed into the sandbox via the
-			OpenCode binary's environment, so the container needs no separate auth file.
+			No interactive login step. pi-ai reads provider API keys directly from
+			the harness env — the same keys are forwarded into each sandbox so workflow
+			runs can reach the API without a separate auth file.
 		</div>
 	</div>
 

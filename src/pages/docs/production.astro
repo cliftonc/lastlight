@@ -15,10 +15,22 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	<div class="docs-callout warn">
 		<div class="docs-callout-body">
 			<strong>Deploy on an isolated host.</strong> Last Light runs arbitrary
-			agent-generated code inside Docker sandbox containers. While that isolation is
-			strong, it is early-stage software and may have undiscovered weaknesses. Put it
-			on a host that cannot reach your internal systems, databases, or credentials
-			beyond what it explicitly needs.
+			agent-generated code inside per-phase sandboxes (gondolin VMs by default, or
+			Docker containers when <code>LASTLIGHT_SANDBOX=docker</code>). While that
+			isolation is strong, it is early-stage software and may have undiscovered
+			weaknesses. Put it on a host that cannot reach your internal systems,
+			databases, or credentials beyond what it explicitly needs.
+		</div>
+	</div>
+
+	<div class="docs-callout tip">
+		<div class="docs-callout-body">
+			<strong>Docker-free alternative.</strong> On a Linux host with
+			<code>/dev/kvm</code> available, the
+			<a href="https://github.com/cliftonc/lastlight/blob/main/deploy/native/README.md" target="_blank" rel="noopener">native systemd deploy</a>
+			runs the harness directly under systemd and uses gondolin for sandboxing —
+			no Docker required. Re-deploys are a <code>git pull</code> plus
+			<code>sudo bash deploy/native/install.sh</code>.
 		</div>
 	</div>
 
@@ -76,16 +88,28 @@ cp /path/to/your-app.private-key.pem secrets/</code></pre>
 		<li><code>GITHUB_APP_ID</code>, <code>GITHUB_APP_INSTALLATION_ID</code>, <code>GITHUB_APP_PRIVATE_KEY_PATH</code></li>
 		<li><code>WEBHOOK_SECRET</code></li>
 		<li><code>DOMAIN</code> — your public hostname, used by Caddy for automatic TLS</li>
-		<li><code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> — must match whichever provider <code>OPENCODE_MODEL</code> resolves to (default <code>openai/gpt-5.5</code>). One OpenRouter key covers most providers if you want a single billing surface.</li>
+		<li><code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> — must match whichever provider <code>LASTLIGHT_MODEL</code> resolves to (default <code>anthropic/claude-sonnet-4-6</code>). One OpenRouter key covers most providers if you want a single billing surface.</li>
 	</ul>
 
 	<p>
 		See the <a href="/docs/configuration">Configuration reference</a> for every
 		variable the harness understands, including optional knobs like
-		<code>OPENCODE_MODEL</code>, <code>OPENCODE_MODELS</code>,
-		<code>OPENCODE_VARIANT</code>, <code>APPROVAL_GATES</code>,
-		<code>ADMIN_PASSWORD</code>, and the Slack OAuth group.
+		<code>LASTLIGHT_MODEL</code>, <code>LASTLIGHT_MODELS</code>,
+		<code>LASTLIGHT_THINKING</code>, <code>LASTLIGHT_SANDBOX</code>,
+		<code>APPROVAL_GATES</code>, <code>ADMIN_PASSWORD</code>, and the Slack
+		OAuth group.
 	</p>
+
+	<div class="docs-callout tip">
+		<div class="docs-callout-body">
+			<strong>Coming from the OpenCode era?</strong> All legacy
+			<code>OPENCODE_*</code> env vars (<code>OPENCODE_MODEL</code>,
+			<code>OPENCODE_MODELS</code>, <code>OPENCODE_VARIANT</code>,
+			<code>OPENCODE_VARIANTS</code>) are still read as fallbacks for the matching
+			<code>LASTLIGHT_*</code> name. You can leave existing <code>.env</code> files
+			in place and rename at your leisure.
+		</div>
+	</div>
 
 	<h3>3. Build and start</h3>
 
@@ -142,9 +166,9 @@ curl -X POST https://lastlight.example.com/webhooks/github -d '&#123;&#125;'</co
 
 	<ul>
 		<li><code>lastlight.db</code> — SQLite: executions, workflow runs, approvals, messaging sessions, rate limits, system status.</li>
-		<li><code>opencode-home/projects/</code> — OpenCode session JSONL files (Claude-SDK-style envelope — the full audit trail for every run).</li>
-		<li><code>opencode-serve/</code> — working dir for the long-lived <code>opencode serve</code> chat process (generated <code>opencode.json</code> + <code>AGENTS.md</code>).</li>
-		<li><code>sandboxes/</code> — cloned repos, one per task.</li>
+		<li><code>agent-sessions/projects/</code> — JSONL session files (Claude-SDK-style envelope written by <code>event-shim.ts</code> — the full audit trail for every run, read by the dashboard). Override the location with <code>LASTLIGHT_SESSIONS_DIR</code>.</li>
+		<li><code>sandboxes/</code> — cloned repos, one per task (gondolin or docker).</li>
+		<li><code>sandbox-data/</code> — shared volume mounted into docker-mode sandboxes.</li>
 		<li><code>logs/</code> — structured harness logs.</li>
 		<li><code>secrets/app.pem</code> — mode-600 copy of the GitHub App key, used by sandbox containers via the shared volume.</li>
 	</ul>

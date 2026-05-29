@@ -59,11 +59,12 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 		</tbody>
 	</table>
 
-	<h2>Models (OpenCode)</h2>
+	<h2>Models (agentic-pi)</h2>
 
 	<p>
-		The agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> —
-		provider-agnostic. Any <code>provider/model</code> string OpenCode supports works
+		The agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a>
+		(workflow phases) plus <code>@earendil-works/pi-ai</code> (in-process chat) —
+		both provider-agnostic. Any <code>provider/model</code> string pi-ai supports works
 		(<code>openai/…</code>, <code>anthropic/…</code>, <code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>, etc.).
 		Set whichever provider API keys match your selected models — one OpenRouter
 		key covers most providers if you'd rather have a single billing surface.
@@ -84,7 +85,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td><code>OPENAI_API_KEY</code></td>
 				<td>If using OpenAI</td>
 				<td>—</td>
-				<td>OpenAI API key. Required if <code>OPENCODE_MODEL</code> (or any entry in <code>OPENCODE_MODELS</code>) resolves to an OpenAI model.</td>
+				<td>OpenAI API key. Required if <code>LASTLIGHT_MODEL</code> (or any entry in <code>LASTLIGHT_MODELS</code>) resolves to an OpenAI model.</td>
 			</tr>
 			<tr>
 				<td><code>ANTHROPIC_API_KEY</code></td>
@@ -99,55 +100,56 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td>OpenRouter API key (<code>sk-or-…</code>). Required if any active model is <code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>. One key gives you Claude, GPT, Gemini, Llama, Mistral, DeepSeek, etc. through a single endpoint; OpenRouter takes a small per-token markup over going direct. Sign up at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>.</td>
 			</tr>
 			<tr>
-				<td><code>OPENCODE_MODEL</code></td>
+				<td><code>LASTLIGHT_MODEL</code></td>
 				<td>No</td>
-				<td><code>openai/gpt-5.5</code></td>
-				<td>Default model used when no per-task override matches. Must be a <code>provider/model</code> string OpenCode recognises.</td>
+				<td><code>anthropic/claude-sonnet-4-6</code></td>
+				<td>Default model used when no per-task override matches. Must be a <code>provider/model</code> string pi-ai recognises.</td>
 			</tr>
 			<tr>
-				<td><code>OPENCODE_MODELS</code></td>
+				<td><code>LASTLIGHT_MODELS</code></td>
 				<td>No</td>
 				<td>—</td>
-				<td>Per-task-type model overrides as JSON. Keys match phase names or skill types; use <code>default</code> as the catch-all. Do not override <code>chat</code> with a small model — small models tend to refuse MCP tool calls. Example: <code>&#123;"architect":"openrouter/anthropic/claude-sonnet-4.5","triage":"openrouter/google/gemini-2.5-flash"&#125;</code></td>
+				<td>Per-task-type model overrides as JSON. Keys match phase names or skill types. Do not override <code>chat</code> with a small model — small models tend to refuse tool calls. Example: <code>&#123;"chat":"openai/gpt-5.1-mini","architect":"openai/gpt-5.5"&#125;</code></td>
 			</tr>
 			<tr>
-				<td><code>OPENCODE_VARIANT</code></td>
+				<td><code>LASTLIGHT_THINKING</code></td>
 				<td>No</td>
 				<td>—</td>
-				<td>Catch-all reasoning-effort default passed to OpenCode as <code>--variant</code>. Provider-agnostic; OpenCode translates it to the right per-provider knob (OpenAI <code>reasoning_effort</code>, Anthropic thinking budget, etc.). Common values: <code>minimal</code>, <code>medium</code>, <code>high</code>, <code>max</code>.</td>
+				<td>Catch-all reasoning-effort default. pi-ai translates it to the right per-provider knob (OpenAI <code>reasoning_effort</code>, Anthropic thinking budget, etc.). Allowed values: <code>off</code> | <code>minimal</code> | <code>low</code> | <code>medium</code> | <code>high</code> | <code>xhigh</code>.</td>
 			</tr>
 			<tr>
-				<td><code>OPENCODE_VARIANTS</code></td>
+				<td><code>LASTLIGHT_THINKINGS</code></td>
 				<td>No</td>
 				<td>—</td>
-				<td>Per-task variant overrides as JSON, same key scheme as <code>OPENCODE_MODELS</code>. Example: <code>&#123;"architect":"high","reviewer":"high","triage":"minimal"&#125;</code>. Phases can also declare <code>variant: "&#123;&#123;variants.&lt;phase&gt;&#125;&#125;"</code> in YAML for per-phase resolution.</td>
+				<td>Per-task thinking-level overrides as JSON, same key scheme as <code>LASTLIGHT_MODELS</code>. Example: <code>&#123;"architect":"high","reviewer":"high","triage":"minimal"&#125;</code>.</td>
 			</tr>
 			<tr>
-				<td><code>OPENCODE_BIN</code></td>
+				<td><code>LASTLIGHT_SANDBOX</code></td>
 				<td>No</td>
-				<td>autodetected</td>
-				<td>Override the OpenCode binary path. Useful in CI or when running multiple installs side-by-side.</td>
-			</tr>
-			<tr>
-				<td><code>OPENCODE_SERVE_PORT</code></td>
-				<td>No</td>
-				<td><code>4096</code></td>
-				<td>Port for the long-lived <code>opencode serve</code> chat process. Bound to <code>127.0.0.1</code>.</td>
-			</tr>
-			<tr>
-				<td><code>OPENCODE_SERVE_LOGS</code></td>
-				<td>No</td>
-				<td>—</td>
-				<td>Set to <code>1</code> to forward <code>opencode serve</code> logs to harness stderr (useful for debugging chat flows).</td>
+				<td><code>gondolin</code></td>
+				<td>Workflow sandbox backend. <code>gondolin</code> (default) runs each phase in a QEMU micro-VM (HVF on macOS, KVM on Linux — no Docker needed). <code>docker</code> runs each phase in a sibling Docker container (requires the <code>lastlight-sandbox:latest</code> image). <code>none</code> runs in-process with no isolation — dev only.</td>
 			</tr>
 			<tr>
 				<td><code>MAX_TURNS</code></td>
 				<td>No</td>
 				<td><code>200</code></td>
-				<td>Maximum agent turns per invocation.</td>
+				<td>Maximum agent turns per invocation. Reserved (kept for API stability).</td>
 			</tr>
 		</tbody>
 	</table>
+
+	<div class="docs-callout tip">
+		<div class="docs-callout-body">
+			<strong>Legacy env vars.</strong> All <code>OPENCODE_*</code> names from the
+			OpenCode era are still read as fallbacks for the matching
+			<code>LASTLIGHT_*</code> name — <code>OPENCODE_MODEL</code> →
+			<code>LASTLIGHT_MODEL</code>, <code>OPENCODE_MODELS</code> →
+			<code>LASTLIGHT_MODELS</code>, <code>OPENCODE_VARIANT</code> →
+			<code>LASTLIGHT_THINKING</code>, <code>OPENCODE_VARIANTS</code> →
+			<code>LASTLIGHT_THINKINGS</code>. Existing <code>.env</code> files keep
+			working; rename at your leisure.
+		</div>
+	</div>
 
 	<h2>Runtime</h2>
 
@@ -187,28 +189,16 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td>Directory containing YAML workflow definitions.</td>
 			</tr>
 			<tr>
-				<td><code>OPENCODE_HOME_DIR</code></td>
+				<td><code>LASTLIGHT_SESSIONS_DIR</code></td>
 				<td>No</td>
-				<td><code>$STATE_DIR/opencode-home</code></td>
-				<td>Directory the dashboard reads sandbox + chat session JSONLs from. The shim writes Claude-SDK-style envelope jsonl under <code>projects/&lt;slug&gt;/</code>.</td>
-			</tr>
-			<tr>
-				<td><code>MCP_CONFIG_PATH</code></td>
-				<td>No</td>
-				<td><code>./mcp-config.json</code></td>
-				<td>Path for the generated MCP config file.</td>
+				<td><code>$STATE_DIR/agent-sessions</code></td>
+				<td>Directory the dashboard reads sandbox + chat session JSONLs from. <code>event-shim.ts</code> writes Claude-SDK-style envelope jsonl under <code>projects/&lt;slug&gt;/</code>.</td>
 			</tr>
 			<tr>
 				<td><code>SANDBOX_DATA_VOLUME</code></td>
 				<td>No</td>
 				<td><code>lastlight_agent-data</code></td>
-				<td>Either a Docker named volume or a host path (starts with <code>/</code>, <code>./</code>, <code>../</code>, <code>~</code>) bind-mounted as <code>/data</code> in each sandbox.</td>
-			</tr>
-			<tr>
-				<td><code>ENABLE_DIRECT_FALLBACK</code></td>
-				<td>No</td>
-				<td>false (in local dev)</td>
-				<td>If <code>true</code>, the harness falls back to in-process agent execution when the sandbox image is unavailable. Keep this off in production.</td>
+				<td>Used only when <code>LASTLIGHT_SANDBOX=docker</code>. Either a Docker named volume or a host path (starts with <code>/</code>, <code>./</code>, <code>../</code>, <code>~</code>) bind-mounted as <code>/data</code> in each sandbox.</td>
 			</tr>
 			<tr>
 				<td><code>LASTLIGHT_LOCAL_DEV</code></td>

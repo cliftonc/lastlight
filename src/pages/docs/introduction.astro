@@ -13,13 +13,13 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	</p>
 
 	<p>
-		It is built on the <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a>
-		runtime (provider-agnostic — OpenAI, Anthropic, OpenRouter, or any other model OpenCode supports)
-		with a lightweight TypeScript harness that handles webhook ingestion, Slack
-		messaging, cron scheduling, sandbox isolation, and an admin dashboard. Every piece
-		of non-trivial behavior is expressed as a <strong>YAML workflow</strong> — the harness
-		itself knows nothing about "build" or "triage" specifically; it just executes the
-		phases a workflow declares.
+		It is built on <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a>
+		(provider-agnostic — OpenAI, Anthropic, OpenRouter, or any other model pi-ai supports;
+		default <code>anthropic/claude-sonnet-4-6</code>) with a lightweight TypeScript harness that
+		handles webhook ingestion, Slack messaging, cron scheduling, sandbox isolation, and an
+		admin dashboard. Every piece of non-trivial behavior is expressed as a
+		<strong>YAML workflow</strong> — the harness itself knows nothing about "build" or
+		"triage" specifically; it just executes the phases a workflow declares.
 	</p>
 
 	<h2>What it does out of the box</h2>

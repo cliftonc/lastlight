@@ -23,9 +23,9 @@ const description = "Frequently asked questions about Last Light — the open-so
 				<div class="faq-answer">
 					<p>Three things:</p>
 					<ol>
-						<li>An API key for your chosen model provider — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> (the agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a>, provider-agnostic; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc. through a single endpoint)</li>
+						<li>An API key for your chosen model provider — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> (the agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a>, provider-agnostic; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc. through a single endpoint)</li>
 						<li>A <a href="https://docs.github.com/en/apps/creating-github-apps" target="_blank" rel="noopener">GitHub App</a> with Issues, PRs, and Contents permissions</li>
-						<li>Node.js 20+ and Docker (for sandbox execution)</li>
+						<li>Node.js 20+. Docker is required only when <code>LASTLIGHT_SANDBOX=docker</code>; the default gondolin sandbox uses HVF/KVM with no Docker dependency.</li>
 					</ol>
 					<p>See the <a href="/#get-started">Get Started</a> guide for step-by-step instructions.</p>
 				</div>
@@ -34,15 +34,15 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>Which LLM does it use?</summary>
 				<div class="faq-answer">
-					<p>The agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> (<code>sst/opencode</code>) — provider-agnostic. The default model is <code>openai/gpt-5.5</code>, configurable via the <code>OPENCODE_MODEL</code> environment variable. Any <code>provider/model</code> string OpenCode supports works (<code>openai/…</code>, <code>anthropic/…</code>, <code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>, etc.).</p>
-					<p>Per-phase overrides go through <code>OPENCODE_MODELS</code> as JSON — e.g. <code>&#123;"architect":"openrouter/anthropic/claude-sonnet-4.5","triage":"openrouter/google/gemini-2.5-flash"&#125;</code>. Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> to match — one OpenRouter key covers most providers.</p>
+					<p>The agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a> (workflow phases) plus <code>@earendil-works/pi-ai</code> (in-process chat) — both provider-agnostic. The default model is <code>anthropic/claude-sonnet-4-6</code>, configurable via the <code>LASTLIGHT_MODEL</code> environment variable. Any <code>provider/model</code> string pi-ai supports works (<code>openai/…</code>, <code>anthropic/…</code>, <code>openrouter/&lt;vendor&gt;/&lt;model&gt;</code>, etc.).</p>
+					<p>Per-phase overrides go through <code>LASTLIGHT_MODELS</code> as JSON — e.g. <code>&#123;"chat":"openai/gpt-5.1-mini","architect":"openai/gpt-5.5"&#125;</code>. Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> to match — one OpenRouter key covers most providers. Legacy <code>OPENCODE_*</code> env vars are still read as fallbacks.</p>
 				</div>
 			</details>
 
 			<details class="faq-item">
 				<summary>Does it work with GitHub Enterprise?</summary>
 				<div class="faq-answer">
-					<p>Not yet tested, but it should work with GitHub Enterprise Cloud since it uses the same API. GitHub Enterprise Server (self-hosted) would need base URL configuration in the MCP server — contributions welcome.</p>
+					<p>Not yet tested, but it should work with GitHub Enterprise Cloud since it uses the same API. GitHub Enterprise Server (self-hosted) would need base URL configuration in the GitHub tooling layer — contributions welcome.</p>
 				</div>
 			</details>
 		</div>
@@ -54,7 +54,7 @@ const description = "Frequently asked questions about Last Light — the open-so
 				<summary>How does the bot authenticate with GitHub?</summary>
 				<div class="faq-answer">
 					<p>Last Light authenticates as a <strong>GitHub App</strong>, not a personal account. It generates short-lived installation tokens (expire in ~1 hour) using your App's private key. Every action — comments, labels, PR reviews — shows up as coming from the bot, not you.</p>
-					<p>The MCP server handles token generation and refresh automatically. For git operations inside sandboxes, a credential file is synced before each command.</p>
+					<p>The harness handles token generation, refresh, and per-workflow downscoping automatically (see permission profiles below). For git operations inside sandboxes, a credential file is synced before each command.</p>
 				</div>
 			</details>
 
@@ -70,7 +70,7 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>Can the bot actually fix bugs and open PRs?</summary>
 				<div class="faq-answer">
-					<p>Yes. When a maintainer @mentions the bot on an issue, it clones the repo into an isolated Docker sandbox, reads the code, makes changes, runs tests, and opens a PR. It's not magic — it works best for well-scoped issues with clear descriptions.</p>
+					<p>Yes. When a maintainer @mentions the bot on an issue, it clones the repo into an isolated sandbox (a gondolin micro-VM by default, or a Docker container if <code>LASTLIGHT_SANDBOX=docker</code>), reads the code, makes changes, runs tests, and opens a PR. It's not magic — it works best for well-scoped issues with clear descriptions.</p>
 					<p>The bot always links back to the original issue and posts validation results so you can review before merging.</p>
 				</div>
 			</details>
@@ -85,8 +85,8 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>What's the difference between Sandbox Sessions and Chat Sessions?</summary>
 				<div class="faq-answer">
-					<p><strong>Sandbox sessions</strong> are agent runs that executed inside a Docker sandbox — triage, PR review, build, health report, anything driven by a YAML workflow. Each phase runs <code>opencode run --format json</code> in the container; events are streamed into a Claude-SDK-style JSONL envelope on disk and listed on the dashboard's <em>Sandbox Sessions</em> tab.</p>
-					<p><strong>Chat sessions</strong> are conversations from Slack threads. They talk to a long-lived <code>opencode serve</code> process over HTTP — one OpenCode session per Slack thread, resumed on every turn so context holds for hours or days. Every turn is persisted to SQLite (<code>executions</code> table) and one thread becomes one growing, coherent JSONL. They live on the dashboard's <em>Chat Sessions</em> tab.</p>
+					<p><strong>Sandbox sessions</strong> are agent runs that executed inside a sandbox — triage, PR review, build, health report, anything driven by a YAML workflow. Each phase runs <code>agentic-pi run</code> in a gondolin micro-VM (or Docker container when <code>LASTLIGHT_SANDBOX=docker</code>); events are streamed into a Claude-SDK-style JSONL envelope on disk and listed on the dashboard's <em>Sandbox Sessions</em> tab.</p>
+					<p><strong>Chat sessions</strong> are conversations from Slack threads. They run an in-process <code>@earendil-works/pi-ai</code> chat loop inside the harness — one pi-ai conversation per Slack thread, history rehydrated from the <code>messaging_messages</code> SQLite table on every turn, so context holds for hours or days. Every turn is persisted (<code>executions</code> table) and one thread becomes one growing, coherent JSONL. They live on the dashboard's <em>Chat Sessions</em> tab.</p>
 					<p>In short: sandbox sessions are one-shot workflow runs; chat sessions are multi-turn conversations glued to a Slack thread.</p>
 				</div>
 			</details>
@@ -142,7 +142,7 @@ const description = "Frequently asked questions about Last Light — the open-so
 				<summary>How much does it cost to run?</summary>
 				<div class="faq-answer">
 					<p>The main cost is model API usage on whichever provider you've configured (OpenAI, Anthropic, OpenRouter, etc.). Each issue triage or PR review is roughly one agent session. For a repo with a few events per day, expect modest API costs. Build requests (cloning, editing, testing) use more tokens but are less frequent.</p>
-					<p>Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> to match your <code>OPENCODE_MODEL</code> and costs depend on usage. Cheap models like <code>anthropic/claude-haiku-4-5-20251001</code> or <code>openrouter/google/gemini-2.5-flash</code> can be routed to high-volume phases (triage, screen) via <code>OPENCODE_MODELS</code> to keep the bill down. OpenRouter adds a small per-token markup over going direct, but in exchange you get a single key + dashboard for every model.</p>
+					<p>Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> to match your <code>LASTLIGHT_MODEL</code> and costs depend on usage. Cheap models like <code>anthropic/claude-haiku-4-5-20251001</code> or <code>openrouter/google/gemini-2.5-flash</code> can be routed to high-volume phases (triage, screen) via <code>LASTLIGHT_MODELS</code> to keep the bill down. OpenRouter adds a small per-token markup over going direct, but in exchange you get a single key + dashboard for every model.</p>
 					<p>The agent itself is free and open-source.</p>
 				</div>
 			</details>
@@ -150,7 +150,7 @@ const description = "Frequently asked questions about Last Light — the open-so
 			<details class="faq-item">
 				<summary>What if the model provider goes down?</summary>
 				<div class="faq-answer">
-					<p>If the configured model provider is unavailable, agent sessions will fail and the error is logged. GitHub webhook events are retried by GitHub automatically if your endpoint doesn't respond, so the work will be picked up when service returns. Because OpenCode is provider-agnostic, you can flip <code>OPENCODE_MODEL</code> to a different provider during an outage. The execution database tracks all attempts for visibility.</p>
+					<p>If the configured model provider is unavailable, agent sessions will fail and the error is logged. GitHub webhook events are retried by GitHub automatically if your endpoint doesn't respond, so the work will be picked up when service returns. Because pi-ai is provider-agnostic, you can flip <code>LASTLIGHT_MODEL</code> to a different provider during an outage. The execution database tracks all attempts for visibility.</p>
 				</div>
 			</details>
 

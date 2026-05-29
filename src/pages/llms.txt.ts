@@ -22,7 +22,7 @@ export const GET: APIRoute = async ({ site }) => {
     '',
     "> An open-source agent that keeps the lights on in GitHub repos you've moved on from.",
     '',
-    'Last Light is a YAML-driven workflow engine that runs an OpenCode-powered AI agent in Docker sandboxes with downscoped GitHub tokens. It triages issues, reviews PRs, fixes small things, runs scheduled repo-health reports, and chats over Slack — handing work between Architect / Executor / Reviewer roles and pausing at approval gates the maintainer can resume from a comment. The harness is the product: the workflows are YAML you can fork and edit; the agent runtime, sandboxing, and policy gates are the engine.',
+    'Last Light is a YAML-driven workflow engine that runs an agentic-pi-powered AI agent in per-phase gondolin micro-VMs (or Docker containers) with downscoped GitHub tokens. Chat runs in-process via `@earendil-works/pi-ai`. It triages issues, reviews PRs, fixes small things, runs scheduled repo-health reports, and chats over Slack — handing work between Architect / Executor / Reviewer roles and pausing at approval gates the maintainer can resume from a comment. The harness is the product: the workflows are YAML you can fork and edit; the agent runtime, sandboxing, and policy gates are the engine.',
     '',
     '## Site',
     '',

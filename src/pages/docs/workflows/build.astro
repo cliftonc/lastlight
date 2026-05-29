@@ -127,22 +127,23 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<h2>Model configuration</h2>
 	<p>
-		Each phase can use a different model via the <code>OPENCODE_MODELS</code>
-		env var (the agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a>,
-		provider-agnostic). Common setup: a strong reasoning model for architect
-		(planning quality), a mid-tier model for executor and reviewer (speed),
-		and a small/cheap model for guardrails (cost).
+		Each phase can use a different model via the <code>LASTLIGHT_MODELS</code>
+		env var (the agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a>,
+		provider-agnostic; default <code>anthropic/claude-sonnet-4-6</code>). Common
+		setup: a strong reasoning model for architect (planning quality), a mid-tier
+		model for executor and reviewer (speed), and a small/cheap model for
+		guardrails (cost).
 	</p>
-	<pre><code set:text={'OPENCODE_MODELS=\'{"architect":"openai/gpt-5.5","guardrails":"anthropic/claude-haiku-4-5-20251001"}\''}/></pre>
+	<pre><code set:text={'LASTLIGHT_MODELS=\'{"architect":"openai/gpt-5.5","guardrails":"anthropic/claude-haiku-4-5-20251001"}\''}/></pre>
 	<p>
 		Or use a single <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
 		key to mix vendors freely from one billing surface — useful if you don't want
 		to manage separate OpenAI and Anthropic accounts:
 	</p>
-	<pre><code set:text={'OPENCODE_MODELS=\'{"architect":"openrouter/anthropic/claude-sonnet-4.5","guardrails":"openrouter/google/gemini-2.5-flash"}\''}/></pre>
+	<pre><code set:text={'LASTLIGHT_MODELS=\'{"architect":"openrouter/anthropic/claude-sonnet-4.5","guardrails":"openrouter/google/gemini-2.5-flash"}\''}/></pre>
 	<p>
-		Per-phase reasoning effort goes through <code>OPENCODE_VARIANT</code> /
-		<code>OPENCODE_VARIANTS</code> — typical setup is <code>high</code> for
+		Per-phase reasoning effort goes through <code>LASTLIGHT_THINKING</code> /
+		<code>LASTLIGHT_THINKINGS</code> — typical setup is <code>high</code> for
 		architect and reviewer, <code>minimal</code> for triage / screen.
 	</p>
 

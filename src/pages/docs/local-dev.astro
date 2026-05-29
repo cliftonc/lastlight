@@ -3,12 +3,19 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 <DocsLayout
 	slug="local-dev"
-	description="Clone, configure, and run Last Light on your dev machine — agents still run in real Docker sandboxes."
+	description="Clone, configure, and run Last Light on your dev machine — agents still run in real per-phase sandboxes."
 >
 	<p>
 		Local dev runs the harness on your host (so you get hot reload) but spawns every
-		agent task in a real Docker sandbox, exactly like production. This is deliberate:
+		agent task in a real per-phase sandbox, exactly like production. This is deliberate:
 		it's the only honest way to develop against the bot's actual execution model.
+	</p>
+
+	<p>
+		The default sandbox backend is <strong>gondolin</strong> — agentic-pi's QEMU
+		micro-VM, using HVF on macOS or KVM on Linux. No Docker needed. Switch to
+		<code>LASTLIGHT_SANDBOX=docker</code> if you'd rather run sibling Docker containers
+		(useful for prod-like smoke testing), or <code>none</code> for in-process dev runs.
 	</p>
 
 	<h2>1. Clone and install</h2>
@@ -34,36 +41,40 @@ WEBHOOK_SECRET=your-webhook-secret</code></pre>
 		<code>.gitignore</code>, so you won't accidentally commit it.
 	</p>
 
-	<h2>3. Build the sandbox image (one-time)</h2>
+	<h2>3. (Docker mode only) Build the sandbox image</h2>
 
 	<pre><code>docker compose --profile build-only build sandbox</code></pre>
 
 	<p>
-		This builds the <code>sandbox</code> image that every agent task runs inside. You
-		only need to rebuild it when <code>sandbox.Dockerfile</code> changes.
+		Only needed if you set <code>LASTLIGHT_SANDBOX=docker</code>. The default gondolin
+		sandbox runs from the harness directly and needs no image build. Rebuild when
+		<code>sandbox.Dockerfile</code> changes.
 	</p>
 
 	<h2>4. Set a model API key</h2>
 
 	<p>
-		The agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a> —
+		The agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a> —
 		provider-agnostic. Drop the matching key into <code>.env</code>:
 	</p>
 
-	<pre><code># Default model is openai/gpt-5.5
-OPENAI_API_KEY=sk-...
-
-# Or, if you'd rather route to Anthropic
+	<pre><code># Default model is anthropic/claude-sonnet-4-6
 ANTHROPIC_API_KEY=sk-ant-...
-OPENCODE_MODEL=anthropic/claude-sonnet-4-6
+
+# Or, if you'd rather route to OpenAI
+OPENAI_API_KEY=sk-...
+LASTLIGHT_MODEL=openai/gpt-5.5
 
 # Or use OpenRouter — one key, many models
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENCODE_MODEL=openrouter/anthropic/claude-sonnet-4.5</code></pre>
+LASTLIGHT_MODEL=openrouter/anthropic/claude-sonnet-4.5
+
+# Sandbox backend — gondolin (default), docker, or none
+# LASTLIGHT_SANDBOX=gondolin</code></pre>
 
 	<p>
-		No interactive login step. OpenCode reads the API key from the harness env and
-		passes it through to the sandbox container.
+		No interactive login step. pi-ai reads the API key from the harness env and
+		forwards it into each sandbox.
 	</p>
 
 	<h2>5. Start the harness</h2>
@@ -78,11 +89,11 @@ npm run dev:dashboard</code></pre>
 	<p>Under the hood, <code>npm run dev:server</code> calls <code>scripts/dev-local.sh</code>, which:</p>
 
 	<ul>
-		<li>Verifies Docker is running and the sandbox image exists.</li>
-		<li>Generates the OpenCode config and the MCP wiring under <code>./data/</code>.</li>
+		<li>When <code>LASTLIGHT_SANDBOX=docker</code>, verifies Docker is running and the sandbox image exists.</li>
+		<li>Copies your <code>GITHUB_APP_PRIVATE_KEY_PATH</code> into <code>./data/sandbox-data/secrets/app.pem</code> (mode 600) so sandboxes can authenticate to GitHub.</li>
 		<li>
 			Sets safe defaults: <code>LASTLIGHT_LOCAL_DEV=1</code>,
-			<code>STATE_DIR=./data</code>, <code>ENABLE_DIRECT_FALLBACK=false</code>.
+			<code>STATE_DIR=./data</code>, <code>LASTLIGHT_SESSIONS_DIR=./data/agent-sessions</code>.
 		</li>
 		<li>Launches the harness with <code>tsx watch src/index.ts</code>.</li>
 	</ul>

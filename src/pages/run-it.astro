@@ -19,7 +19,7 @@ const description = "Deploy Last Light for real — fork, configure, docker comp
 	<section class="security-advisory">
 		<div class="advisory-card">
 			<h3>Run it outside your core infrastructure</h3>
-			<p>Last Light is a powerful autonomous agent. While it runs all code in isolated Docker sandbox containers, it is early-stage software that may have undetected security issues. Deploy it on an isolated host — a cheap VPS, a separate cloud project, or a dedicated VM — where it cannot reach sensitive internal systems, databases, or credentials beyond what it explicitly needs.</p>
+			<p>Last Light is a powerful autonomous agent. While it runs all code in isolated per-phase sandboxes (gondolin micro-VMs by default, Docker containers on opt-in), it is early-stage software that may have undetected security issues. Deploy it on an isolated host — a cheap VPS, a separate cloud project, or a dedicated VM — where it cannot reach sensitive internal systems, databases, or credentials beyond what it explicitly needs.</p>
 		</div>
 	</section>
 
@@ -50,9 +50,10 @@ cp ~/path-to/your-app.private-key.pem secrets/</code></pre>
 			<li><strong>GitHub App credentials</strong> — App ID, Installation ID, and private key path</li>
 			<li><strong>Webhook secret</strong> — must match your GitHub App's webhook settings</li>
 			<li><strong>Domain</strong> — your public hostname for automatic TLS (or <code>localhost</code> for dev)</li>
-			<li><strong>Model API key</strong> — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> matching your <code>OPENCODE_MODEL</code> (the agent runtime is <a href="https://opencode.ai" target="_blank" rel="noopener">OpenCode</a>, provider-agnostic; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc.)</li>
-			<li><strong>Model overrides</strong> (optional) — <code>OPENCODE_MODELS</code> as JSON to route architect/executor/reviewer phases to different <code>provider/model</code> strings</li>
-			<li><strong>Reasoning effort</strong> (optional) — <code>OPENCODE_VARIANT</code> as the default (<code>minimal</code> / <code>medium</code> / <code>high</code> / <code>max</code>), or <code>OPENCODE_VARIANTS</code> JSON for per-phase overrides</li>
+			<li><strong>Model API key</strong> — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> matching your <code>LASTLIGHT_MODEL</code> (the agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a>, provider-agnostic; default <code>anthropic/claude-sonnet-4-6</code>; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc.)</li>
+			<li><strong>Sandbox backend</strong> (optional) — <code>LASTLIGHT_SANDBOX</code> selects <code>gondolin</code> (default — QEMU micro-VM), <code>docker</code>, or <code>none</code></li>
+			<li><strong>Model overrides</strong> (optional) — <code>LASTLIGHT_MODELS</code> as JSON to route architect/executor/reviewer phases to different <code>provider/model</code> strings</li>
+			<li><strong>Reasoning effort</strong> (optional) — <code>LASTLIGHT_THINKING</code> as the default (<code>off</code> / <code>minimal</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>xhigh</code>), or <code>LASTLIGHT_THINKINGS</code> JSON for per-phase overrides</li>
 			<li><strong>Approval gates</strong> (optional) — <code>APPROVAL_GATES=post_architect,post_reviewer</code> to pause at human-in-the-loop checkpoints</li>
 			<li><strong>Admin dashboard</strong> (recommended) — <code>ADMIN_PASSWORD</code> and a stable <code>ADMIN_SECRET</code> for persistent login sessions</li>
 			<li><strong>Slack chat</strong> (optional) — <code>SLACK_BOT_TOKEN</code> and <code>SLACK_APP_TOKEN</code> for the in-process chat skill (Socket Mode)</li>
@@ -63,7 +64,12 @@ cp ~/path-to/your-app.private-key.pem secrets/</code></pre>
 
 		<div class="step-block">
 			<h3><span class="step-label">Step 3</span> Build & run</h3>
-		<p class="section-desc">The Docker image is self-contained — the OpenCode binary, the MCP server, all skills, and dependencies are baked in. Secrets are injected at runtime via the mounted volume.</p>
+		<p class="section-desc">The harness Docker image bundles agentic-pi as an npm dep; all skills and dependencies are baked in, and GitHub tooling is built into the agent (no separate MCP process to run). Secrets are injected at runtime via the mounted volume.</p>
+
+		<div class="advisory-card" style="margin-bottom: 1.25rem; background: rgba(26, 122, 138, 0.08); border-color: rgba(26, 122, 138, 0.3);">
+			<h3 style="color: var(--teal);">Docker-free alternative (native + gondolin)</h3>
+			<p>On a Linux host with <code>/dev/kvm</code> exposed, the <a href="https://github.com/cliftonc/lastlight/blob/main/deploy/native/README.md" target="_blank" rel="noopener">native systemd deploy</a> runs the harness directly under systemd and uses gondolin for sandboxing — no Docker required. Re-deploys are a <code>git pull</code> plus <code>sudo bash deploy/native/install.sh</code>. Most managed container hosts (Cloud Run, Fly Machines, shared-CPU VMs) don't expose nested virt — stay on the Docker deploy below in those cases.</p>
+		</div>
 		<pre><code># Set your public domain (for Caddy TLS)
 export DOMAIN=lastlight.example.com
 
@@ -72,7 +78,7 @@ docker compose up -d
 
 # Watch the logs
 docker compose logs -f agent</code></pre>
-		<p class="step-detail">No interactive login step — OpenCode authenticates via the <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> / <code>OPENROUTER_API_KEY</code> you put in <code>secrets/.env</code>.</p>
+		<p class="step-detail">No interactive login step — pi-ai reads the <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> / <code>OPENROUTER_API_KEY</code> you put in <code>secrets/.env</code> and forwards them into each sandbox.</p>
 
 		<p class="step-detail">What happens:</p>
 		<ul class="config-list">
@@ -189,13 +195,13 @@ spec:
 git merge upstream/main
 docker compose build
 docker compose up -d</code></pre>
-				<p>This also updates the OpenCode binary (installed during the build). To pick up the latest OpenCode without any Last Light changes, just rebuild:</p>
+				<p>This also pulls the latest agentic-pi (an npm dependency baked into the image at build time). To pick up the latest agentic-pi without any other Last Light changes, just rebuild:</p>
 				<pre><code>docker compose build --no-cache agent
 docker compose up -d agent</code></pre>
 			</div>
 			<div class="tip-card">
 				<h3>Token refresh</h3>
-				<p>GitHub App tokens expire hourly. The MCP server refreshes them automatically — no action needed. If you see auth errors, restart the agent container.</p>
+				<p>GitHub App tokens expire hourly. The harness mints fresh per-phase installation tokens on every workflow run, so refresh is automatic — no action needed. If you see auth errors, restart the agent container.</p>
 			</div>
 			<div class="tip-card">
 				<h3>Rate limits</h3>
@@ -203,7 +209,7 @@ docker compose up -d agent</code></pre>
 			</div>
 			<div class="tip-card">
 				<h3>LLM costs</h3>
-				<p>Each triage or review is ~1 agent session. Build requests use more tokens. Costs depend on your configured model provider's API usage (OpenAI / Anthropic / OpenRouter / whichever <code>OPENCODE_MODEL</code> points at). Route cheap models to high-volume phases (triage, screen) via <code>OPENCODE_MODELS</code> to keep the bill down.</p>
+				<p>Each triage or review is ~1 agent session. Build requests use more tokens. Costs depend on your configured model provider's API usage (OpenAI / Anthropic / OpenRouter / whichever <code>LASTLIGHT_MODEL</code> points at). Route cheap models to high-volume phases (triage, screen) via <code>LASTLIGHT_MODELS</code> to keep the bill down.</p>
 			</div>
 			<div class="tip-card">
 				<h3>Logs</h3>
