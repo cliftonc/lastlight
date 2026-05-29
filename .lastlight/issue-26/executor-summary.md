@@ -93,3 +93,18 @@ dist/assets/index-DKmRteDt.js   999.07 kB │ gzip: 305.30 kB
 - Dashboard authoring UI was not implemented; it was optional/out of scope in the architect plan.
 - Automatic issue-label-triggered workflow authoring was not implemented to avoid surprising automatic PR creation; explicit maintainer commands and Slack/message commands are supported.
 - Natural-language workflow authoring defaults to `workflowMode=new`; deterministic `/edit-workflow` or `@last-light edit-workflow` should be used for edit requests that need a specific workflow name.
+
+## Fix Cycle 1
+
+Fixed reviewer feedback:
+
+- Updated `runSimpleWorkflow` so `workflow-author` uses the synthesized authoring branch as `prePopulateBranch`, matching build-style prepopulation. This ensures authoring phases start inside the target repo checkout before reading/editing `workflows/*.yaml`.
+- Added `src/workflows/simple.test.ts` coverage asserting `workflow-author` stores and passes the synthesized branch as `prePopulateBranch`.
+- Updated the workflow-author prompt to write summaries under `{{issueDir}}/workflow-author-summary.md`, keeping summary paths consistent with PR links for issue and non-issue runs.
+
+Guardrails:
+
+- Test: `npm test` — passed (26 files, 458 passed, 1 todo).
+- Lint: no lint script is configured; guardrails report marks linting missing/non-blocking.
+- Typecheck: `npm run build` — passed.
+- Dashboard typecheck/build: `npm run build -w dashboard` — passed, with the existing Vite chunk-size warning.

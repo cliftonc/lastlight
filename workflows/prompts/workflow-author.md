@@ -30,7 +30,7 @@ Required steps:
 4. Put long phase instructions in `workflows/prompts/<workflow>-<phase>.md` rather than huge inline YAML blocks.
 5. Validate workflow YAML with the shared loader/schema path. Run at least:
    `npx vitest run src/workflows/loader.test.ts`
-6. Write `.lastlight/issue-{{issueNumber}}/workflow-author-summary.md` when `issueNumber` exists; otherwise write `.lastlight/workflow-author-summary.md`.
+6. Write the summary to `{{issueDir}}/workflow-author-summary.md`.
 7. Commit only workflow/prompt/summary files relevant to this authoring request and push the branch.
 
 The summary file must include:
