@@ -1,5 +1,5 @@
 import { resolve, basename, join } from "path";
-import { writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { run as agenticRun, type RunResult, type ThinkingLevel } from "agentic-pi";
 import {
@@ -22,9 +22,52 @@ import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST } from "../sandbox/egress-allowli
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 const DOCKER_WORKSPACE_DIR = "/home/agent/workspace";
+const SKILLS_STAGING_SUBPATH = join(".agents", "skills");
 const THINKING_LEVELS: ReadonlySet<string> = new Set([
   "off", "minimal", "low", "medium", "high", "xhigh",
 ]);
+
+/**
+ * Stage the named skills under `<workspaceDir>/.agents/skills/<basename>/`
+ * so pi-coding-agent's built-in `.agents/skills/` auto-discovery (rooted
+ * at the agent's cwd) surfaces them as an XML catalogue in the system
+ * prompt. Each skill is a directory containing SKILL.md plus any
+ * `scripts/`, `references/`, `assets/` — the whole tree comes along.
+ *
+ * `mode` controls how the directory ends up in the workspace:
+ *   - "symlink": one symlink per skill pointing at the host directory.
+ *     Used for gondolin/none, where pi-coding-agent's tools (including
+ *     `read`) run in the harness process and can follow host symlinks.
+ *     Zero-copy, zero-duplication.
+ *   - "copy": recursive copy. Used for docker, where the agent's tools
+ *     run inside the container — symlinks pointing at harness host
+ *     paths wouldn't resolve. Piggybacks on the existing workspace
+ *     bind-mount: host writes land in the container automatically.
+ *
+ * Always clears the staging directory first so each phase gets a clean
+ * slate: a phase with no skills sees no `.agents/skills/` at all, even
+ * if a previous phase in the same workspace staged some.
+ */
+function stageSkillsInWorkspace(
+  workspaceDir: string,
+  skillPaths: string[] | undefined,
+  mode: "symlink" | "copy",
+): void {
+  const stagingDir = join(workspaceDir, SKILLS_STAGING_SUBPATH);
+  if (existsSync(stagingDir)) {
+    rmSync(stagingDir, { recursive: true, force: true });
+  }
+  if (!skillPaths?.length) return;
+  mkdirSync(stagingDir, { recursive: true });
+  for (const hostPath of skillPaths) {
+    const dest = join(stagingDir, basename(hostPath));
+    if (mode === "symlink") {
+      symlinkSync(hostPath, dest, "dir");
+    } else {
+      cpSync(hostPath, dest, { recursive: true, dereference: true });
+    }
+  }
+}
 
 /**
  * Execute one workflow-phase agent task via agentic-pi.
@@ -205,6 +248,21 @@ async function executeInProcess(
   const agentCwd = ctx.access?.prePopulateBranch
     ? join(ctx.workDir, ctx.access.repo)
     : ctx.workDir;
+
+  // Stage declared skills at <agentCwd>/.agents/skills/ so
+  // pi-coding-agent's auto-discovery picks them up. Always rooted at
+  // cwd (rather than workDir) so the walk-up never crosses a
+  // pre-populated repo's `.git` boundary. Symlinks suffice here —
+  // pi-coding-agent's tools run in the harness process and follow
+  // host paths. Phases without `skills:` get no `.agents/skills/`
+  // directory at all.
+  try {
+    stageSkillsInWorkspace(agentCwd, config.skillPaths, "symlink");
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[executor] Could not stage skills: ${msg}`);
+  }
+
   const shim = new AgenticShim({
     homeDir: sessionsDir,
     projectSlug: projectSlugForCwd(agentCwd),
@@ -364,6 +422,23 @@ async function executeDocker(
   const agentCwd = ctx.prePopulate
     ? `${DOCKER_WORKSPACE_DIR}/${ctx.prePopulate.repo}`
     : DOCKER_WORKSPACE_DIR;
+
+  // Stage declared skills into the workspace before the agent runs.
+  // The container's bind-mount of `<sbx.workDir>` → `/home/agent/workspace`
+  // is already live, so anything we write to the host workDir appears
+  // inside the container. Copy (not symlink) because the agent's tools
+  // run inside the container and host symlink targets don't resolve
+  // there. Rooted at the host counterpart of the agent's cwd to
+  // mirror what the in-process path does.
+  const hostAgentCwd = ctx.prePopulate
+    ? join(sbx.workDir, ctx.prePopulate.repo)
+    : sbx.workDir;
+  try {
+    stageSkillsInWorkspace(hostAgentCwd, config.skillPaths, "copy");
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[executor] Could not stage skills in docker workspace: ${msg}`);
+  }
   // The dashboard reads from <sessionsDir>/projects/<slug>/. Use the same
   // resolved cwd for the slug so live tails land in the right project dir.
   const shim = new AgenticShim({

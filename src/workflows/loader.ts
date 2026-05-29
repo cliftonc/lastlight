@@ -208,10 +208,21 @@ export function loadSkillRaw(name: string): string {
 }
 
 /**
- * Wrap a skill's SKILL.md content in the canonical executor preamble used by
- * skill-style phases. Kept here (instead of in runner.ts) so the admin layer
- * can call `loadSkillRaw` without importing the runner.
+ * Resolve a list of skill names to their absolute directory paths.
+ * Each returned path is the skill folder root (containing `SKILL.md`
+ * plus any `scripts/`, `references/`, `assets/`) — not the .md file.
+ * The sandbox staging step in agent-executor uses these to symlink or
+ * bind-mount the whole folder into `<workspace>/.agents/skills/<name>/`.
  */
-export function loadSkillInstructions(name: string): string {
-  return loadSkillRaw(name);
+export function resolveSkillPaths(names: readonly string[]): string[] {
+  return names.map((name) => {
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      throw new Error(`Invalid skill name: ${name}`);
+    }
+    for (const base of SKILL_BASES) {
+      const dir = join(base, name);
+      if (existsSync(join(dir, "SKILL.md"))) return dir;
+    }
+    throw new Error(`Skill not found: skills/${name}/SKILL.md`);
+  });
 }
