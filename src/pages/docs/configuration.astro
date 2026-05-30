@@ -6,9 +6,52 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	description="Every environment variable Last Light reads — required and optional, with defaults."
 >
 	<p>
-		Last Light reads configuration from environment variables (via <code>.env</code>
-		in local dev, or <code>secrets/.env</code> in production). The authoritative source
-		is <code>src/config.ts</code> in the repo; this page mirrors it.
+		Last Light layers configuration at startup: the packaged
+		<code>config/default.yaml</code> (non-secret defaults), then an optional
+		<code>$LASTLIGHT_OVERLAY_DIR/config.yaml</code> overlay, then environment
+		variables (via <code>.env</code> in local dev, or <code>instance/secrets/.env</code>
+		in production). The authoritative source is <code>src/config.ts</code> in the repo;
+		this page mirrors it.
+	</p>
+
+	<h2>Config files &amp; overlay</h2>
+
+	<p>
+		Non-secret config — managed repos, routes, models, variants, approvals, and
+		<code>disabled.*</code> — lives in YAML. The public <code>config/default.yaml</code>
+		ships safe defaults (and an <strong>empty</strong> <code>managedRepos</code> list).
+		Your deployment overrides go in an overlay selected by
+		<code>LASTLIGHT_OVERLAY_DIR</code> — the docker-compose stack mounts an
+		<code>instance/</code> folder there as <code>/app/instance</code>.
+	</p>
+
+	<table class="docs-table config-table">
+		<colgroup>
+			<col class="col-var" />
+			<col class="col-req" />
+			<col class="col-default" />
+			<col class="col-desc" />
+		</colgroup>
+		<thead>
+			<tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td><code>LASTLIGHT_OVERLAY_DIR</code></td>
+				<td>No</td>
+				<td>—</td>
+				<td>Trusted overlay root. Layers <code>config.yaml</code> over the defaults and overlays assets under <code>workflows/</code>, <code>workflows/prompts/</code>, <code>skills/</code>, <code>agent-context/</code> (overlay wins by logical name). Secrets are read from its <code>secrets/</code> subdir. Read at startup — <code>docker compose restart agent</code> to apply.</td>
+			</tr>
+		</tbody>
+	</table>
+
+	<p>
+		Merge rules: maps (<code>models</code>, <code>variants</code>, <code>routes</code>,
+		<code>approval</code>) deep-merge over the defaults; arrays (<code>managedRepos</code>,
+		<code>disabled.*</code>) replace; environment variables override both. Secrets
+		(GitHub App key, provider API keys, Slack tokens, admin secret) stay env-only and
+		never appear in the dashboard <strong>Config</strong> tab, which shows the
+		Default / Overlay / Merged non-secret config.
 	</p>
 
 	<h2>GitHub App</h2>

@@ -38,16 +38,20 @@ git remote add upstream https://github.com/cliftonc/lastlight.git</code></pre>
 		</div>
 
 		<div class="step-block">
-			<h3><span class="step-label">Step 2</span> Configure secrets</h3>
-		<p class="section-desc">All secrets live in a <code>secrets/</code> directory that's gitignored and mounted read-only into the container.</p>
-		<pre><code># Copy the environment template
-cp .env.example secrets/.env
+			<h3><span class="step-label">Step 2</span> Configure your overlay</h3>
+		<p class="section-desc">Everything deployment-specific — managed repos, config overrides, and secrets — lives in a single <code>instance/</code> folder, gitignored and mounted read-only at <code>/app/instance</code>. It's never baked into the image, so it's the natural home for a private config repo. (<code>npx lastlight setup</code> scaffolds all of this for you.)</p>
+		<pre><code># Secrets (gitignored, host-only)
+mkdir -p instance/secrets
+cp deploy/.env.production.example instance/secrets/.env
+cp ~/path-to/your-app.private-key.pem instance/secrets/app.pem
+chmod 600 instance/secrets/.env instance/secrets/app.pem
 
-# Place your GitHub App private key
-cp ~/path-to/your-app.private-key.pem secrets/</code></pre>
-		<p class="step-detail">Edit <code>secrets/.env</code> with your:</p>
+# Overlay config — at minimum the repos the bot manages
+printf 'managedRepos:\n  - your-org/repo-one\n' &gt; instance/config.yaml</code></pre>
+		<p class="step-detail">Edit <code>instance/secrets/.env</code> with your:</p>
 		<ul class="config-list">
-			<li><strong>GitHub App credentials</strong> — App ID, Installation ID, and private key path</li>
+			<li><strong>Managed repositories</strong> — set <code>managedRepos</code> in <code>instance/config.yaml</code> (the public default ships empty)</li>
+			<li><strong>GitHub App credentials</strong> — App ID, Installation ID, and private key path (<code>./app.pem</code>)</li>
 			<li><strong>Webhook secret</strong> — must match your GitHub App's webhook settings</li>
 			<li><strong>Domain</strong> — your public hostname for automatic TLS (or <code>localhost</code> for dev)</li>
 			<li><strong>Model API key</strong> — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or <code>OPENROUTER_API_KEY</code> matching your <code>LASTLIGHT_MODEL</code> (the agent runtime is <a href="https://github.com/cliftonc/agentic-pi" target="_blank" rel="noopener">agentic-pi</a>, provider-agnostic; default <code>anthropic/claude-sonnet-4-6</code>; one OpenRouter key gets you Claude / GPT / Gemini / Llama / etc.)</li>
@@ -70,15 +74,15 @@ cp ~/path-to/your-app.private-key.pem secrets/</code></pre>
 			<h3 style="color: var(--teal);">Docker-free alternative (native + gondolin)</h3>
 			<p>On a Linux host with <code>/dev/kvm</code> exposed, the <a href="https://github.com/cliftonc/lastlight/blob/main/deploy/native/README.md" target="_blank" rel="noopener">native systemd deploy</a> runs the harness directly under systemd and uses gondolin for sandboxing — no Docker required. Re-deploys are a <code>git pull</code> plus <code>sudo bash deploy/native/install.sh</code>. Most managed container hosts (Cloud Run, Fly Machines, shared-CPU VMs) don't expose nested virt — stay on the Docker deploy below in those cases.</p>
 		</div>
-		<pre><code># Set your public domain (for Caddy TLS)
-export DOMAIN=lastlight.example.com
+		<pre><code># DOMAIN lives in instance/secrets/.env (read by Caddy via env_file) —
+# no repo-root .env needed.
 
 # Build and start
 docker compose up -d
 
 # Watch the logs
 docker compose logs -f agent</code></pre>
-		<p class="step-detail">No interactive login step — pi-ai reads the <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> / <code>OPENROUTER_API_KEY</code> you put in <code>secrets/.env</code> and forwards them into each sandbox.</p>
+		<p class="step-detail">No interactive login step — pi-ai reads the <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> / <code>OPENROUTER_API_KEY</code> you put in <code>instance/secrets/.env</code> and forwards them into each sandbox.</p>
 
 		<p class="step-detail">What happens:</p>
 		<ul class="config-list">
@@ -128,7 +132,7 @@ services:
 		<p class="section-desc">In your GitHub App settings, set the webhook URL and subscribe to events.</p>
 		<ul class="config-list">
 			<li><strong>Webhook URL:</strong> <code>https://lastlight.example.com/webhooks/github</code></li>
-			<li><strong>Secret:</strong> same value as <code>WEBHOOK_SECRET</code> in your <code>secrets/.env</code></li>
+			<li><strong>Secret:</strong> same value as <code>WEBHOOK_SECRET</code> in your <code>instance/secrets/.env</code></li>
 			<li><strong>Events:</strong> Issues, Pull requests, Issue comments, PR review comments, PR reviews</li>
 		</ul>
 		<p class="step-detail">Install the GitHub App on the repos (or org) you want Last Light to manage. Test by opening an issue — the bot should triage it within seconds.</p>
@@ -156,12 +160,15 @@ spec:
         image: your-registry/lastlight:latest
         ports:
         - containerPort: 8644
+        env:
+        - name: LASTLIGHT_OVERLAY_DIR
+          value: /app/instance
         volumeMounts:
         - name: secrets
-          mountPath: /opt/lastlight/secrets
+          mountPath: /app/instance/secrets
           readOnly: true
         - name: state
-          mountPath: /opt/lastlight/sessions
+          mountPath: /app/data
       volumes:
       - name: secrets
         secret:
@@ -180,7 +187,7 @@ spec:
   ports:
   - port: 8644
     targetPort: 8644</code></pre>
-		<p class="section-note">Create the K8s Secret from your local files: <code>kubectl create secret generic lastlight-secrets --from-file=.env=secrets/.env --from-file=your-app.pem=secrets/your-app.private-key.pem</code></p>
+		<p class="section-note">Create the K8s Secret from your local files: <code>kubectl create secret generic lastlight-secrets --from-file=.env=instance/secrets/.env --from-file=app.pem=instance/secrets/app.pem</code></p>
 		</div>
 	</section>
 

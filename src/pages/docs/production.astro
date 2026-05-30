@@ -44,10 +44,13 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 	<pre><code>npx lastlight setup</code></pre>
 
 	<p>
-		It walks you through entering your GitHub App credentials, model provider
-		API key (OpenAI / Anthropic / OpenRouter), domain, and optional Slack integration. When done it writes <code>.env</code>,
-		copies your PEM key into place, generates the Docker Compose config, and offers
-		to build and start the containers.
+		It walks you through entering your GitHub App credentials, domain, the
+		<strong>repositories the bot manages</strong>, your model provider API key
+		(OpenAI / Anthropic / OpenRouter), and optional Slack integration. When done it
+		scaffolds your private <strong>deployment overlay</strong> at <code>instance/</code> —
+		writing <code>instance/config.yaml</code> (your managed repos),
+		<code>instance/secrets/.env</code>, and your PEM at
+		<code>instance/secrets/app.pem</code> — then offers to build and start the containers.
 	</p>
 
 	<div class="docs-callout tip">
@@ -71,25 +74,43 @@ git remote add upstream https://github.com/cliftonc/lastlight.git</code></pre>
 		match your project. Pull from <code>upstream</code> when you want updates.
 	</p>
 
-	<h3>2. Lay out <code>secrets/</code></h3>
+	<h3>2. Lay out your deployment overlay (<code>instance/</code>)</h3>
 
 	<p>
-		Secrets live in a <code>secrets/</code> directory that's gitignored and mounted
-		read-only into the container.
+		Everything specific to your deployment — managed repos, config overrides,
+		agent-context, and secrets — lives in a single <code>instance/</code> folder next
+		to <code>docker-compose.yml</code>. It's mounted read-only at <code>/app/instance</code>
+		(<code>LASTLIGHT_OVERLAY_DIR=/app/instance</code>) and is never committed to the
+		public repo or baked into the image — so it's the natural home for a private
+		config repo.
 	</p>
 
-	<pre><code>mkdir -p secrets
-cp .env.example secrets/.env
-cp /path/to/your-app.private-key.pem secrets/</code></pre>
+	<pre><code>mkdir -p instance/secrets
+cp deploy/.env.production.example instance/secrets/.env
+cp /path/to/your-app.private-key.pem instance/secrets/app.pem
+chmod 600 instance/secrets/.env instance/secrets/app.pem
 
-	<p>Edit <code>secrets/.env</code> and fill in at minimum:</p>
+# instance/config.yaml — at minimum the repos the bot manages:
+printf 'managedRepos:\n  - your-org/repo-one\n' &gt; instance/config.yaml</code></pre>
+
+	<p>Edit <code>instance/secrets/.env</code> and fill in at minimum:</p>
 
 	<ul>
-		<li><code>GITHUB_APP_ID</code>, <code>GITHUB_APP_INSTALLATION_ID</code>, <code>GITHUB_APP_PRIVATE_KEY_PATH</code></li>
+		<li><code>GITHUB_APP_ID</code>, <code>GITHUB_APP_INSTALLATION_ID</code>, <code>GITHUB_APP_PRIVATE_KEY_PATH</code> (use <code>./app.pem</code> — the entrypoint symlinks it)</li>
 		<li><code>WEBHOOK_SECRET</code></li>
 		<li><code>DOMAIN</code> — your public hostname, used by Caddy for automatic TLS</li>
 		<li><code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, and/or <code>OPENROUTER_API_KEY</code> — must match whichever provider <code>LASTLIGHT_MODEL</code> resolves to (default <code>anthropic/claude-sonnet-4-6</code>). One OpenRouter key covers most providers if you want a single billing surface.</li>
 	</ul>
+
+	<p>
+		Both the <code>agent</code> and <code>caddy</code> services read
+		<code>instance/secrets/.env</code> via <code>env_file</code>, and the entrypoint
+		sources it inside the container — so <strong>no repo-root <code>.env</code> is
+		needed</strong>. <code>instance/config.yaml</code> is merged over the public
+		<code>config/default.yaml</code> at startup (maps deep-merge, arrays like
+		<code>managedRepos</code> replace, env vars override). Edit any overlay file and
+		<code>docker compose restart agent</code> to apply — no rebuild.
+	</p>
 
 	<p>
 		See the <a href="/docs/configuration">Configuration reference</a> for every
@@ -113,8 +134,8 @@ cp /path/to/your-app.private-key.pem secrets/</code></pre>
 
 	<h3>3. Build and start</h3>
 
-	<pre><code># Point Caddy at your domain
-echo "DOMAIN=lastlight.example.com" >> secrets/.env
+	<pre><code># Point Caddy at your domain (in instance/secrets/.env)
+echo "DOMAIN=lastlight.example.com" >> instance/secrets/.env
 
 # Build and start both containers
 docker compose build agent
@@ -147,7 +168,7 @@ curl -X POST https://lastlight.example.com/webhooks/github -d '&#123;&#125;'</co
 
 	<ul>
 		<li><strong>Webhook URL</strong> → <code>https://lastlight.example.com/webhooks/github</code></li>
-		<li><strong>Webhook secret</strong> → same value as <code>WEBHOOK_SECRET</code> in <code>secrets/.env</code></li>
+		<li><strong>Webhook secret</strong> → same value as <code>WEBHOOK_SECRET</code> in <code>instance/secrets/.env</code></li>
 		<li>Make sure <strong>Active</strong> is enabled.</li>
 	</ul>
 
@@ -177,10 +198,20 @@ curl -X POST https://lastlight.example.com/webhooks/github -d '&#123;&#125;'</co
 
 	<h2>Updating</h2>
 
+	<p>Updating <strong>lastlight itself</strong> (source, built-in assets) is a rebuild:</p>
+
 	<pre><code>git fetch upstream
 git merge upstream/main
 docker compose build agent
 docker compose up -d agent</code></pre>
+
+	<p>
+		Updating <strong>your overlay</strong> (anything in <code>instance/</code> — managed
+		repos, config, agent-context) is just a restart, no rebuild:
+	</p>
+
+	<pre><code># edit instance/config.yaml (or git pull in instance/), then:
+docker compose restart agent</code></pre>
 
 	<p>
 		Sessions and the database survive rebuilds because they live in the volume, not
