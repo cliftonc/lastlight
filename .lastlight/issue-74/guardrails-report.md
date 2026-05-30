@@ -1,9 +1,22 @@
 # Guardrails report
 
-Status: READY
+Status: BLOCKED (aborting build)
 
-Test / lint / typecheck commands:
+Test framework:
+- Runner: Vitest
+- Command: `npm test` (alias for `vitest run`)
+- Status: PASSED — all 28 test files (473 tests, 1 todo) completed successfully.
 
-- Tests: `npx vitest run` (from repo root) — passes (27 test files, 468 tests incl. 1 todo).
-- Lint: No npm script defined. `npm run lint` fails with `Missing script: "lint"`. No obvious alternative lint command in root package.json.
-- Typecheck: No npm script defined. `npm run typecheck` fails with `Missing script: "typecheck"`. Project uses TypeScript (`tsconfig.json` present), but there is no dedicated typecheck script; if needed, use `npx tsc -p tsconfig.json` manually.
+Linting:
+- No lint script defined in `package.json`.
+- Command tried: `npm run lint`
+- Status: BROKEN — fails with `Missing script: "lint"`.
+
+Type checking:
+- No root typecheck script defined in `package.json`.
+- Command tried: `npm run typecheck`
+- Status: BROKEN — fails with `Missing script: "typecheck"`.
+
+Summary:
+- Usable test command: **yes** → `npm test`
+- Project-level lint and typecheck commands: **absent**, so cannot be run via npm scripts.

@@ -1,9 +1,9 @@
 # Build status
-- issue: cliftonc/lastlight#74 — Add a truncateMiddle(text, max) string helper with tests
+- issue: cliftonc/lastlight#74 — Test function
 - branch: lastlight/issue-74
-- current_phase: pr_created
-- guardrails_ready: true
-- approved: true
+- current_phase: guardrails
+- guardrails_ready: false
+- approved: false
 - review_cycles: 0
-- last_verdict: APPROVE
-- pull_request: https://github.com/cliftonc/lastlight/pull/75
+- last_verdict: pending
+- aborted: Guardrails BLOCKED — no usable test framework. See guardrails-report.md.
