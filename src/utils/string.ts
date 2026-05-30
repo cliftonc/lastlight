@@ -1,3 +1,11 @@
+/**
+ * Truncate a string in the middle so the result is at most `max` characters.
+ *
+ * - `max <= 0` → empty string
+ * - `max === 1` → first character of `text`
+ * - otherwise the result keeps a prefix and suffix of the original string
+ *   separated by a single ellipsis character (…)
+ */
 export function truncateMiddle(text: string, max: number): string {
   if (max <= 0) return "";
   if (text.length <= max) return text;
@@ -5,9 +13,6 @@ export function truncateMiddle(text: string, max: number): string {
 
   const ellipsis = "…";
   const remaining = max - ellipsis.length;
-  if (remaining <= 0) {
-    return ellipsis;
-  }
 
   const prefixLength = Math.ceil(remaining / 2);
   const suffixLength = Math.floor(remaining / 2);

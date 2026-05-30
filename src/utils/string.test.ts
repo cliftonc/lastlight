@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { truncateMiddle } from "./string.js";
+import { truncateMiddle } from "./string";
 
 describe("truncateMiddle", () => {
   it("returns the original string when shorter than max", () => {
@@ -16,7 +16,7 @@ describe("truncateMiddle", () => {
     const max = 10;
     const result = truncateMiddle(text, max);
 
-    expect(result.length).toBeLessThanOrEqual(max);
+    expect(result.length).toBe(max);
     expect(result).toContain("…");
 
     const [start, end] = result.split("…");
