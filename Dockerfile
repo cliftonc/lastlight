@@ -56,7 +56,7 @@ RUN chown lastlight:lastlight /app
 # State directory — mount as Docker volume
 # Entrypoint handles chown on /app/data at runtime
 RUN mkdir -p /app/data/sessions /app/data/logs
-VOLUME ["/app/data", "/app/secrets"]
+VOLUME ["/app/data"]
 
 ENV STATE_DIR=/app/data
 ENV LASTLIGHT_SESSIONS_DIR=/app/data/agent-sessions
