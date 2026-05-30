@@ -23,6 +23,7 @@
     "@astrojs/check": "^0.9.9",
     "cheerio": "^1.2.0",
     "node-html-markdown": "^2.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.95.0"
   }
 }
