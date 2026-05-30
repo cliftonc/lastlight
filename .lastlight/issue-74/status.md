@@ -1,7 +1,7 @@
 # Build status
 - issue: cliftonc/lastlight#74 — Add a truncateMiddle(text, max) string helper with tests
 - branch: lastlight/issue-74
-- current_phase: guardrails
+- current_phase: architect
 - guardrails_ready: true
 - approved: false
 - review_cycles: 0
