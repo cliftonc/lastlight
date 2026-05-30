@@ -15,6 +15,9 @@ import {
   mkdirSync,
   chmodSync,
   copyFileSync,
+  symlinkSync,
+  lstatSync,
+  unlinkSync,
 } from "node:fs";
 import { resolve, join } from "node:path";
 import { execSync } from "node:child_process";
@@ -213,6 +216,45 @@ const OVERLAY_GITIGNORE = [
   "*.pem",
   "",
 ].join("\n");
+
+/** Compose override (overlay): disable Caddy when the operator opts out of its TLS. */
+export const CADDY_DISABLED_OVERRIDE = [
+  "# Deployment compose override — version-controlled in the overlay (instance/).",
+  "# Symlinked into the project dir as ./docker-compose.override.yml so",
+  "# `docker compose` auto-loads it on top of the repo's docker-compose.yml.",
+  "# This deployment opted out of Caddy TLS at setup time.",
+  "services:",
+  "  caddy:",
+  "    profiles:",
+  "      - disabled",
+  "",
+].join("\n");
+
+const OVERRIDE_FILE = "docker-compose.override.yml";
+
+/**
+ * Symlink the overlay's compose override into the project dir so plain
+ * `docker compose` auto-discovers it (Compose only auto-loads
+ * ./docker-compose.override.yml). No-op if the overlay has no override.
+ * Leaves a pre-existing regular file untouched.
+ */
+export function ensureOverrideSymlink(): void {
+  const target = join("instance", OVERRIDE_FILE);
+  if (!existsSync(target)) return;
+  let existing: ReturnType<typeof lstatSync> | undefined;
+  try {
+    existing = lstatSync(OVERRIDE_FILE);
+  } catch {
+    /* link absent */
+  }
+  if (existing && !existing.isSymbolicLink()) {
+    p.log.warn(`${OVERRIDE_FILE} already exists as a regular file — leaving it; not symlinking the overlay override.`);
+    return;
+  }
+  if (existing) unlinkSync(OVERRIDE_FILE);
+  symlinkSync(target, OVERRIDE_FILE);
+  p.log.success(dim(`${OVERRIDE_FILE}`) + " → " + dim(target));
+}
 
 // ── Clack helper — bail on cancel ───────────────────────────────────────────
 
@@ -653,6 +695,15 @@ function writeConfig(config: SetupConfig): void {
   if (!existsSync(join("instance", ".gitignore"))) {
     writeFileSync(join("instance", ".gitignore"), OVERLAY_GITIGNORE, { encoding: "utf8" });
   }
+
+  // Opted out of Caddy → disable it via an overlay compose override.
+  const overlayOverride = join("instance", OVERRIDE_FILE);
+  if (!config.useCaddy && !existsSync(overlayOverride)) {
+    writeFileSync(overlayOverride, CADDY_DISABLED_OVERRIDE, { encoding: "utf8" });
+  }
+  // Symlink the overlay override (generated above, or pre-existing from a
+  // cloned overlay) into the project dir so `docker compose` auto-loads it.
+  ensureOverrideSymlink();
 
   p.log.success(
     dim("instance/secrets/app.pem") + " copied " + dim("(mode 600)") + "\n" +

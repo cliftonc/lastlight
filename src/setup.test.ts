@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { writeFileSync, mkdirSync, mkdtempSync, lstatSync, readlinkSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -13,6 +13,8 @@ import {
   buildEnvContent,
   buildOverlayConfig,
   parseManagedRepos,
+  ensureOverrideSymlink,
+  CADDY_DISABLED_OVERRIDE,
 } from "./setup.js";
 import type { SetupConfig } from "./setup.js";
 
@@ -297,5 +299,47 @@ describe("buildOverlayConfig", () => {
   it("emits an empty list when no repos are given", () => {
     const yaml = buildOverlayConfig(cfg([]));
     expect(yaml).toMatch(/managedRepos:\n\s+\[\]/);
+  });
+});
+
+describe("CADDY_DISABLED_OVERRIDE", () => {
+  it("disables the caddy service via a profile", () => {
+    expect(CADDY_DISABLED_OVERRIDE).toMatch(/caddy:/);
+    expect(CADDY_DISABLED_OVERRIDE).toMatch(/profiles:\s*\n\s+- disabled/);
+  });
+});
+
+describe("ensureOverrideSymlink", () => {
+  let dir: string;
+  let cwd: string;
+  beforeEach(() => {
+    cwd = process.cwd();
+    dir = mkdtempSync(join(tmpdir(), "lastlight-override-"));
+    process.chdir(dir);
+    mkdirSync("instance");
+  });
+  afterEach(() => {
+    process.chdir(cwd);
+  });
+
+  it("symlinks the overlay override into the project dir when it exists", () => {
+    writeFileSync(join("instance", "docker-compose.override.yml"), "services: {}\n");
+    ensureOverrideSymlink();
+    const st = lstatSync("docker-compose.override.yml");
+    expect(st.isSymbolicLink()).toBe(true);
+    expect(readlinkSync("docker-compose.override.yml")).toBe(join("instance", "docker-compose.override.yml"));
+  });
+
+  it("is a no-op when the overlay has no override", () => {
+    ensureOverrideSymlink();
+    expect(existsSync("docker-compose.override.yml")).toBe(false);
+  });
+
+  it("leaves a pre-existing regular file untouched", () => {
+    writeFileSync(join("instance", "docker-compose.override.yml"), "services: {}\n");
+    writeFileSync("docker-compose.override.yml", "# real file\n");
+    ensureOverrideSymlink();
+    expect(lstatSync("docker-compose.override.yml").isSymbolicLink()).toBe(false);
+    expect(readFileSync("docker-compose.override.yml", "utf8")).toContain("# real file");
   });
 });
