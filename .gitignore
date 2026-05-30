@@ -8,6 +8,10 @@ config.yaml
 .gh-token
 .gitconfig-bot
 
+# Private deployment overlay (separate repo cloned here on prod; holds
+# overlay config.yaml + asset overrides + a gitignored secrets/ subdir)
+instance/
+
 # Runtime state
 sessions/
 logs/

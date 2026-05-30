@@ -54,7 +54,11 @@ shim is `src/engine/opencode-shim.ts`.
 src/
   index.ts              Main entry — wires connectors, boots opencode
                         serve, starts the cron scheduler and admin dashboard.
-  config.ts             Env parsing (ports, models, MCP config, GitHub App).
+  config.ts             Layered config load: config/default.yaml +
+                        optional $LASTLIGHT_OVERLAY_DIR/config.yaml + env
+                        overrides. Secrets stay env-only. Exposes
+                        getRuntimeConfig / getManagedRepos / getRoutes /
+                        getPublicConfig.
   cli.ts                Thin client that POSTs to a running server.
   connectors/           Platform abstraction — every event source emits an
                         EventEnvelope so the engine never sees raw payloads.
@@ -185,6 +189,23 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
 - **Workflow** — a YAML file listing phases. The runner knows nothing about
   "build" vs "triage" — it just executes phases in order (or as a DAG). See
   `src/workflows/CLAUDE.md`.
+- **Configuration & deployment overlay** (`src/config.ts`, `config/default.yaml`,
+  issue #61) — non-secret config (managed repos, routes, models, variants,
+  approvals, disables) is loaded at startup from the packaged
+  `config/default.yaml`, then an optional `$LASTLIGHT_OVERLAY_DIR/config.yaml`
+  is layered on, then legacy env vars override. Maps deep-merge; arrays
+  (`managedRepos`, `disabled.*`) replace; secrets stay env-only. The same
+  `LASTLIGHT_OVERLAY_DIR` root also overlays assets — `workflows/`,
+  `workflows/prompts/`, `skills/`, `agent-context/` — resolved layer-aware by
+  `src/workflows/loader.ts` (overlay wins by logical name; built-ins are the
+  fallback). The public `config/default.yaml` ships an **empty** `managedRepos`
+  list and no private values; `src/managed-repos.ts` reads the effective list
+  via `getManagedRepos()` (runtime config, not a baked constant). In the
+  docker-compose stack the deployment folder is **`instance/`** (mounted
+  read-only at `/app/instance`), holding `config.yaml` + asset overrides + a
+  gitignored `secrets/` subdir (`.env`, `*.pem`). It's never baked into the
+  image — edit it and `docker compose restart agent` to apply, no rebuild. The
+  dashboard `/config` endpoint surfaces Default / Overlay / Merged (non-secret).
 - **Two execution modes**:
   - **Sandbox** — workflow phases run inside a Docker sandbox
     (`src/sandbox`) with a minted per-run GitHub token. Each phase invokes
@@ -356,6 +377,10 @@ Models:
 Runtime:
 
 - `PORT` — webhook listener port (default 8644)
+- `LASTLIGHT_OVERLAY_DIR` — trusted deployment overlay root (docker-compose
+  mounts `instance/` here as `/app/instance`). Layered over
+  `config/default.yaml` for config + assets; secrets read from its `secrets/`
+  subdir. Read at startup — restart to apply.
 - `STATE_DIR` — persistent state dir (default `./data`)
 - `DB_PATH` — override SQLite path
 - `OPENCODE_HOME_DIR` — override dashboard session-jsonl root

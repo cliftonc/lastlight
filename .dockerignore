@@ -2,6 +2,7 @@
 .env
 *.pem
 secrets/
+instance/
 .gh-token
 .github-token-cache.json
 auth.json

@@ -11,6 +11,8 @@ import {
   isSlackBotToken,
   isSlackAppToken,
   buildEnvContent,
+  buildOverlayConfig,
+  parseManagedRepos,
 } from "./setup.js";
 import type { SetupConfig } from "./setup.js";
 
@@ -162,6 +164,7 @@ describe("buildEnvContent", () => {
     OPENAI_API_KEY: "sk-test-openai",
     useCaddy: true,
     pemSourcePath: "/tmp/app.pem",
+    managedRepos: [],
   };
 
   it("contains all required key=value pairs", () => {
@@ -174,9 +177,8 @@ describe("buildEnvContent", () => {
     expect(content).toContain("LASTLIGHT_MODEL=openai/gpt-5.3-codex");
     expect(content).toContain("OPENAI_API_KEY=sk-test-openai");
     expect(content).not.toMatch(/^ANTHROPIC_API_KEY=/m);
-    expect(content).toContain(
-      "GITHUB_APP_PRIVATE_KEY_PATH=./secrets/app.pem"
-    );
+    expect(content).toContain("GITHUB_APP_PRIVATE_KEY_PATH=./app.pem");
+    expect(content).toContain("LASTLIGHT_OVERLAY_DIR=/app/instance");
   });
 
   it("writes ANTHROPIC_API_KEY only when an anthropic model is chosen", () => {
@@ -251,5 +253,49 @@ describe("buildEnvContent", () => {
     const content = buildEnvContent(baseConfig);
     expect(typeof content).toBe("string");
     expect(content.length).toBeGreaterThan(0);
+  });
+});
+
+describe("parseManagedRepos", () => {
+  it("splits on spaces, commas, and newlines and dedupes", () => {
+    expect(parseManagedRepos("acme/one, acme/two acme/one\nacme/three")).toEqual([
+      "acme/one",
+      "acme/two",
+      "acme/three",
+    ]);
+  });
+
+  it("drops malformed tokens (not owner/repo)", () => {
+    expect(parseManagedRepos("acme/one notarepo a/b/c  /x  y/")).toEqual(["acme/one"]);
+  });
+
+  it("returns an empty array for blank input", () => {
+    expect(parseManagedRepos("   ")).toEqual([]);
+  });
+});
+
+describe("buildOverlayConfig", () => {
+  const cfg = (managedRepos: string[]): SetupConfig => ({
+    GITHUB_APP_ID: "1",
+    GITHUB_APP_INSTALLATION_ID: "2",
+    WEBHOOK_SECRET: "w",
+    ADMIN_SECRET: "a",
+    DOMAIN: "d.example.com",
+    LASTLIGHT_MODEL: "anthropic/claude-sonnet-4-6",
+    useCaddy: true,
+    pemSourcePath: "/tmp/app.pem",
+    managedRepos,
+  });
+
+  it("lists each managed repo under managedRepos:", () => {
+    const yaml = buildOverlayConfig(cfg(["acme/one", "acme/two"]));
+    expect(yaml).toContain("managedRepos:");
+    expect(yaml).toContain("  - acme/one");
+    expect(yaml).toContain("  - acme/two");
+  });
+
+  it("emits an empty list when no repos are given", () => {
+    const yaml = buildOverlayConfig(cfg([]));
+    expect(yaml).toMatch(/managedRepos:\n\s+\[\]/);
   });
 });

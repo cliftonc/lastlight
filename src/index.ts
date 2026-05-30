@@ -5,6 +5,7 @@ import { loadConfig, resolveModel, resolveVariant } from "./config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
 import { routeEvent } from "./engine/router.js";
 import { CHAT_SYSTEM_SUFFIX, handleChatMessage, loadAgentContext } from "./engine/chat.js";
+import { configureWorkflowAssets, validateAssets } from "./workflows/loader.js";
 import { ChatRunner } from "./engine/chat-runner.js";
 import { buildReadSkillTool, loadChatSkillCatalogue } from "./engine/chat-skills.js";
 import { configureGitAuth } from "./engine/git-auth.js";
@@ -62,8 +63,24 @@ async function main() {
   console.log("Last Light v2.0 — Agent SDK Harness");
   console.log("====================================");
 
-  // Load and validate config before starting anything
-  const config = loadConfig();
+  // Load and validate config + overlay assets before starting anything. These
+  // throw on a broken/empty overlay, a cron targeting a missing workflow, or a
+  // phase whose prompt/skill can't resolve — all unfixable by a restart, so we
+  // exit 78 (EX_CONFIG) to stop Docker's restart policy from looping.
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig();
+    configureWorkflowAssets({
+      builtInRoot: config.builtInRoot,
+      overlayRoot: config.overlayDir,
+      disabled: config.disabled,
+    });
+    validateAssets(config.routes);
+  } catch (err: unknown) {
+    console.error(`\n[startup] FATAL: ${(err as Error).message}`);
+    console.error("[startup] Fix your config/overlay and restart.\n");
+    process.exit(78); // EX_CONFIG — sysexits.h convention
+  }
   validateConfig(config);
 
   console.log(`[config] Port: ${config.port}, Model: ${config.model}`);
@@ -458,6 +475,7 @@ async function main() {
       sessionsDir: config.sessionsDir,
       adminPassword: process.env.ADMIN_PASSWORD ?? "",
       adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
+      publicConfig: config.publicConfig,
       slackOAuthClientId: process.env.SLACK_OAUTH_CLIENT_ID,
       slackOAuthClientSecret: process.env.SLACK_OAUTH_CLIENT_SECRET,
       slackOAuthRedirectUri: process.env.SLACK_OAUTH_REDIRECT_URI,
@@ -589,6 +607,11 @@ async function main() {
     }
 
     const { skill, context } = route;
+    const routeKey = typeof context._routeKey === "string" ? context._routeKey : undefined;
+    const workflowContext = () => {
+      const { _routeKey: _ignored, ...rest } = context;
+      return rest;
+    };
 
     // Chat messages: handle directly (no sandbox, low latency)
     if (skill === "chat") {
@@ -702,7 +725,7 @@ async function main() {
     }
 
     // PR fix: lightweight fix-and-push, no full build cycle
-    if (skill === "pr-fix" && context.prNumber && context.repo) {
+    if ((routeKey === "github.pr_fix" || skill === "pr-fix") && context.prNumber && context.repo) {
       const repoStr = context.repo as string;
       const [owner, repo] = repoStr.includes("/") ? repoStr.split("/") : ["", repoStr];
       const prNumber = context.prNumber as number;
@@ -741,7 +764,7 @@ async function main() {
         ? `CI FAILURES (from GitHub Actions — fix these first):\n${failedChecks}`
         : "";
 
-      dispatchWorkflow("pr-fix", {
+      dispatchWorkflow(skill, {
         repo: repoStr,
         prNumber,
         title: prTitle,
@@ -909,7 +932,7 @@ async function main() {
     }
 
     // Build requests: route to the programmatic orchestrator instead of the SKILL.md
-    if (skill === "github-orchestrator" && context.issueNumber && context.repo) {
+    if ((routeKey === "github.issue_build" || routeKey === "slack.build" || skill === "github-orchestrator") && context.issueNumber && context.repo) {
       const repoStr = context.repo as string;
       const [owner, repo] = repoStr.includes("/") ? repoStr.split("/") : ["", repoStr];
       const issueNumber = context.issueNumber as number;
@@ -966,7 +989,8 @@ async function main() {
         }
       }
 
-      dispatchWorkflow("build", {
+      const buildWorkflow = skill === "github-orchestrator" ? "build" : skill;
+      dispatchWorkflow(buildWorkflow, {
         repo: repoStr,
         issueNumber,
         title: issueTitle || `Issue #${issueNumber}`,
@@ -1013,7 +1037,7 @@ async function main() {
           console.warn(`[event] failed to post run-start ack: ${m}`);
         }
       };
-      dispatchWorkflow(skill, { ...context, _triggerType: "chat" }, onRunStart).then(async (result) => {
+      dispatchWorkflow(skill, { ...workflowContext(), _triggerType: "chat" }, onRunStart).then(async (result) => {
         if (result.paused) {
           // Workflow paused at a gate (approval or reply) — don't say
           // "completed", the workflow itself already posted instructions.
@@ -1047,7 +1071,7 @@ async function main() {
     const wantReviewCheck =
       config.reviewPostsCheck &&
       isPrReviewEvent &&
-      skill === "pr-review" &&
+      (routeKey === "github.pr_opened" || routeKey === "github.pr_synchronize" || routeKey === "github.pr_reopened" || skill === "pr-review") &&
       !!github &&
       !!envelope.repo &&
       typeof envelope.prNumber === "number";
@@ -1083,7 +1107,7 @@ async function main() {
       }
     }
 
-    const workflowPromise = dispatchWorkflow(skill, { ...context, _triggerType: "webhook" });
+    const workflowPromise = dispatchWorkflow(skill, { ...workflowContext(), _triggerType: "webhook" });
 
     if (prCheckRunId !== undefined) {
       // Capture local copies so the closure doesn't depend on the loop

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EventEnvelope } from '../connectors/types.js';
 
 // Mock the classifier and screener before importing router
@@ -16,9 +16,19 @@ vi.mock('./screen.js', async () => {
 import { routeEvent } from './router.js';
 import { classifyComment } from './classifier.js';
 import { screenForInjection } from './screen.js';
+import { setRuntimeConfig, resetRuntimeConfigForTests, type LastLightConfig } from '../config.js';
 
 const mockClassifyComment = vi.mocked(classifyComment);
 const mockScreen = vi.mocked(screenForInjection);
+
+// The router gates on managed repos via runtime config (config/default.yaml ships
+// an empty list). Register the repos these tests target so they're in scope.
+beforeEach(() => {
+  setRuntimeConfig({
+    managedRepos: ['cliftonc/drizzle-cube', 'cliftonc/drizby', 'cliftonc/lastlight'],
+  } as unknown as LastLightConfig);
+});
+afterEach(() => resetRuntimeConfigForTests());
 
 /** Helper: build a minimal EventEnvelope */
 function makeEnvelope(overrides: Partial<EventEnvelope>): EventEnvelope {
@@ -63,6 +73,7 @@ describe('routeEvent — PR events', () => {
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('pr-review');
+      expect(result.context._routeKey).toBe('github.pr_opened');
     }
   });
 
@@ -71,6 +82,7 @@ describe('routeEvent — PR events', () => {
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('pr-review');
+      expect(result.context._routeKey).toBe('github.pr_synchronize');
     }
   });
 
@@ -134,6 +146,7 @@ describe('routeEvent — comment.created', () => {
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('github-orchestrator');
+      expect(result.context._routeKey).toBe('github.issue_build');
     }
   });
 
@@ -162,6 +175,7 @@ describe('routeEvent — comment.created', () => {
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('pr-fix');
+      expect(result.context._routeKey).toBe('github.pr_fix');
     }
   });
 
@@ -262,6 +276,7 @@ describe('routeEvent — message events (classifier-driven)', () => {
     expect(result.action).toBe('skill');
     if (result.action === 'skill') {
       expect(result.skill).toBe('github-orchestrator');
+      expect(result.context._routeKey).toBe('slack.build');
       expect(result.context.repo).toBe('cliftonc/drizzle-cube');
       expect(result.context.issueNumber).toBe(42);
     }
