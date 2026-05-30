@@ -8,11 +8,24 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     volumes:
-      - ./secrets:/app/secrets:ro
+      # Single private deployment folder: overlay config.yaml + asset overrides
+      # plus a gitignored secrets/ subdir (.env, *.pem). LASTLIGHT_OVERLAY_DIR
+      # points the harness at /app/instance; the entrypoint reads secrets from
+      # /app/instance/secrets. This is the only deployment-specific input, and
+      # the harness reads it at startup — edit it and `docker compose restart
+      # agent` to apply, no image rebuild. Built-in assets (config/, workflows/,
+      # skills/, agent-context/) stay baked into the image; they're lastlight
+      # source and change via a normal rebuild.
+      - ./instance:/app/instance:ro
       - agent-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock   # spawn sandbox containers
+    # Env comes from the consolidated overlay (instance/secrets/.env). The
+    # entrypoint also sources it inside the container; this env_file is the
+    # belt-and-suspenders copy. required: false so a fresh checkout (no
+    # instance/ yet) doesn't error. No repo-root .env is needed.
     env_file:
-      - .env
+      - path: ./instance/secrets/.env
+        required: false
     environment:
       # V8's default old-space cap (~1.5 GB on 64-bit) is well below the 2g
       # cgroup limit, so Node would OOM before docker did. Raise it close to
@@ -137,8 +150,12 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    environment:
-      - DOMAIN=${DOMAIN:-localhost}
+    # Caddyfile uses `{$DOMAIN:localhost}` (Caddy's own env substitution), so
+    # DOMAIN just needs to be in the container env. Read it from the overlay
+    # secrets file directly — no repo-root .env / ${DOMAIN} interpolation.
+    env_file:
+      - path: ./instance/secrets/.env
+        required: false
     # Caddy's memory footprint is tiny (typically <50 MB even under load).
     mem_limit: 256m
     memswap_limit: 256m

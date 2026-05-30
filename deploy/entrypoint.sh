@@ -3,7 +3,10 @@
 # Links secrets, ensures state dirs, then starts the harness.
 set -euo pipefail
 
-SECRETS="/app/secrets"
+# Secrets live in the consolidated deployment folder (instance/secrets). Fall
+# back to the legacy standalone secrets/ mount for pre-migration deployments.
+SECRETS="/app/instance/secrets"
+[ -d "$SECRETS" ] || SECRETS="/app/secrets"
 APP_DIR="/app"
 STATE_DIR="${STATE_DIR:-/app/data}"
 

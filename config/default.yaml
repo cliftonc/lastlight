@@ -1,7 +1,7 @@
-managedRepos:
-  - cliftonc/drizzle-cube
-  - cliftonc/drizby
-  - cliftonc/lastlight
+# Repositories Last Light manages. Empty by default — set the real list in your
+# private overlay ($LASTLIGHT_OVERLAY_DIR/config.yaml), which replaces this list
+# wholesale. Webhooks for repos not listed here are filtered at the connector level.
+managedRepos: []
 
 models:
   default: anthropic/claude-sonnet-4-6

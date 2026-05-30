@@ -1,31 +1,36 @@
-import { describe, it, expect } from 'vitest';
-import { isManagedRepo, MANAGED_REPOS } from './managed-repos.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { isManagedRepo, getManagedRepos, DEFAULT_MANAGED_REPOS } from './managed-repos.js';
+import { setRuntimeConfig, resetRuntimeConfigForTests, type LastLightConfig } from './config.js';
 
-describe('MANAGED_REPOS', () => {
-  it('contains cliftonc/drizzle-cube', () => {
-    expect(MANAGED_REPOS).toContain('cliftonc/drizzle-cube');
-  });
+function configWithRepos(repos: string[]): LastLightConfig {
+  return { managedRepos: repos } as unknown as LastLightConfig;
+}
 
-  it('contains cliftonc/drizby', () => {
-    expect(MANAGED_REPOS).toContain('cliftonc/drizby');
-  });
-
-  it('contains cliftonc/lastlight', () => {
-    expect(MANAGED_REPOS).toContain('cliftonc/lastlight');
+describe('DEFAULT_MANAGED_REPOS', () => {
+  it('is empty so no deployment-specific repos are baked into the source', () => {
+    expect(DEFAULT_MANAGED_REPOS).toEqual([]);
   });
 });
 
-describe('isManagedRepo', () => {
-  it('returns true for a managed repo', () => {
-    expect(isManagedRepo('cliftonc/drizzle-cube')).toBe(true);
+describe('getManagedRepos / isManagedRepo', () => {
+  afterEach(() => resetRuntimeConfigForTests());
+
+  it('reflects the repos in the loaded runtime config', () => {
+    setRuntimeConfig(configWithRepos(['acme/one', 'acme/two']));
+    expect(getManagedRepos()).toEqual(['acme/one', 'acme/two']);
+    expect(isManagedRepo('acme/one')).toBe(true);
+    expect(isManagedRepo('acme/two')).toBe(true);
   });
 
-  it('returns true for another managed repo', () => {
-    expect(isManagedRepo('cliftonc/drizby')).toBe(true);
-  });
-
-  it('returns false for an unknown repo', () => {
+  it('returns false for an unmanaged repo', () => {
+    setRuntimeConfig(configWithRepos(['acme/one']));
     expect(isManagedRepo('unknown/repo')).toBe(false);
+  });
+
+  it('falls back to the (empty) default when no runtime config is loaded', () => {
+    resetRuntimeConfigForTests();
+    expect(getManagedRepos()).toEqual([]);
+    expect(isManagedRepo('acme/one')).toBe(false);
   });
 
   it('returns false for undefined', () => {

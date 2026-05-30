@@ -25,7 +25,8 @@ describe("loadConfig overlay", () => {
 
   it("loads managed repos, routes, and public defaults from config/default.yaml", () => {
     const cfg = loadConfig();
-    expect(cfg.managedRepos).toContain("cliftonc/lastlight");
+    // Public default ships with no managed repos — the real list comes from the overlay.
+    expect(cfg.managedRepos).toEqual([]);
     expect(cfg.routes.github.issue_opened).toBe("issue-triage");
     expect(getPublicConfig().merged).not.toHaveProperty("githubApp");
   });

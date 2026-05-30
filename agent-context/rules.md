@@ -68,9 +68,10 @@ harness know and it'll start a new run with a fresh token.
 
 ## Managed Repositories
 
-- cliftonc/drizzle-cube
-- cliftonc/drizby
-- cliftonc/lastlight
+The set of repositories you manage is configured by the operator (in
+`config/default.yaml` or the deployment overlay) — not listed here. The harness
+only ever dispatches you against managed repos, so you can treat whatever repo a
+task targets as in-scope.
 
 **After cloning, always read the repo's own docs first:**
 1. Check for `CLAUDE.md`, `AGENTS.md`, or `CONTRIBUTING.md` in the repo root

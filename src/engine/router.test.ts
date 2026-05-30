@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EventEnvelope } from '../connectors/types.js';
 
 // Mock the classifier and screener before importing router
@@ -16,9 +16,19 @@ vi.mock('./screen.js', async () => {
 import { routeEvent } from './router.js';
 import { classifyComment } from './classifier.js';
 import { screenForInjection } from './screen.js';
+import { setRuntimeConfig, resetRuntimeConfigForTests, type LastLightConfig } from '../config.js';
 
 const mockClassifyComment = vi.mocked(classifyComment);
 const mockScreen = vi.mocked(screenForInjection);
+
+// The router gates on managed repos via runtime config (config/default.yaml ships
+// an empty list). Register the repos these tests target so they're in scope.
+beforeEach(() => {
+  setRuntimeConfig({
+    managedRepos: ['cliftonc/drizzle-cube', 'cliftonc/drizby', 'cliftonc/lastlight'],
+  } as unknown as LastLightConfig);
+});
+afterEach(() => resetRuntimeConfigForTests());
 
 /** Helper: build a minimal EventEnvelope */
 function makeEnvelope(overrides: Partial<EventEnvelope>): EventEnvelope {

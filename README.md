@@ -24,14 +24,21 @@ npx lastlight setup
 The setup wizard walks you through:
 
 1. **GitHub App** — enter your App ID, Installation ID, and PEM key path
-2. **Provider API key** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `OPENROUTER_API_KEY`,
+2. **Domain & TLS** — optional Caddy config for automatic HTTPS
+3. **Managed repositories** — the `owner/repo` list the bot operates on
+4. **Provider API key** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `OPENROUTER_API_KEY`,
    whichever your `LASTLIGHT_MODEL` points at
-3. **Webhook secret** — auto-generated if you don't have one
-4. **Domain & TLS** — optional Caddy config for automatic HTTPS
-5. **Slack** — optional bot token and app token for Slack integration
-6. **Admin dashboard** — optional password protection
+5. **Webhook secret** — auto-generated if you don't have one
+6. **Slack** — optional bot token and app token for Slack integration
+7. **Admin dashboard** — optional password protection
 
-It writes `.env`, copies your PEM into the secrets directory, then offers to build and start the Docker stack. When it's done you have a running instance ready to receive webhooks.
+It scaffolds your private **deployment overlay** at `instance/` — writing
+`instance/config.yaml` (your managed repos), `instance/secrets/.env`, and copying
+your PEM to `instance/secrets/app.pem` (mode 600) — then offers to build and start
+the Docker stack. When it's done you have a running instance ready to receive
+webhooks. Everything deployment-specific lives in `instance/`, which is mounted
+read-only and never baked into the image; edit it and `docker compose restart agent`
+to apply (no rebuild). See [Deployment overlay](#deployment-overlay) for the model.
 
 > **Requires:** Node.js 20+, Docker, and a GitHub App already created
 > (see [Create a GitHub App](#1-create-a-github-app) below).
@@ -164,25 +171,53 @@ docker compose up -d agent
 
 Set `LASTLIGHT_SANDBOX=docker` in your `.env`. (Inside the harness container, gondolin's QEMU path isn't available unless you do the nested-virt setup yourself — the docker-sandbox path is the practical default for Docker deployments.)
 
-### Secrets
+### Deployment overlay
 
-Create a `secrets/` directory with your GitHub App credentials:
+Everything specific to your deployment — managed repos, model/route/approval
+overrides, agent-context, secrets — lives in a single **`instance/`** folder
+next to `docker-compose.yml`. It's mounted read-only at `/app/instance`
+(`LASTLIGHT_OVERLAY_DIR=/app/instance`) and is **never committed to the public
+repo or baked into the image**, so it's the natural home for a private config
+repo.
 
-```bash
-mkdir -p secrets
-cp .env secrets/
-cp your-app.private-key.pem secrets/
+```text
+instance/
+  config.yaml            # overlay config — merged over the public config/default.yaml
+  agent-context/*.md     # (optional) persona/rules overrides, merged by filename
+  workflows/*.yaml       # (optional) add or replace workflows by logical name
+  skills/<name>/SKILL.md # (optional) skill overrides
+  secrets/               # host-only, gitignored: .env + GitHub App *.pem
+    .env
+    app.pem
 ```
 
-The entrypoint symlinks these into the container at startup. Your provider API key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`) belongs in `secrets/.env`.
+`npx lastlight setup` scaffolds this for you. To do it by hand (or to clone a
+private overlay repo into place):
+
+```bash
+mkdir -p instance/secrets
+cp deploy/.env.production.example instance/secrets/.env   # then fill it in
+cp your-app.private-key.pem instance/secrets/app.pem
+chmod 600 instance/secrets/.env instance/secrets/app.pem
+# instance/config.yaml — at minimum your managed repos:
+printf 'managedRepos:\n  - your-org/repo-one\n' > instance/config.yaml
+```
+
+Both the `agent` and `caddy` services read `instance/secrets/.env` via
+`env_file`, and the entrypoint also sources it inside the container — so **no
+repo-root `.env` is needed**. Merge rules: maps (`models`, `variants`, `routes`,
+`approval`) deep-merge over the public defaults; arrays (`managedRepos`,
+`disabled.*`) replace; environment variables override both. Overlay files are
+read at startup — edit and `docker compose restart agent` to apply, no rebuild.
+The dashboard **Config** tab shows Default / Overlay / Merged (non-secret) config.
 
 ### Expose Webhooks
 
-To receive GitHub webhooks, the server needs to be publicly reachable. The included Caddy config handles HTTPS:
+To receive GitHub webhooks, the server needs to be publicly reachable. The included Caddy config handles HTTPS — set `DOMAIN` in `instance/secrets/.env`:
 
 ```bash
-# Set your domain
-echo "DOMAIN=lastlight.example.com" >> .env
+# In instance/secrets/.env:
+#   DOMAIN=lastlight.example.com
 
 # Start both agent and caddy
 docker compose up -d
@@ -283,7 +318,7 @@ Legacy `OPENCODE_*` names are still read as fallbacks for the corresponding `LAS
 | `OPENAI_API_KEY` | One of | API key when using `openai/…` models |
 | `ANTHROPIC_API_KEY` | One of | API key when using `anthropic/…` models |
 | `OPENROUTER_API_KEY` | One of | API key when using `openrouter/…` models |
-| `LASTLIGHT_OVERLAY_DIR` | No | Trusted deployment overlay directory. Startup loads `config/default.yaml`, optional `$LASTLIGHT_OVERLAY_DIR/config.yaml`, then env overrides; overlay assets under `workflows/`, `workflows/prompts/`, `skills/`, and `agent-context/` replace built-ins. Restart required after changes. |
+| `LASTLIGHT_OVERLAY_DIR` | No | Trusted deployment overlay directory (the docker-compose stack mounts `instance/` here as `/app/instance`). Startup loads `config/default.yaml`, optional `$LASTLIGHT_OVERLAY_DIR/config.yaml`, then env overrides; overlay assets under `workflows/`, `workflows/prompts/`, `skills/`, and `agent-context/` replace built-ins. Secrets live in `$LASTLIGHT_OVERLAY_DIR/secrets/`. Restart required after changes. See [Deployment overlay](#deployment-overlay). |
 | `LASTLIGHT_MODEL` | No | Default model (default: `anthropic/claude-sonnet-4-6`). Legacy: `OPENCODE_MODEL`. |
 | `LASTLIGHT_MODELS` | No | Per-task model overrides as JSON, e.g. `{"chat":"openai/gpt-5.1-mini","architect":"openai/gpt-5.5"}`. Legacy: `OPENCODE_MODELS`. |
 | `LASTLIGHT_THINKING` | No | Reasoning-effort default (`off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh`). pi-ai translates per-provider. Legacy: `OPENCODE_VARIANT`. |
@@ -300,7 +335,8 @@ Legacy `OPENCODE_*` names are still read as fallbacks for the corresponding `LAS
 
 ### 3. Managed Repositories
 
-Managed repositories are configured in `config/default.yaml` or by replacing the list in `$LASTLIGHT_OVERLAY_DIR/config.yaml`:
+The public `config/default.yaml` ships an **empty** `managedRepos` list — set
+yours in the overlay (`instance/config.yaml`), which replaces the list wholesale:
 
 ```yaml
 managedRepos:
@@ -308,27 +344,35 @@ managedRepos:
   - your-org/repo-two
 ```
 
+Webhooks for repos not in this list are filtered at the connector level; Slack/CLI
+commands targeting unmanaged repos are rejected. Install the GitHub App on each.
+
 ### 4. Customize Behaviour
 
-Prefer a trusted overlay instead of editing packaged files. Example layout:
+Put deployment-specific changes in your overlay (`instance/`) instead of editing
+packaged files — that keeps your config out of the public repo and applies on a
+restart (no rebuild). See [Deployment overlay](#deployment-overlay) for the full
+model and layout.
 
 ```text
-/etc/lastlight/
+instance/
   config.yaml                 # non-secret config overrides only
   workflows/*.yaml            # add/replace workflows by logical `name`
   workflows/prompts/*.md      # prompt overrides/fallbacks
   skills/<name>/SKILL.md      # skill overrides/fallbacks
   agent-context/*.md          # merged by filename; overlay replaces built-ins
+  secrets/                    # host-only, gitignored: .env + *.pem
 ```
 
-Secrets stay in environment variables. The dashboard Config tab shows Default / Overlay / Merged non-secret config. Overlay files are read at startup only; restart after changes.
+The dashboard Config tab shows Default / Overlay / Merged non-secret config.
+Overlay files are read at startup only; `docker compose restart agent` after changes.
 
 | What | Where |
 |------|-------|
-| Managed repos, routes, models, variants, approvals, disables | `config/default.yaml` or overlay `config.yaml` |
-| Bot personality & communication style | `agent-context/soul.md` or overlay `agent-context/` |
-| Operational rules, review guidelines, triage rules | `agent-context/rules.md` or overlay `agent-context/` |
-| Skill definitions | `skills/*/SKILL.md` or overlay `skills/` |
+| Managed repos, routes, models, variants, approvals, disables | overlay `instance/config.yaml` (over `config/default.yaml`) |
+| Bot personality & communication style | `agent-context/soul.md` or overlay `instance/agent-context/` |
+| Operational rules, review guidelines, triage rules | `agent-context/rules.md` or overlay `instance/agent-context/` |
+| Skill definitions | `skills/*/SKILL.md` or overlay `instance/skills/` |
 | Workflow phases (Architect/Executor/Reviewer/PR) | `workflows/*.yaml` + `workflows/prompts/` or overlay equivalents |
 | Cron job schedules | `workflows/cron-*.yaml` or overlay workflows |
 
