@@ -1,7 +1,7 @@
 # Build status
 - issue: cliftonc/lastlight#74 — Test function
 - branch: lastlight/issue-74
-- current_phase: aborted
+- current_phase: guardrails
 - guardrails_ready: false
 - approved: false
 - review_cycles: 0

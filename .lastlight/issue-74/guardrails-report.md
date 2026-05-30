@@ -3,20 +3,18 @@
 Status: BLOCKED (aborting build)
 
 Test framework:
-- Runner: Vitest
-- Command: `npm test` (alias for `vitest run`)
-- Status: PASSED — all 28 test files (473 tests, 1 todo) completed successfully.
+- Intended runner: `vitest` via `npm test` (`"test": "vitest run"` in package.json).
+- Current status: `npm test` fails with `sh: vitest: command not found` because dependencies are not installed in this checkout.
+- To enable tests: run `npm install` once, then use:
+  - Test command: `npm test`
+  - Watch mode: `npm run test:watch`
 
 Linting:
-- No lint script defined in `package.json`.
-- Command tried: `npm run lint`
-- Status: BROKEN — fails with `Missing script: "lint"`.
+- No `lint` script in `package.json` (`npm run lint` fails: “Missing script: "lint"`).
+- Conclusion: No project-level lint command is configured.
 
 Type checking:
-- No root typecheck script defined in `package.json`.
-- Command tried: `npm run typecheck`
-- Status: BROKEN — fails with `Missing script: "typecheck"`.
-
-Summary:
-- Usable test command: **yes** → `npm test`
-- Project-level lint and typecheck commands: **absent**, so cannot be run via npm scripts.
+- No `typecheck` script in `package.json` (`npm run typecheck` fails: “Missing script: "typecheck"`).
+- There is a `build` script using `tsc`:
+  - Typecheck/build command: `npm run build`
+- `npm run build` was not executed in this pre-flight, but it is the correct command to run TypeScript checks.
