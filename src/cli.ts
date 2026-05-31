@@ -38,6 +38,7 @@ Usage:
   tsx src/cli.ts health <owner/repo>   Generate weekly health report
   tsx src/cli.ts build <github-url>    Run FULL build cycle (architect/executor/reviewer/PR)
   tsx src/cli.ts build <owner/repo#N>  Same, shorthand
+  tsx src/cli.ts hello <name>          Print a simple greeting (Hello <name>!)
 
 The default for a single issue reference is now TRIAGE, not build.
 Build cycles are expensive — opt in explicitly with the \`build\` subcommand.
@@ -81,6 +82,18 @@ async function main() {
   if (args[0] === "setup") {
     const { runSetup } = await import("./setup.js");
     await runSetup();
+    process.exit(0);
+  }
+
+  // Simple hello subcommand — prints a greeting and exits (no server needed)
+  if (args[0] === "hello") {
+    const { hello } = await import("./utils/hello.js");
+    const name = args[1];
+    if (!name) {
+      console.error("Usage: tsx src/cli.ts hello <name>");
+      process.exit(1);
+    }
+    hello(name);
     process.exit(0);
   }
 
