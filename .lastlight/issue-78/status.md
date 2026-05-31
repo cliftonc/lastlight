@@ -1,7 +1,7 @@
 # Build status
 - issue: cliftonc/lastlight#78 — 
 - branch: lastlight/issue-78-0146345f
-- current_phase: guardrails
+- current_phase: aborted
 - guardrails_ready: false
 - approved: false
 - review_cycles: 0
