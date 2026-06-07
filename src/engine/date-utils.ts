@@ -1,3 +1,5 @@
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Returns the number of full weeks between two dates.
  *
@@ -10,7 +12,6 @@
  * underlying JavaScript Date implementation.
  */
 export function getWeekDifference(a: Date, b: Date): number {
-  const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
   const diffMs = Math.abs(a.getTime() - b.getTime());
   return Math.floor(diffMs / MS_PER_WEEK);
 }
