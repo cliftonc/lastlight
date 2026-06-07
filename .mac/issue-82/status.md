@@ -1,8 +1,8 @@
 # Build status
 - issue: cliftonc/lastlight#82 — Week Difference
 - branch: mac/issue-82-34db68ed
-- current_phase: executor
+- current_phase: review_cycle_1
 - guardrails_ready: true
-- approved: true
+- approved: false
 - review_cycles: 0
-- last_verdict: pending
+- last_verdict: REQUEST_CHANGES
