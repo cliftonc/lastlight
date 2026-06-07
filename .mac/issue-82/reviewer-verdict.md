@@ -1,68 +1,61 @@
-# Reviewer verdict (cycle 1)
+# Reviewer verdict (cycle 2)
 
 Verdict: REQUEST_CHANGES
 
-The implementation is solid and matches most of the plan, but one important item from the architect’s spec is missing.
+### Critical
 
-## Critical
+1. **New utility is imported in `src/index.ts` but not exported**  
+   - File: `src/index.ts`  
+   - The plan calls for "re-export the new function so it’s readily available" and specifically suggests:
+     ```ts
+     export { getWeekDifference } from "./engine/date-utils";
+     ```
+   - The diff instead adds:
+     ```ts
+     import { getWeekDifference } from "./engine/date-utils.js";
+     ```
+     but never uses or re-exports `getWeekDifference`.
+   - This has two problems:
+     - A dead import in the main entry file.
+     - The function is not actually exposed from the public API as intended.
+   - Recommended fix:
+     - Remove the unused import and add a named export, e.g.:
+       ```ts
+       // Remove this line:
+       // import { getWeekDifference } from "./engine/date-utils.js";
 
-_None._
+       // Add near existing exports at the bottom of index.ts:
+       export { getWeekDifference } from "./engine/date-utils.js";
+       ```
+     - Or, if the project’s pattern is to aggregate exports in a specific block, follow the existing style but ensure it is a true export, not just an unused import.
 
-## Important (blocking)
+### Important
 
-1. **Utility is not re-exported from a central module**
+_No additional important issues beyond the above export problem._
 
-   The plan explicitly called for making this helper easy to reuse:
+### Suggestions
 
-   > “Export the utility from an appropriate shared module so it’s easy to reuse across the codebase.”  
-   > “If there is a central public API file (likely `src/index.ts` …), add a named export for the new function…”
-
-   The diff does not show any change to `src/index.ts` (or another central barrel). As-is, `getWeekDifference` exists only in `src/engine/date-utils.ts` and is not surfaced via a shared entry point, which partially violates the plan.
-
-   **Requested fix:** Add an appropriate named export, e.g.:
-
-   ```ts
-   // src/index.ts
-   export { getWeekDifference } from "./engine/date-utils.js";
-   ```
-
-   or via whatever central utilities barrel this repo uses, consistent with existing patterns.
-
-## Suggestions
-
-1. **Consider hoisting `MS_PER_WEEK` to module scope**
-
-   `src/engine/date-utils.ts:12-14`:
-
-   ```ts
-   export function getWeekDifference(a: Date, b: Date): number {
+1. **Consider marking `MS_PER_WEEK` as `export` if it’s useful for tests or other helpers**  
+   - File: `src/engine/date-utils.ts:1`  
+   - Currently:
+     ```ts
      const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
-     const diffMs = Math.abs(a.getTime() - b.getTime());
-   ```
+     ```
+   - This is fine as-is. If other date utilities ever need a week constant, exporting it could prevent duplication:
+     ```ts
+     export const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+     ```
+   - Not required for this issue, just a potential reuse improvement.
 
-   Since `MS_PER_WEEK` is a constant, you could define it once at module level to avoid reallocation and make it easier to reuse:
+2. **Align test helper visibility with future reuse needs**  
+   - File: `src/engine/date-utils.test.ts:4-6`  
+   - The `utcDate` helper is local to this test file. If other tests end up needing UTC-specific dates, you may eventually want to extract a shared test helper, but for now this is acceptable and keeps scope small.
 
-   ```ts
-   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+### Nits
 
-   export function getWeekDifference(a: Date, b: Date): number {
-     const diffMs = Math.abs(a.getTime() - b.getTime());
-     return Math.floor(diffMs / MS_PER_WEEK);
-   }
-   ```
+1. **Docstring tweak for clarity**  
+   - File: `src/engine/date-utils.ts:3-13`  
+   - The comment is already good. To match the plan’s language exactly, you might explicitly state "returns a non-negative integer number of whole weeks between two instants in time." This is purely editorial.
 
-2. **Minor JSDoc precision**
-
-   The comment in `src/engine/date-utils.ts:1-10` is clear and matches behavior. You might add one explicit sentence that it operates on “elapsed time” rather than calendar weeks to avoid any confusion for future readers, but this is optional.
-
-## Nits
-
-1. **Relative import extension in tests**
-
-   `src/engine/date-utils.test.ts:2`:
-
-   ```ts
-   import { getWeekDifference } from "./date-utils.js";
-   ```
-
-   If the project convention elsewhere is to import TypeScript files without `.js` (e.g., `./date-utils`), you may want to align with that. If the repo is consistently using `.js` extensions in TS source imports to support ESM with TS pathing, then this is fine as-is; just ensure it matches existing style.
+2. **Optional: add a brief inline note about internal vs public use**  
+   - If the maintainers ultimately decide not to expose this from `src/index.ts`, a short comment in `date-utils.ts` stating that it’s intended as an internal scheduling helper could help future contributors. This is dependent on project conventions.
