@@ -1,61 +1,41 @@
-# Reviewer verdict (cycle 2)
+# Reviewer verdict (cycle 3)
 
 Verdict: REQUEST_CHANGES
 
-### Critical
+**Critical / Important**
 
-1. **New utility is imported in `src/index.ts` but not exported**  
-   - File: `src/index.ts`  
-   - The plan calls for "re-export the new function so it’s readily available" and specifically suggests:
+1. **Missing barrel/public export (plan item 2 & 7)**  
+   - The plan explicitly calls for re-exporting the utility from a central module (likely `src/index.ts`) so it’s easily reusable.  
+   - The diff only adds `src/engine/date-utils.ts` and `src/engine/date-utils.test.ts`; there is no change to `src/index.ts` or any other barrel.  
+   - Without this, the function is not yet “wired up” per the plan, and its discoverability is reduced.  
+   - Please add a named export, e.g. in `src/index.ts`:
      ```ts
-     export { getWeekDifference } from "./engine/date-utils";
+     // src/index.ts
+     export { getWeekDifference } from "./engine/date-utils.js";
      ```
-   - The diff instead adds:
+     (Adjust the relative path / `.js` suffix to match existing exports style.)
+
+**Suggestions**
+
+1. **Minor DST test clarity** (`src/engine/date-utils.test.ts:43-63`)  
+   - The DST test is good and uses UTC correctly. It might be worth a brief comment that `beforeDst`/`afterDst` are created via `utcDate` and thus represent fixed instants, independent of local DST rules, just to reinforce why this is safe.
+
+2. **Optional type/generalization** (`src/engine/date-utils.ts:14`)  
+   - The plan mentioned optionally supporting `Date | string | number` via a normalizer. Current implementation sticks to `Date`, which is acceptable and keeps the scope tight.  
+   - If there’s a pattern in this repo for accepting broader date-like inputs, consider a small internal helper:
      ```ts
-     import { getWeekDifference } from "./engine/date-utils.js";
+     function toDate(d: Date | string | number): Date {
+       return d instanceof Date ? d : new Date(d);
+     }
      ```
-     but never uses or re-exports `getWeekDifference`.
-   - This has two problems:
-     - A dead import in the main entry file.
-     - The function is not actually exposed from the public API as intended.
-   - Recommended fix:
-     - Remove the unused import and add a named export, e.g.:
-       ```ts
-       // Remove this line:
-       // import { getWeekDifference } from "./engine/date-utils.js";
+     and adjust the signature accordingly. Not required by the plan, so this is optional.
 
-       // Add near existing exports at the bottom of index.ts:
-       export { getWeekDifference } from "./engine/date-utils.js";
-       ```
-     - Or, if the project’s pattern is to aggregate exports in a specific block, follow the existing style but ensure it is a true export, not just an unused import.
+3. **Exported constant vs. local constant** (`src/engine/date-utils.ts:1`)  
+   - `MS_PER_WEEK` is currently module-private. If you anticipate future helpers needing it (e.g., month/week utilities), you could export it, but the plan doesn’t require this. Leaving it internal is fine and keeps API surface small.
 
-### Important
+**Nits**
 
-_No additional important issues beyond the above export problem._
+1. **JSDoc wording** (`src/engine/date-utils.ts:3-12`)  
+   - The comment already aligns well with the plan. You could add a short note like “Returns 0 when `a` and `b` are less than one full week apart” to mirror the explicit behavior used in tests, but this is purely cosmetic.
 
-### Suggestions
-
-1. **Consider marking `MS_PER_WEEK` as `export` if it’s useful for tests or other helpers**  
-   - File: `src/engine/date-utils.ts:1`  
-   - Currently:
-     ```ts
-     const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
-     ```
-   - This is fine as-is. If other date utilities ever need a week constant, exporting it could prevent duplication:
-     ```ts
-     export const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
-     ```
-   - Not required for this issue, just a potential reuse improvement.
-
-2. **Align test helper visibility with future reuse needs**  
-   - File: `src/engine/date-utils.test.ts:4-6`  
-   - The `utcDate` helper is local to this test file. If other tests end up needing UTC-specific dates, you may eventually want to extract a shared test helper, but for now this is acceptable and keeps scope small.
-
-### Nits
-
-1. **Docstring tweak for clarity**  
-   - File: `src/engine/date-utils.ts:3-13`  
-   - The comment is already good. To match the plan’s language exactly, you might explicitly state "returns a non-negative integer number of whole weeks between two instants in time." This is purely editorial.
-
-2. **Optional: add a brief inline note about internal vs public use**  
-   - If the maintainers ultimately decide not to expose this from `src/index.ts`, a short comment in `date-utils.ts` stating that it’s intended as an internal scheduling helper could help future contributors. This is dependent on project conventions.
+Overall, implementation and tests match the core logic and edge cases from the plan; the main gap is the missing public/barrel export. Once that’s added, the change will fully conform to the architect’s plan.
