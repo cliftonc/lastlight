@@ -1,8 +1,8 @@
 # Build status
 - issue: cliftonc/lastlight#86 — Reverser
 - branch: mac/issue-86-105e3004
-- current_phase: architect
+- current_phase: executor
 - guardrails_ready: true
-- approved: false
+- approved: true
 - review_cycles: 0
 - last_verdict: pending

@@ -47,6 +47,7 @@ export const CHAT_SKILL_NAMES = [
   "issue-triage",
   "pr-review",
   "repo-health",
+  "reverser",
 ] as const;
 
 const SKILLS_ROOT = resolve("skills");
