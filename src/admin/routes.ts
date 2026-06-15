@@ -64,14 +64,35 @@ export interface AdminConfig {
  * Sessions are live if they were recently active (within 5 min) and a container
  * with a matching pattern is running.
  */
+/**
+ * A session is worth listing only if it actually produced something. A
+ * zero-message session is a run that died before writing any conversation
+ * (e.g. an aborted/duplicate task that left an empty jsonl behind) — it has
+ * nothing to render and previously surfaced as a phantom "live" row at the
+ * top of the list. Error-only runs still write an assistant error line, so
+ * they keep a non-zero count and remain visible.
+ */
+function hasContent(meta: SessionMeta): boolean {
+  return meta.message_count > 0;
+}
+
 function isSessionLive(meta: SessionMeta, liveTaskIds: Set<string | null>): boolean {
-  // A session is considered live if it has recent activity and no end marker
+  // Stale sessions are never live, regardless of containers.
   const lastActivity = meta.last_message_at ?? meta.started_at;
   const fiveMinAgo = Date.now() / 1000 - 300;
   if (lastActivity < fiveMinAgo) return false;
 
-  // Check if any running container's taskId appears related to this session
-  // Sessions don't directly map to taskIds, but recent + active = likely live
+  // Fallback-named sessions encode their taskId as `exec-<taskId>`, and that
+  // taskId is exactly what listRunningContainers parses from the sandbox
+  // container name — so we can match them precisely instead of guessing.
+  if (meta.id.startsWith("exec-")) {
+    return liveTaskIds.has(meta.id.slice("exec-".length));
+  }
+
+  // UUID-named sessions don't carry their taskId in the meta, so we can't map
+  // them to a specific container. Recent activity + at least one sandbox
+  // running (the caller gates on liveTaskIds being non-empty) is the best
+  // signal available — keeps live agent logs flowing for in-flight phases.
   return true;
 }
 
@@ -93,6 +114,7 @@ function mountSessionRoutes(app: Hono, sessions: SessionSource, prefix: string):
     const liveTaskIds = new Set(containers.map((c) => c.taskId).filter(Boolean));
     const valid = metas
       .filter((m): m is SessionMeta => m !== null)
+      .filter(hasContent)
       .sort((a, b) => b.started_at - a.started_at)
       .slice(0, limit)
       .map((m) => ({ ...m, live: liveTaskIds.size > 0 && isSessionLive(m, liveTaskIds) }));
@@ -120,6 +142,7 @@ function mountSessionRoutes(app: Hono, sessions: SessionSource, prefix: string):
         );
         const valid = metas
           .filter((m): m is SessionMeta => m !== null)
+          .filter(hasContent)
           .sort((a, b) => b.started_at - a.started_at)
           .slice(0, limit)
           .map((m) => ({ ...m, live: liveTaskIds.size > 0 && isSessionLive(m, liveTaskIds) }));

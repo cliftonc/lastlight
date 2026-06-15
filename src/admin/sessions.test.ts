@@ -60,6 +60,23 @@ describe("SessionReader.listSessionIds ordering", () => {
     expect(windowed[0]).toBe("todays-run");
   });
 
+  it("uses file mtime (not now) as started_at for an empty/timestamp-less file", async () => {
+    const mtime = 1_700_000_000_000; // fixed past instant
+    writeSession("-home-agent-workspace", "empty-run", mtime);
+    // Zero it out so there are no parseable timestamps inside.
+    const file = path.join(home, "projects", "-home-agent-workspace", "empty-run.jsonl");
+    fs.writeFileSync(file, "");
+    const t = new Date(mtime);
+    fs.utimesSync(file, t, t);
+
+    const reader = new SessionReader(home, "sandbox");
+    const meta = await reader.getSessionMeta("empty-run");
+    expect(meta).not.toBeNull();
+    // started_at should track the real mtime, not Date.now()
+    expect(meta!.started_at).toBeCloseTo(mtime / 1000, 0);
+    expect(meta!.message_count).toBe(0);
+  });
+
   it("excludes the -app (chat) project dir under the sandbox scope", () => {
     writeSession("-app", "chat-session", 9_000_000);
     writeSession("-home-agent-workspace", "sandbox-session", 1_000_000);

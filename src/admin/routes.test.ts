@@ -606,3 +606,50 @@ describe("POST /workflow-runs/:id/cancel", () => {
     expect(finishes.map((f) => f.id)).toEqual(["e1"]);
   });
 });
+
+describe("GET /sessions — content filter + liveness", () => {
+  const now = Date.now() / 1000;
+  const meta = (over: Record<string, unknown>) => ({
+    id: "x", source: "agent", sessionType: "agent", model: "m",
+    started_at: now, last_message_at: now, message_count: 5,
+    tool_call_count: 0, conversation_message_count: 5,
+    last_assistant_content: null, agentIds: [], ...over,
+  });
+
+  function appWith(metas: Array<Record<string, unknown>>) {
+    const sessions = {
+      ...mockSessions,
+      listSessionIds: vi.fn(() => metas.map((m) => m.id as string)),
+      getSessionMeta: vi.fn(async (id: string) => metas.find((m) => m.id === id) ?? null),
+    } as unknown as SessionReader;
+    return createAdminRoutes(mockDb, sessions, mockSessions, makeConfig({ adminPassword: "" }));
+  }
+
+  it("omits zero-message sessions (empty/aborted runs left behind)", async () => {
+    const dockerMod = await import("./docker.js");
+    vi.mocked(dockerMod.listRunningContainers).mockResolvedValueOnce([]);
+    const app = appWith([
+      meta({ id: "real", message_count: 3 }),
+      meta({ id: "exec-drizzle-553-pr-review-e34282db", message_count: 0 }),
+    ]);
+    const res = await request(app, "/sessions");
+    const body = await res.json() as { sessions: Array<{ id: string }> };
+    expect(body.sessions.map((s) => s.id)).toEqual(["real"]);
+  });
+
+  it("marks an exec-<taskId> session live only when its container is running", async () => {
+    const dockerMod = await import("./docker.js");
+    vi.mocked(dockerMod.listRunningContainers).mockResolvedValueOnce([
+      { id: "c1", name: "lastlight-sandbox-task-xyz-aaaaaaaa", taskId: "task-xyz", status: "running", created: "", image: "" },
+    ]);
+    const app = appWith([
+      meta({ id: "exec-task-xyz", message_count: 2 }),       // matches running container
+      meta({ id: "exec-task-other", message_count: 2 }),     // no matching container
+    ]);
+    const res = await request(app, "/sessions");
+    const body = await res.json() as { sessions: Array<{ id: string; live: boolean }> };
+    const byId = Object.fromEntries(body.sessions.map((s) => [s.id, s.live]));
+    expect(byId["exec-task-xyz"]).toBe(true);
+    expect(byId["exec-task-other"]).toBe(false);
+  });
+});

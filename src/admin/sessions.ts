@@ -435,7 +435,16 @@ export class SessionReader implements SessionSource {
     }
 
     if (startedAt === null) {
-      startedAt = Date.now() / 1000;
+      // No parseable timestamps (empty or malformed file). Fall back to the
+      // file's mtime — its real last-write time — NOT Date.now(). Using "now"
+      // made a zero-byte/timestamp-less session masquerade as freshly active:
+      // it sorted to the top of the list and tripped the 5-minute liveness
+      // check, surfacing dead runs as live sessions.
+      try {
+        startedAt = fs.statSync(file).mtimeMs / 1000;
+      } catch {
+        startedAt = Date.now() / 1000;
+      }
     }
 
     const sessionType = detectSessionType(firstUserMessage ?? "");
