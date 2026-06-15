@@ -267,11 +267,24 @@ export class SessionReader implements SessionSource {
     return this.pathFor(sessionId) !== null;
   }
 
-  /** Return all session IDs across all project directories.
+  /** Return all session IDs across all project directories, sorted
+   *  newest-first by file mtime.
+   *
    *  Filters out agent sub-sessions (agent-xxx) — those are included
-   *  in their parent session's view. */
+   *  in their parent session's view.
+   *
+   *  The newest-first ordering matters: callers (the `/sessions` list +
+   *  SSE handlers) slice this to a `limit * 2` window BEFORE loading and
+   *  date-sorting each session's meta. With raw `readdir` order that window
+   *  could omit the most recent sessions entirely — e.g. today's runs living
+   *  in repo-suffixed project dirs read after a large generic dir — so the
+   *  list silently showed only older sessions. mtime is a cheap, reliable
+   *  recency proxy (it tracks the last appended message) that keeps the
+   *  freshest sessions inside the window; the handler then refines ordering
+   *  by parsed `started_at`. Mirrors the DB-backed chat reader, which
+   *  already returns threads newest-first. */
   listSessionIds(): string[] {
-    const ids: string[] = [];
+    const entries: Array<{ id: string; mtimeMs: number }> = [];
     for (const dir of this.projectDirs()) {
       try {
         for (const f of fs.readdirSync(dir)) {
@@ -279,13 +292,20 @@ export class SessionReader implements SessionSource {
           const id = f.slice(0, -6);
           // Skip agent sub-sessions — they'll be loaded via parent
           if (id.startsWith("agent-")) continue;
-          ids.push(id);
+          let mtimeMs = 0;
+          try {
+            mtimeMs = fs.statSync(path.join(dir, f)).mtimeMs;
+          } catch {
+            // unreadable file — keep it (mtime 0 sorts it last) rather than drop
+          }
+          entries.push({ id, mtimeMs });
         }
       } catch {
         // skip unreadable dirs
       }
     }
-    return ids;
+    entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return entries.map((e) => e.id);
   }
 
   async getSessionMeta(sessionId: string): Promise<SessionMeta | null> {
