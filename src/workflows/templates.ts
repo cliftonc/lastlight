@@ -126,8 +126,10 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
   };
 
   // 1. Conditional blocks: {{#if varName}}...{{/if}} (supports dot notation).
+  //    Key segments allow hyphens so phase/model keys like `pr-fix` resolve
+  //    (e.g. {{models.pr-fix}}); \w alone would leave them unrendered.
   result = result.replace(
-    /\{\{#if\s+(!?)(\w+(?:\.\w+)*)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    /\{\{#if\s+(!?)([\w-]+(?:\.[\w-]+)*)\}\}([\s\S]*?)\{\{\/if\}\}/g,
     (_match, negate, varName, body) => {
       const val = walkKey(varName);
       // Truthy: non-empty string, non-zero number, non-empty array, true boolean
@@ -162,7 +164,8 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
   //    emit structured output via `output_var` and downstream prompts can
   //    read it directly — and the socratic explore loop can read
   //    {{scratch.socratic.qa}}.
-  result = result.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key) => {
+  //    Key segments allow hyphens (e.g. {{models.pr-fix}}) — see #1.
+  result = result.replace(/\{\{([\w-]+(?:\.[\w-]+)*)\}\}/g, (_match, key) => {
     const val = walkKey(key);
     if (val === undefined || val === null) return "";
     return typeof val === "object" ? JSON.stringify(val) : String(val);

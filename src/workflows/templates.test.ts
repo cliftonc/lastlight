@@ -92,6 +92,23 @@ describe("renderTemplate — nested variable (two-level)", () => {
     const result = renderTemplate("{{models.architect}}", ctx as unknown as TemplateContext);
     expect(result).toBe("");
   });
+
+  it("resolves hyphenated keys like models.pr-fix", () => {
+    const ctx = {
+      ...BASE_CTX,
+      models: { "pr-fix": "claude-haiku-4-5", default: "claude-sonnet-4-6" },
+    };
+    const result = renderTemplate("{{models.pr-fix}}", ctx as unknown as TemplateContext);
+    expect(result).toBe("claude-haiku-4-5");
+  });
+
+  it("renders a hyphenated key to empty (not the literal) when unset", () => {
+    // Regression: \w-only key regex left {{models.pr-fix}} unrendered, which
+    // then reached the sandbox model validator as a literal and was rejected.
+    const ctx = { ...BASE_CTX, models: { default: "claude-sonnet-4-6" } };
+    const result = renderTemplate("{{models.pr-fix}}", ctx as unknown as TemplateContext);
+    expect(result).toBe("");
+  });
 });
 
 describe("renderTemplate — slugify helper", () => {
