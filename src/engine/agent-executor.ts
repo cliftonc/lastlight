@@ -308,6 +308,7 @@ async function executeInProcess(
 
   let notifiedSessionId = false;
   let result: RunResult;
+  const acc = new RunResultAccumulator();
   try {
     // HTTP egress allowlist. lastlight owns the policy (rather than relying
     // on agentic-pi's bundled default) so a single source — `egress-allowlist.ts`
@@ -344,6 +345,7 @@ async function executeInProcess(
       webSearch: config.webSearch === true,
       webSearchProvider: config.webSearchProvider,
       onEvent: (record) => {
+        acc.feed(record);
         shim.feed(record);
         if (!notifiedSessionId && ctx.onSessionId && record.type === "session" && typeof record.id === "string") {
           notifiedSessionId = true;
@@ -375,6 +377,12 @@ async function executeInProcess(
     };
   }
   restore();
+
+  // agentic-pi's in-process `stats` is the same compaction-blind
+  // `usage_snapshot`. Prefer our per-message accumulation when it carries
+  // token data (see RunResultAccumulator.bestStats).
+  const better = acc.bestStats();
+  if (better && (better.tokens?.total ?? 0) > 0) result.stats = better;
 
   return finalizeFromRunResult(result, prompt, shim, startTime);
 }
@@ -537,15 +545,36 @@ async function executeDocker(
  * `agentic-pi run` inside the docker sandbox. Mirrors what agentic-pi's
  * own `run()` function does in-process — minimum viable subset of
  * fields the executor cares about.
+ *
+ * Usage accounting accumulates each assistant `message_end`'s `usage`
+ * rather than trusting the terminal `usage_snapshot`. pi's snapshot is
+ * derived from `getSessionStats()`, which recomputes from the *current*
+ * in-memory message window — auto-compaction replaces those messages with
+ * a summary, so the snapshot reports zero tokens/cost/turns the moment a
+ * phase compacts. The per-message events fire at finalization (before any
+ * compaction rebuild), so summing them is compaction-proof. `bestStats()`
+ * prefers the accumulation and falls back to the snapshot only when no
+ * per-message usage was observed.
  */
-class RunResultAccumulator {
+export class RunResultAccumulator {
   private sessionId?: string;
   private finalText = "";
   private agentEnded = false;
   private toolErrors = false;
   private fatalError?: { name: string; message: string };
-  private stats?: RunResult["stats"];
+  private snapshotStats?: RunResult["stats"];
   private messages: unknown[] = [];
+
+  // Per-message usage accumulation (the compaction-proof source).
+  private assistantMessages = 0;
+  private userMessages = 0;
+  private toolCalls = 0;
+  private toolResults = 0;
+  private msgInput = 0;
+  private msgOutput = 0;
+  private msgCacheRead = 0;
+  private msgCacheWrite = 0;
+  private msgCost = 0;
 
   feed(r: Record<string, unknown>): void {
     switch (r.type) {
@@ -553,17 +582,29 @@ class RunResultAccumulator {
         if (typeof r.id === "string") this.sessionId = r.id;
         break;
       case "message_end": {
-        const m = r.message as { role?: string; content?: Array<{ type?: string; text?: string }> } | undefined;
+        const m = r.message as
+          | {
+              role?: string;
+              content?: Array<{ type?: string; text?: string }>;
+              usage?: Record<string, unknown>;
+            }
+          | undefined;
         if (m?.role === "assistant" && Array.isArray(m.content)) {
           const text = m.content
             .filter((c) => c.type === "text" && typeof c.text === "string")
             .map((c) => c.text as string)
             .join("");
           if (text) this.finalText = text;
+          this.assistantMessages += 1;
+          this.toolCalls += m.content.filter((c) => c.type === "toolCall").length;
+          this.accumulateUsage(m.usage);
+        } else if (m?.role === "user") {
+          this.userMessages += 1;
         }
         break;
       }
       case "tool_execution_end":
+        this.toolResults += 1;
         if (r.isError === true) this.toolErrors = true;
         break;
       case "agent_end":
@@ -571,12 +612,57 @@ class RunResultAccumulator {
         if (Array.isArray(r.messages)) this.messages = r.messages;
         break;
       case "usage_snapshot":
-        this.stats = r.stats as RunResult["stats"];
+        this.snapshotStats = r.stats as RunResult["stats"];
         break;
       case "fatal_error":
         this.fatalError = r.error as { name: string; message: string };
         break;
     }
+  }
+
+  private accumulateUsage(usage: Record<string, unknown> | undefined): void {
+    if (!usage || typeof usage !== "object") return;
+    const num = (v: unknown): number =>
+      typeof v === "number" && Number.isFinite(v) ? v : 0;
+    this.msgInput += num(usage.input);
+    this.msgOutput += num(usage.output);
+    this.msgCacheRead += num(usage.cacheRead);
+    this.msgCacheWrite += num(usage.cacheWrite);
+    const cost = usage.cost as { total?: unknown } | undefined;
+    if (cost && typeof cost === "object") this.msgCost += num(cost.total);
+  }
+
+  /** Stats summed from per-message usage, or undefined if none was seen. */
+  private accumulatedStats(): RunResult["stats"] | undefined {
+    const total =
+      this.msgInput + this.msgOutput + this.msgCacheRead + this.msgCacheWrite;
+    if (this.assistantMessages === 0 && total === 0) return undefined;
+    return {
+      userMessages: this.userMessages,
+      assistantMessages: this.assistantMessages,
+      toolCalls: this.toolCalls,
+      toolResults: this.toolResults,
+      tokens: {
+        input: this.msgInput,
+        output: this.msgOutput,
+        cacheRead: this.msgCacheRead,
+        cacheWrite: this.msgCacheWrite,
+        total,
+      },
+      cost: this.msgCost,
+    };
+  }
+
+  /**
+   * Prefer the per-message accumulation (compaction-proof) over pi's
+   * terminal `usage_snapshot`. Fall back to the snapshot only when the
+   * accumulation carries no token data — e.g. a provider that doesn't
+   * report per-message usage — so a non-compacted snapshot still wins.
+   */
+  bestStats(): RunResult["stats"] | undefined {
+    const acc = this.accumulatedStats();
+    if (acc && acc.tokens.total > 0) return acc;
+    return this.snapshotStats ?? acc;
   }
 
   build(exitCode: 0 | 1 | 2): RunResult {
@@ -589,7 +675,7 @@ class RunResultAccumulator {
       sessionId: this.sessionId,
       finalText: this.finalText,
       messages: this.messages,
-      stats: this.stats,
+      stats: this.bestStats(),
       records: [],
       warnings: [],
     };

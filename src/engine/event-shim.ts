@@ -244,6 +244,7 @@ export class AgenticShim {
     const message = (r.message ?? {}) as {
       role?: string;
       content?: Array<Record<string, unknown>>;
+      usage?: Record<string, unknown>;
     };
     if (message.role !== "assistant" || !Array.isArray(message.content)) {
       return [];
@@ -270,14 +271,26 @@ export class AgenticShim {
       }
     }
     if (out.length === 0) return [];
+
+    // Carry pi's per-message usage onto the envelope in Claude-SDK shape
+    // (input_tokens / output_tokens / cache_*). This is the only
+    // compaction-proof source of usage — pi's terminal `usage_snapshot`
+    // recomputes from the post-compaction message window and reports zero
+    // once a phase auto-compacts. Per-message records are written at
+    // finalization, before any compaction rebuild. Keeping them here also
+    // lets Claude-style transcript analyzers cost the session directly.
+    const assistantMessage: Record<string, unknown> = {
+      role: "assistant",
+      model: this.opts.model,
+      content: out,
+    };
+    const usage = shimUsage(message.usage);
+    if (usage) assistantMessage.usage = usage;
+
     return [
       {
         type: "assistant",
-        message: {
-          role: "assistant",
-          model: this.opts.model,
-          content: out,
-        },
+        message: assistantMessage,
         timestamp: ts,
         sessionId,
       },
@@ -352,6 +365,34 @@ export class AgenticShim {
         console.warn(`[shim] failed to append jsonl: ${msg}`);
       });
   }
+}
+
+/**
+ * Translate pi's per-message `usage` ({ input, output, cacheRead, cacheWrite,
+ * … }) into the Claude-SDK assistant-message usage shape. Returns undefined
+ * when the record carries no usage so we don't write an all-zero block.
+ */
+function shimUsage(
+  raw: Record<string, unknown> | undefined,
+): Record<string, number> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0;
+  const usage = {
+    input_tokens: num(raw.input),
+    output_tokens: num(raw.output),
+    cache_read_input_tokens: num(raw.cacheRead),
+    cache_creation_input_tokens: num(raw.cacheWrite),
+  };
+  if (
+    usage.input_tokens === 0 &&
+    usage.output_tokens === 0 &&
+    usage.cache_read_input_tokens === 0 &&
+    usage.cache_creation_input_tokens === 0
+  ) {
+    return undefined;
+  }
+  return usage;
 }
 
 function isoTimestamp(raw: unknown): string {
