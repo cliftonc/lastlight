@@ -2,6 +2,7 @@ import { readFileSync, existsSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parse as parseYaml } from "yaml";
+import { normalizeAllowlistHost } from "./sandbox/egress-allowlist.js";
 
 /**
  * Load .env file into process.env (simple, no dependency).
@@ -54,6 +55,15 @@ export interface DisabledConfig {
   agentContext: string[];
 }
 
+export interface OtelConfig {
+  enabled: boolean;
+  serviceName: string;
+  includeContent: boolean;
+  forwardToSandbox: boolean;
+  strict: boolean;
+  collectorHosts: string[];
+}
+
 export interface RouteConfig {
   github: Record<string, string>;
   slack: Record<string, string>;
@@ -83,6 +93,7 @@ export interface LastLightConfig {
   managedRepos: string[];
   routes: RouteConfig;
   disabled: DisabledConfig;
+  otel: OtelConfig;
   publicConfig: PublicConfigBundle;
   githubApp?: {
     appId: string;
@@ -234,6 +245,7 @@ export function loadConfig(): LastLightConfig {
   const models = parseModelConfig({ ...fileCfg.models, default: model });
   const variants = parseVariantConfig({ ...fileCfg.variants });
   const sandbox = parseSandbox(fileCfg.sandbox.backend);
+  const otel = parseOtelConfig(fileCfg.otel);
   const approval = process.env.APPROVAL_GATES !== undefined
     ? parseApprovalGates()
     : fileCfg.approval;
@@ -263,6 +275,7 @@ export function loadConfig(): LastLightConfig {
     managedRepos: fileCfg.managedRepos,
     routes: fileCfg.routes,
     disabled: fileCfg.disabled,
+    otel,
     bootstrap: { label: process.env.BOOTSTRAP_LABEL || fileCfg.bootstrapLabel },
     explore: { defaultRepo: process.env.EXPLORE_DEFAULT_REPO || fileCfg.exploreDefaultRepo || null },
     review: { postsCheck: parseBoolWithDefault(process.env.REVIEW_POSTS_CHECK, fileCfg.reviewPostsCheck) },
@@ -286,6 +299,7 @@ export function loadConfig(): LastLightConfig {
     managedRepos: fileCfg.managedRepos,
     routes: fileCfg.routes,
     disabled: fileCfg.disabled,
+    otel,
     publicConfig: {
       default: redactPublic(clonePublic(defaultRaw)!),
       overlay: redactPublic(clonePublic(overlayRaw)),
@@ -319,6 +333,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   bootstrapLabel: string;
   exploreDefaultRepo?: string;
   reviewPostsCheck: boolean;
+  otel: OtelConfig;
 } {
   const managedRepos = stringArray(raw.managedRepos, "managedRepos");
   const routes = normalizeRoutes(raw.routes);
@@ -330,6 +345,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   const exploreRaw = isPlainObject(raw.explore) ? raw.explore : {};
   const reviewRaw = isPlainObject(raw.review) ? raw.review : {};
   const approvalRaw = isPlainObject(raw.approval) ? raw.approval : {};
+  const otelRaw = isPlainObject(raw.otel) ? raw.otel : {};
 
   const models: ModelConfig = { default: typeof modelsRaw.default === "string" ? modelsRaw.default : DEFAULT_MODEL };
   for (const [k, v] of Object.entries(modelsRaw)) if (typeof v === "string") models[k] = v;
@@ -361,6 +377,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
     bootstrapLabel,
     exploreDefaultRepo,
     reviewPostsCheck,
+    otel: normalizeOtelFileConfig(otelRaw),
   };
 }
 
@@ -450,6 +467,57 @@ function parseBool(raw: string | undefined): boolean {
 
 function parseBoolWithDefault(raw: string | undefined, fallback: boolean): boolean {
   return raw === undefined || raw === "" ? fallback : parseBool(raw);
+}
+
+function normalizeOtelFileConfig(raw: Record<string, unknown>): OtelConfig {
+  return {
+    enabled: raw.enabled === true,
+    serviceName: typeof raw.serviceName === "string" && raw.serviceName.trim() ? raw.serviceName.trim() : "lastlight",
+    includeContent: raw.includeContent === true,
+    forwardToSandbox: raw.forwardToSandbox === false ? false : true,
+    strict: raw.strict === true,
+    collectorHosts: parseCollectorHosts(raw.collectorHosts, "otel.collectorHosts"),
+  };
+}
+
+function parseOtelConfig(file: OtelConfig): OtelConfig {
+  const collectorHosts = [
+    ...file.collectorHosts,
+    ...parseCollectorHosts(process.env.LASTLIGHT_OTEL_COLLECTOR_HOSTS, "LASTLIGHT_OTEL_COLLECTOR_HOSTS"),
+    ...parseOtelCollectorHostsFromEnv(process.env),
+  ];
+  return {
+    enabled: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_ENABLED, file.enabled),
+    serviceName: process.env.LASTLIGHT_OTEL_SERVICE_NAME?.trim()
+      || process.env.OTEL_SERVICE_NAME?.trim()
+      || file.serviceName
+      || "lastlight",
+    includeContent: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_INCLUDE_CONTENT, file.includeContent),
+    forwardToSandbox: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_FORWARD_TO_SANDBOX, file.forwardToSandbox),
+    strict: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_STRICT, file.strict),
+    collectorHosts: Array.from(new Set(collectorHosts)),
+  };
+}
+
+function parseCollectorHosts(raw: unknown, path: string): string[] {
+  if (raw === undefined || raw === null || raw === "") return [];
+  const values = Array.isArray(raw) ? raw : String(raw).split(",");
+  const out: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") throw new Error(`${path} must contain only strings`);
+    const host = normalizeAllowlistHost(value);
+    if (host) out.push(host);
+  }
+  return Array.from(new Set(out));
+}
+
+export function parseOtelCollectorHostsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return parseCollectorHosts([
+    env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+    env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+  ].filter(Boolean), "OTEL_EXPORTER_OTLP_*_ENDPOINT");
 }
 
 function resolvePublicUrl(): string | undefined {

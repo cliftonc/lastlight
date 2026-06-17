@@ -122,11 +122,15 @@ src/
                         from it at boot.
     egress-firewall-config.ts
                         Generates nginx-strict.conf / nginx-open.conf /
-                        Corefile.strict / Corefile.open under
-                        $STATE_DIR/proxy/ at harness boot. The four
+                        Corefile.strict / Corefile.open + otel-collector.yaml
+                        under $STATE_DIR/proxy/ at harness boot. The five
                         services in docker-compose.yml (coredns-strict,
                         coredns-open, nginx-egress-strict,
-                        nginx-egress-open) read those files.
+                        nginx-egress-open, otel-collector) read those files.
+                        Sandbox telemetry on the docker backend flows
+                        sandbox → otel-collector (internal IP) → real
+                        backend, so the strict allowlist needs no collector
+                        hosts or non-443 port handling.
   worktree/             Small helper for per-task git worktree setup inside
                         the sandbox. Implementation detail of `sandbox/`.
   admin/                Admin dashboard API (Hono) + SessionReader /
@@ -304,11 +308,13 @@ data/
   logs/                     Structured harness logs.
   proxy/                    Generated egress firewall configs (docker
                             backend): nginx-strict.conf, nginx-open.conf,
-                            Corefile.strict, Corefile.open. Regenerated on
-                            every harness boot from
-                            src/sandbox/egress-allowlist.ts. Bind-mounted
-                            read-only into the coredns + nginx firewall
-                            containers.
+                            Corefile.strict, Corefile.open, plus
+                            otel-collector.yaml (in-network OTEL collector
+                            config; mode 0600 — may hold backend auth
+                            headers). Regenerated on every harness boot from
+                            src/sandbox/egress-firewall-config.ts.
+                            Bind-mounted read-only into the coredns + nginx
+                            + otel-collector containers.
   secrets/app.pem           Mode-600 copy of the GitHub App PEM. Copied
                             here by deploy/entrypoint.sh so sandbox
                             containers can read it via the shared volume
@@ -401,6 +407,12 @@ Sandbox egress (docker backend only):
   coredns sidecar passed to `docker run --dns ...` (defaults: `172.30.0.10`
   and `172.30.0.11`, matching the static IPs in docker-compose.yml).
 
+OpenTelemetry (optional):
+
+- Disabled by default. Enable with `LASTLIGHT_OTEL_ENABLED=true`; standard `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES` env vars configure exporter endpoints/headers/resources.
+- Last Light exports workflow/phase/agent/chat metadata by default. `LASTLIGHT_OTEL_INCLUDE_CONTENT=true` opts into sensitive prompt/message/tool-result content (truncated).
+- `LASTLIGHT_OTEL_FORWARD_TO_SANDBOX=true` (default) enables sandbox telemetry. On the **docker** backend, sandboxes export OTLP to an in-network `otel-collector` compose service (static IP `172.30.0.30` on `sandbox-egress`, dual-homed onto `proxy-egress`), which re-exports to the real backend; the sandbox is given only that internal endpoint (`http://172.30.0.30:4318`), never the backend endpoint or `OTEL_EXPORTER_OTLP_HEADERS`. The collector config is generated from the harness OTEL_* env by `writeOtelCollectorConfig` (`src/sandbox/egress-firewall-config.ts`). This is why custom-port/plaintext collectors no longer need firewall changes — the backend hop runs on the collector's trusted outbound leg, not through `ssl_preread`. On **gondolin**/**none** (agentic-pi runs in-process), `OTEL_*` env is forwarded directly and `LASTLIGHT_OTEL_COLLECTOR_HOSTS` (+ parsed endpoint hosts) feed gondolin's egress allowlist.
+
 Web search (optional, opt-in per workflow phase):
 
 - `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY` / `EXA_API_KEY` — set any one
@@ -436,6 +448,15 @@ Slack (optional):
 
 ## Deployment
 
+> **When changing Docker configs (`Dockerfile`, `docker-compose.yml`,
+> `deploy/entrypoint.sh`, egress/collector generation), verify against the
+> actual runtime — not assumptions.** Notably: the entrypoint runs as root but
+> `exec gosu lastlight`s the harness, so the Node process (and shared-volume
+> files it writes) is owned by `lastlight` (UID-pinned to 10001), not root.
+> Confirm UID/ownership/perms and service start by running the real images
+> (e.g. a throwaway container reproducing the entrypoint chain), since unit
+> tests pass green while the container reality differs.
+
 Production runs on a single host (the production server — connection details
 are kept out of this file; see local agent memory) as a **Docker Compose**
 stack — *not* the native systemd model described in `deploy/native/README.md`
@@ -460,9 +481,9 @@ ssh <production-server> /home/lastlight/deploy.sh
 3. `docker compose build agent sandbox` then `docker compose up -d
    --remove-orphans` (recreates only what changed — the `agent` service plus
    the egress-firewall sidecars).
-4. Force-restarts the four egress sidecars (`coredns-strict`, `coredns-open`,
-   `nginx-egress-strict`, `nginx-egress-open`) so they re-read any regenerated
-   nginx/coredns configs.
+4. Force-restarts the egress sidecars (`coredns-strict`, `coredns-open`,
+   `nginx-egress-strict`, `nginx-egress-open`, and `otel-collector`) so they
+   re-read any regenerated nginx/coredns/collector configs.
 5. Health-checks `http://127.0.0.1:8644/health`.
 
 So a normal deploy is: **commit + push to `main`, then run `deploy.sh` on the

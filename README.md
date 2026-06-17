@@ -330,6 +330,15 @@ Legacy `OPENCODE_*` names are still read as fallbacks for the corresponding `LAS
 | `LASTLIGHT_THINKING` | No | Reasoning-effort default (`off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh`). pi-ai translates per-provider. Legacy: `OPENCODE_VARIANT`. |
 | `LASTLIGHT_THINKINGS` | No | Per-task thinking-level overrides as JSON, e.g. `{"architect":"high","reviewer":"high","triage":"minimal"}`. Legacy: `OPENCODE_VARIANTS`. |
 | `LASTLIGHT_SANDBOX` | No | Workflow sandbox backend: `gondolin` (default) \| `docker` \| `none`. |
+| `LASTLIGHT_OTEL_ENABLED` | No | Enable OpenTelemetry export (default: `false`). Standard `OTEL_*` env vars alone do not enable telemetry. |
+| `LASTLIGHT_OTEL_SERVICE_NAME` | No | OTEL service name (default: `lastlight`; falls back to `OTEL_SERVICE_NAME`). |
+| `LASTLIGHT_OTEL_INCLUDE_CONTENT` | No | Include prompts/message/tool-result content in telemetry (default: `false`; sensitive, use carefully). |
+| `LASTLIGHT_OTEL_FORWARD_TO_SANDBOX` | No | Forward sandbox telemetry to the backend (default: `true`). On the `docker` backend this routes through an in-network OTEL collector; on `gondolin`/`none` it forwards allowlisted `OTEL_*` env vars directly. |
+| `LASTLIGHT_OTEL_STRICT` | No | Throw on OTEL initialization/export setup failure instead of warn-and-continue (default: `false`). |
+| `LASTLIGHT_OTEL_COLLECTOR_HOSTS` | No | Comma-separated collector hostnames added to the strict sandbox egress allowlist. Used only by the `gondolin` backend (the `docker` backend reaches its collector internally and ignores this). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_*_ENDPOINT` | No | Standard OTLP HTTP collector endpoints. Used by the harness directly, and by the in-network collector as its re-export target on the `docker` backend. |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_*_HEADERS` | No | Standard OTLP headers; secret/env-only and never shown in public config. |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | No | Standard OTEL resource configuration. |
 | `LASTLIGHT_SESSIONS_DIR` | No | Where the dashboard reads sessions (default: `$STATE_DIR/agent-sessions`). |
 | `PORT` / `WEBHOOK_PORT` | No | Webhook listener port (default: `8644`) |
 | `STATE_DIR` | No | Persistent state directory (default: `./data`) |
@@ -338,6 +347,19 @@ Legacy `OPENCODE_*` names are still read as fallbacks for the corresponding `LAS
 | `BOT_LOGIN` | No | Bot login name for self-event filtering (default: `last-light[bot]`) |
 | `LASTLIGHT_LOCAL_DEV` | No | Set to `1` on dev machines to skip `git config --global` writes from `git-auth.ts`. The installation token still reaches sandboxes via `GIT_TOKEN`. |
 | `SANDBOX_DATA_VOLUME` | No | Used only when `LASTLIGHT_SANDBOX=docker`. Either a Docker named volume (default: `lastlight_agent-data`) or a host path (`/`, `./`, `../`, `~`) to bind-mount as `/data` inside each sandbox. Local dev uses `./data/sandbox-data`. |
+
+### OpenTelemetry export
+
+OpenTelemetry is disabled by default. Set `LASTLIGHT_OTEL_ENABLED=true` and configure standard OTEL exporter env vars such as `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, and `OTEL_RESOURCE_ATTRIBUTES` to export harness spans/metrics for workflow runs, phases, agent executions, PI event streams, and chat turns.
+
+By default Last Light exports metadata only: workflow/phase names, repo, sandbox backend, model, success/stop reason, timing, tokens, and cost. Prompt text, message content, tool arguments, and tool outputs are redacted unless `LASTLIGHT_OTEL_INCLUDE_CONTENT=true`; that opt-in can export sensitive data and should only be used with a trusted collector.
+
+When `LASTLIGHT_OTEL_FORWARD_TO_SANDBOX=true` (default), `agentic-pi` workflow sandboxes emit their own telemetry too. How it reaches the backend depends on the sandbox backend:
+
+- **`docker` (production):** sandboxes export OTLP to an **in-network OTEL collector** (a `otel-collector` compose service on the `sandbox-egress` network, reached by a fixed internal IP). That collector re-exports to your real backend over its own outbound network leg. This means the sandbox only ever dials one fixed internal endpoint — collectors on any port or scheme (e.g. `https://collector:4318`) work without special egress rules, and the backend endpoint and auth headers (`OTEL_EXPORTER_OTLP_HEADERS`) stay host-side and are **never** forwarded into the untrusted sandbox. The collector cannot be redirected by sandbox traffic, so it adds no SSRF/exfil surface.
+- **`gondolin` / `none`:** `agentic-pi` runs in the harness process and already inherits the harness OTEL SDK. Allowlisted `OTEL_*` env vars are forwarded into the sandbox shell env directly; `gondolin` adds collector hosts (parsed from `OTEL_EXPORTER_OTLP_ENDPOINT`, signal-specific endpoint env vars, and `LASTLIGHT_OTEL_COLLECTOR_HOSTS`) to its egress allowlist. Private/internal metadata hosts remain blocked.
+
+Set `LASTLIGHT_OTEL_FORWARD_TO_SANDBOX=false` to disable sandbox telemetry entirely and keep collector endpoints/headers in the harness only.
 
 ### 3. Managed Repositories
 

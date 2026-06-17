@@ -7,6 +7,8 @@ import {
   COREDNS_STRICT_IP,
   NGINX_OPEN_IP,
   NGINX_STRICT_IP,
+  OTEL_COLLECTOR_IP,
+  OTEL_COLLECTOR_UID,
   SANDBOX_EGRESS_SUBNET,
 } from "./egress-firewall-config.js";
 
@@ -31,6 +33,7 @@ interface ComposeService {
   // Networks can be a short array (`[a, b]`) or a long-form object with
   // per-network config (`{a: {ipv4_address: ...}, b: {}}`).
   networks?: string[] | Record<string, unknown>;
+  user?: string;
 }
 interface ComposeFile {
   services: Record<string, ComposeService>;
@@ -116,6 +119,41 @@ describe("docker-compose egress topology", () => {
     }
   });
 
+  describe("otel-collector", () => {
+    const nets = networkNamesOf("otel-collector");
+
+    it("is dual-homed on sandbox-egress (ingress from sandboxes) + proxy-egress (outbound to backend)", () => {
+      expect(nets).toContain("sandbox-egress");
+      expect(nets).toContain("proxy-egress");
+    });
+
+    it("does NOT attach to the harness `internal` network (can't bridge a sandbox into harness services)", () => {
+      expect(nets).not.toContain("internal");
+    });
+
+    it("uses the static IP the harness bakes into the sandbox OTLP endpoint", () => {
+      expect(ipv4OnNetwork("otel-collector", "sandbox-egress")).toBe(OTEL_COLLECTOR_IP);
+    });
+
+    it("does NOT force root — runs as the image's non-root UID", () => {
+      // The harness writes the mode-0600 config as UID OTEL_COLLECTOR_UID (its
+      // `lastlight` user is pinned to it), so the collector reads it as owner
+      // without root. If this ever regresses to `user: "0:0"`, we'd be running
+      // a sandbox-facing service as root unnecessarily.
+      expect(compose.services["otel-collector"]?.user).toBeUndefined();
+    });
+  });
+
+  it("pins the harness `lastlight` UID to the collector image UID so it can read the 0600 config", () => {
+    // The collector reads the harness-written mode-0600 OTLP config as its
+    // owner. That only works if the harness writes it as the collector's UID,
+    // so the Dockerfile must `useradd -u <OTEL_COLLECTOR_UID> lastlight`. If
+    // the collector image's UID ever changes, this test fails loudly to force
+    // bumping both together.
+    const dockerfile = readFileSync(resolve(__dirname, "../../Dockerfile"), "utf-8");
+    expect(dockerfile).toMatch(new RegExp(`useradd[^\\n]*-u\\s+${OTEL_COLLECTOR_UID}\\s+lastlight`));
+  });
+
   it("coredns containers do NOT attach to proxy-egress (no internet needed)", () => {
     // CoreDNS only synthesises answers from its config; it never recurses.
     // Keeping it off proxy-egress is defence in depth.
@@ -140,10 +178,14 @@ describe("docker-compose egress topology", () => {
     });
   }
 
-  it("proxy-egress contains exactly the two nginx firewalls", () => {
+  it("proxy-egress contains exactly the two nginx firewalls and the otel-collector", () => {
+    // These are the only services allowed an outbound path: the firewalls
+    // tunnel sandbox HTTPS, and the collector re-exports sandbox telemetry.
+    // None touch `internal`, so none can bridge a sandbox into harness
+    // services. Any other service appearing here is a regression.
     const onProxyEgress = Object.keys(compose.services)
       .filter((name) => networkNamesOf(name).includes("proxy-egress"))
       .sort();
-    expect(onProxyEgress).toEqual(["nginx-egress-open", "nginx-egress-strict"]);
+    expect(onProxyEgress).toEqual(["nginx-egress-open", "nginx-egress-strict", "otel-collector"]);
   });
 });

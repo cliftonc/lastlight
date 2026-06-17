@@ -71,11 +71,21 @@ services:
   egress-init:
     image: lastlight-agent
     restart: "no"
+    # Mounts the same overlay + secrets the agent does and runs the SAME
+    # config loader, so the collector config it pre-writes is computed from
+    # the effective config (env AND instance/config.yaml) — identical to what
+    # the harness writes at boot. This is what keeps the running collector's
+    # forwarding gate from diverging from the harness when OTEL is enabled via
+    # YAML rather than env.
+    env_file:
+      - path: ./instance/secrets/.env
+        required: false
+    volumes:
+      - ./instance:/app/instance:ro
+      - agent-data:/app/data
     command:
       ["node", "-e",
-       "require('/app/dist/sandbox/egress-firewall-config.js').writeEgressFirewallConfigs(process.env.STATE_DIR||'/app/data')"]
-    volumes:
-      - agent-data:/app/data
+       "const c=require('/app/dist/config.js').loadConfig();const m=require('/app/dist/sandbox/egress-firewall-config.js');const d=c.stateDir;m.writeEgressFirewallConfigs(d);m.writeOtelCollectorConfig(d,{active:c.otel.enabled&&c.otel.forwardToSandbox})"]
     depends_on:
       - agent          # ensures the image has been built when init runs
 
@@ -138,6 +148,37 @@ services:
     networks:
       sandbox-egress:
         ipv4_address: 172.30.0.21
+      proxy-egress: {}
+
+  # In-network OTEL collector. Sandboxes export telemetry here (by IP, on
+  # sandbox-egress) and it re-exports to the configured backend over
+  # proxy-egress. This is why the strict SNI firewall doesn't need to know
+  # about collector hosts or non-443 ports: the sandbox only ever dials this
+  # fixed internal endpoint, and the backend hop runs from a trusted,
+  # harness-controlled service that can use any port/scheme/headers. Backend
+  # auth headers live in the generated config (mode 0600 on the host volume)
+  # and are never forwarded into a sandbox.
+  #
+  # Dual-homed like the nginx firewalls — sandbox-egress (ingress) +
+  # proxy-egress (outbound). Deliberately NOT on `internal`, so it can't
+  # bridge a sandbox into harness services.
+  otel-collector:
+    image: otel/opentelemetry-collector:0.115.0
+    restart: unless-stopped
+    # Runs as the image's default non-root UID (10001). The harness `lastlight`
+    # user is pinned to that same UID (Dockerfile `useradd -u 10001`), so the
+    # collector reads the mode-0600 config the harness writes as its owner —
+    # no root, no world-readable secret. The image tag and that pinned UID must
+    # move together if a future image changes its user.
+    command: ["--config=/app/data/proxy/otel-collector.yaml"]
+    volumes:
+      - agent-data:/app/data:ro
+    depends_on:
+      egress-init:
+        condition: service_completed_successfully
+    networks:
+      sandbox-egress:
+        ipv4_address: 172.30.0.30
       proxy-egress: {}
 
   caddy:

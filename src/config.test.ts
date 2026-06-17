@@ -178,6 +178,66 @@ describe('loadConfig — approval gates', () => {
   });
 });
 
+describe('loadConfig — otel', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+    vi.stubEnv('LASTLIGHT_OTEL_ENABLED', '');
+    vi.stubEnv('LASTLIGHT_OTEL_SERVICE_NAME', '');
+    vi.stubEnv('LASTLIGHT_OTEL_INCLUDE_CONTENT', '');
+    vi.stubEnv('LASTLIGHT_OTEL_FORWARD_TO_SANDBOX', '');
+    vi.stubEnv('LASTLIGHT_OTEL_STRICT', '');
+    vi.stubEnv('LASTLIGHT_OTEL_COLLECTOR_HOSTS', '');
+    vi.stubEnv('OTEL_SERVICE_NAME', '');
+    vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('defaults to disabled metadata-only telemetry', () => {
+    const config = loadConfig();
+    expect(config.otel).toEqual({
+      enabled: false,
+      serviceName: 'lastlight',
+      includeContent: false,
+      forwardToSandbox: true,
+      strict: false,
+      collectorHosts: [],
+    });
+  });
+
+  it('applies LASTLIGHT_OTEL_* env overrides', () => {
+    vi.stubEnv('LASTLIGHT_OTEL_ENABLED', 'true');
+    vi.stubEnv('LASTLIGHT_OTEL_INCLUDE_CONTENT', 'true');
+    vi.stubEnv('LASTLIGHT_OTEL_FORWARD_TO_SANDBOX', 'false');
+    vi.stubEnv('LASTLIGHT_OTEL_STRICT', 'true');
+    vi.stubEnv('LASTLIGHT_OTEL_SERVICE_NAME', 'custom-service');
+    vi.stubEnv('LASTLIGHT_OTEL_COLLECTOR_HOSTS', 'otel.example.com,https://collector.example.com:4318/v1/traces');
+    const config = loadConfig();
+    expect(config.otel.enabled).toBe(true);
+    expect(config.otel.includeContent).toBe(true);
+    expect(config.otel.forwardToSandbox).toBe(false);
+    expect(config.otel.strict).toBe(true);
+    expect(config.otel.serviceName).toBe('custom-service');
+    expect(config.otel.collectorHosts).toEqual(['otel.example.com', 'collector.example.com']);
+  });
+
+  it('uses OTEL_SERVICE_NAME but does not auto-enable for OTEL exporter env vars alone', () => {
+    vi.stubEnv('OTEL_SERVICE_NAME', 'env-service');
+    vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'https://otel.example.com:4318/v1/traces');
+    const config = loadConfig();
+    expect(config.otel.enabled).toBe(false);
+    expect(config.otel.serviceName).toBe('env-service');
+    expect(config.otel.collectorHosts).toEqual(['otel.example.com']);
+  });
+
+  it('rejects private/internal OTEL collector hosts from env before sandbox allowlisting', () => {
+    vi.stubEnv('LASTLIGHT_OTEL_COLLECTOR_HOSTS', 'https://otel.example.com:4318,http://0.0.0.0:4318,http://[fd00::1]:4318');
+    vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://[::1]:4318/v1/traces');
+    const config = loadConfig();
+    expect(config.otel.collectorHosts).toEqual(['otel.example.com']);
+  });
+});
+
 describe('loadConfig — structure', () => {
   beforeEach(() => {
     vi.stubEnv('GITHUB_APP_ID', '');

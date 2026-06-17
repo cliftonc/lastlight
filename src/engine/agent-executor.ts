@@ -19,7 +19,9 @@ import {
 } from "./profiles.js";
 import { AgenticShim, projectSlugForCwd, truncateForLog, safeStringify } from "./event-shim.js";
 import type { SandboxBackend } from "../config.js";
-import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST } from "../sandbox/egress-allowlist.js";
+import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST, mergeAllowlist } from "../sandbox/egress-allowlist.js";
+import { getDockerSandboxOtelEnv, getOtelEnvForSandbox, recordError, recordExecutionMetrics, safeSpanAttributes, withSpan } from "../telemetry/index.js";
+import { recordPiEvent } from "../telemetry/pi-events.js";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 const DOCKER_WORKSPACE_DIR = "/home/agent/workspace";
@@ -171,6 +173,16 @@ export async function executeAgent(
     if (process.env.EXA_API_KEY) ghEnv.EXA_API_KEY = process.env.EXA_API_KEY;
   }
 
+  // OTEL config for the agent runtime itself. On docker the agent runs
+  // inside the container, so it reads this (the container env) and is
+  // pointed at the in-network collector — never the real backend or its
+  // auth headers. On gondolin/none the agent runs in the harness process
+  // and inherits the harness SDK; forwarding the host's OTEL_* here just
+  // re-affirms that config for any child processes.
+  if (config.otel?.enabled && config.otel.forwardToSandbox) {
+    Object.assign(ghEnv, backend === "docker" ? getDockerSandboxOtelEnv() : getOtelEnvForSandbox());
+  }
+
   const prePopulate =
     access?.prePopulateBranch && mintedToken
       ? {
@@ -181,15 +193,29 @@ export async function executeAgent(
         }
       : undefined;
 
+  const spanAttrs = safeSpanAttributes({
+    "agent.runtime": "agentic-pi",
+    "sandbox.backend": backend,
+    "task.id": taskId,
+    repo: access?.repo,
+    "github.profile": access?.profile,
+    model: config.model || DEFAULT_MODEL,
+    variant: config.variant,
+    "web_search.enabled": config.webSearch === true,
+    unrestricted_egress: config.unrestrictedEgress === true,
+    "workflow.name": config.telemetry?.workflowName,
+    "phase.name": config.telemetry?.phaseName,
+  });
+
   if (backend === "docker") {
-    return executeDocker(prompt, config, {
+    return withSpan("lastlight.agent.execute", spanAttrs, () => executeDocker(prompt, config, {
       taskId,
       stateDir,
       env: ghEnv,
       prePopulate,
       access,
       onSessionId: opts?.onSessionId,
-    });
+    }));
   }
 
   const workDir = setupTaskWorktree({
@@ -209,7 +235,7 @@ export async function executeAgent(
     console.warn(`[executor] Could not write AGENTS.md: ${msg}`);
   }
 
-  return executeInProcess(prompt, config, {
+  return withSpan("lastlight.agent.execute", spanAttrs, () => executeInProcess(prompt, config, {
     backend,
     taskId,
     workDir,
@@ -217,7 +243,7 @@ export async function executeAgent(
     env: ghEnv,
     access,
     onSessionId: opts?.onSessionId,
-  });
+  }));
 }
 
 // ── In-process path (gondolin / none) ───────────────────────────────
@@ -306,10 +332,11 @@ async function executeInProcess(
     GIT_CONFIG_KEY_0: "safe.directory",
     GIT_CONFIG_VALUE_0: "*",
   };
+  const otelSandboxEnv = config.otel?.enabled && config.otel.forwardToSandbox ? getOtelEnvForSandbox() : {};
   const sandboxEnv: Record<string, string> =
     ctx.backend === "gondolin"
-      ? { ...baseSandboxEnv, HOME: "/root", USER: "root", LOGNAME: "root" }
-      : baseSandboxEnv;
+      ? { ...otelSandboxEnv, ...baseSandboxEnv, HOME: "/root", USER: "root", LOGNAME: "root" }
+      : { ...otelSandboxEnv, ...baseSandboxEnv };
 
   let notifiedSessionId = false;
   let result: RunResult;
@@ -320,9 +347,10 @@ async function executeInProcess(
     // — covers both backends. `unrestrictedEgress` opts a phase out via the
     // `"*"` sentinel; gondolin (post the upstream allow-all patch) treats it
     // as "allow every host".
+    const extraHosts = config.otel?.enabled && config.otel.forwardToSandbox ? config.otel.collectorHosts : [];
     const allowedHttpHosts = config.unrestrictedEgress
       ? [ALLOW_ALL_SENTINEL]
-      : [...DEFAULT_ALLOWLIST];
+      : mergeAllowlist(DEFAULT_ALLOWLIST, extraHosts);
 
     // Loaded lazily: agentic-pi transitively imports pi-coding-agent, whose
     // bundled undici writes a v8 Agent onto `Symbol.for('undici.globalDispatcher.1')`
@@ -352,6 +380,13 @@ async function executeInProcess(
       onEvent: (record) => {
         acc.feed(record);
         shim.feed(record);
+        recordPiEvent(record as Record<string, unknown>, {
+          includeContent: config.otel?.includeContent === true,
+          surface: "agent",
+          workflowName: config.telemetry?.workflowName,
+          phaseName: config.telemetry?.phaseName,
+          model,
+        });
         if (!notifiedSessionId && ctx.onSessionId && record.type === "session" && typeof record.id === "string") {
           notifiedSessionId = true;
           ctx.onSessionId(record.id);
@@ -363,6 +398,8 @@ async function executeInProcess(
     restore();
     const msg = err instanceof Error ? err.message : String(err);
     const durationMs = Date.now() - startTime;
+    recordError("agent", err, { "sandbox.backend": ctx.backend, model, success: false, stop_reason: "error_executor", "workflow.name": config.telemetry?.workflowName, "phase.name": config.telemetry?.phaseName });
+    recordExecutionMetrics("agent", { "sandbox.backend": ctx.backend, model, success: false, stop_reason: "error_executor", durationMs });
     const fallbackId = `exec-${basename(ctx.taskId)}`;
     const synthesizedId = await shim
       .finalizeWithFallback(
@@ -389,7 +426,20 @@ async function executeInProcess(
   const better = acc.bestStats();
   if (better && (better.tokens?.total ?? 0) > 0) result.stats = better;
 
-  return finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions(), acc.toolError());
+  const finalResult = await finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions(), acc.toolError());
+  recordExecutionMetrics("agent", {
+    "sandbox.backend": ctx.backend,
+    model,
+    success: finalResult.success,
+    stop_reason: finalResult.stopReason,
+    durationMs: finalResult.durationMs,
+    costUsd: finalResult.costUsd,
+    inputTokens: finalResult.inputTokens,
+    outputTokens: finalResult.outputTokens,
+    "workflow.name": config.telemetry?.workflowName,
+    "phase.name": config.telemetry?.phaseName,
+  });
+  return finalResult;
 }
 
 // ── Docker path ─────────────────────────────────────────────────────
@@ -486,6 +536,10 @@ async function executeDocker(
   // host-UID bind mount). GITHUB_TOKEN/GH_TOKEN are auto-injected by
   // agentic-pi when --profile is set.
   const sandboxEnv: Record<string, string> = {
+    // Inner-run env for the agent's child shells. Points at the in-network
+    // collector (IP-only, no secret headers) so any OTLP a script emits is
+    // tunnelled the same way the agent's own telemetry is.
+    ...(config.otel?.enabled && config.otel.forwardToSandbox ? getDockerSandboxOtelEnv() : {}),
     GIT_AUTHOR_NAME: "last-light[bot]",
     GIT_AUTHOR_EMAIL: "last-light[bot]@users.noreply.github.com",
     GIT_COMMITTER_NAME: "last-light[bot]",
@@ -513,6 +567,13 @@ async function executeDocker(
         }
         acc.feed(record);
         shim.feed(record as Parameters<typeof shim.feed>[0]);
+        recordPiEvent(record, {
+          includeContent: config.otel?.includeContent === true,
+          surface: "agent",
+          workflowName: config.telemetry?.workflowName,
+          phaseName: config.telemetry?.phaseName,
+          model,
+        });
         if (!notifiedSessionId && ctx.onSessionId && record.type === "session" && typeof record.id === "string") {
           notifiedSessionId = true;
           ctx.onSessionId(record.id);
@@ -522,6 +583,8 @@ async function executeDocker(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     const durationMs = Date.now() - startTime;
+    recordError("agent", err, { "sandbox.backend": "docker", model, success: false, stop_reason: "error_sandbox", "workflow.name": config.telemetry?.workflowName, "phase.name": config.telemetry?.phaseName });
+    recordExecutionMetrics("agent", { "sandbox.backend": "docker", model, success: false, stop_reason: "error_sandbox", durationMs });
     const fallbackId = `exec-${basename(ctx.taskId)}`;
     const synthesizedId = await shim
       .finalizeWithFallback(
@@ -542,7 +605,20 @@ async function executeDocker(
     };
   }
   await sbx.cleanup();
-  return finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions(), acc.toolError());
+  const finalResult = await finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions(), acc.toolError());
+  recordExecutionMetrics("agent", {
+    "sandbox.backend": "docker",
+    model,
+    success: finalResult.success,
+    stop_reason: finalResult.stopReason,
+    durationMs: finalResult.durationMs,
+    costUsd: finalResult.costUsd,
+    inputTokens: finalResult.inputTokens,
+    outputTokens: finalResult.outputTokens,
+    "workflow.name": config.telemetry?.workflowName,
+    "phase.name": config.telemetry?.phaseName,
+  });
+  return finalResult;
 }
 
 /**

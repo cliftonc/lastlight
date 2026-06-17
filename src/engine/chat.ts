@@ -5,6 +5,9 @@ import { wrapUntrusted } from "./screen.js";
 import { ChatRunner, type ChatRunnerTurnResult } from "./chat-runner.js";
 import { AgenticShim } from "./event-shim.js";
 import type { EmitterRecord } from "agentic-pi";
+import { getRuntimeConfig } from "../config.js";
+import { recordError, recordExecutionMetrics, telemetryIncludesContent, withSpan } from "../telemetry/index.js";
+import { recordPiEvent } from "../telemetry/pi-events.js";
 
 /**
  * Chat-specific system prompt appended to the agent context. Composed
@@ -107,6 +110,7 @@ export async function handleChatMessage(
   _config: ExecutorConfig,
 ): Promise<ChatResult> {
   const startTime = Date.now();
+  return withSpan("lastlight.chat.turn", { "messaging.session_id": messagingSessionId, "messaging.sender": sender, model: _config.model }, async () => {
   try {
     const wrapped = wrapUntrusted(message, {
       source: "messaging-user",
@@ -140,6 +144,7 @@ export async function handleChatMessage(
         turn,
         stopReason: result.stopReason ?? "unknown",
         durationMs: result.durationMs,
+        includeContent: getRuntimeConfig()?.otel.includeContent ?? telemetryIncludesContent(),
       });
     } catch (err: unknown) {
       const m = err instanceof Error ? err.message : String(err);
@@ -150,6 +155,7 @@ export async function handleChatMessage(
     console.log(
       `[chat] ${sender} → ${result.stopReason ?? "?"} (${result.turns ?? "?"} turns, ${Math.round(result.durationMs / 1000)}s${costStr}) [session ${turn.agentSessionId.slice(0, 8)}…]`,
     );
+    recordExecutionMetrics("chat", { model: turn.modelId, success: result.success, stop_reason: result.stopReason, durationMs: result.durationMs, costUsd: result.costUsd, inputTokens: result.inputTokens, outputTokens: result.outputTokens });
     return result;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -161,14 +167,18 @@ export async function handleChatMessage(
       errorMessage: errMsg,
       durationMs: Date.now() - startTime,
     }).catch(() => undefined);
+    const durationMs = Date.now() - startTime;
+    recordError("chat", err, { success: false, stop_reason: "error_exception", model: _config.model });
+    recordExecutionMetrics("chat", { model: _config.model, success: false, stop_reason: "error_exception", durationMs });
     return {
       text: "Sorry, I encountered an error processing your message. Please try again.",
       success: false,
-      durationMs: Date.now() - startTime,
+      durationMs,
       error: errMsg,
       dashboardSessionId,
     };
   }
+  });
 }
 
 /**
@@ -210,6 +220,7 @@ async function writeChatShim(opts: {
   turn: ChatRunnerTurnResult;
   stopReason: string;
   durationMs: number;
+  includeContent?: boolean;
 }): Promise<void> {
   const shim = new AgenticShim({
     homeDir: opts.sessionsHomeDir,
@@ -221,7 +232,9 @@ async function writeChatShim(opts: {
   const now = new Date().toISOString();
 
   // Synthesise a session header so the shim opens the right file.
-  shim.feed({ type: "session", id: sessionId, timestamp: now, cwd: "/app" } as EmitterRecord);
+  const sessionRecord = { type: "session", id: sessionId, timestamp: now, cwd: "/app" } as EmitterRecord;
+  shim.feed(sessionRecord);
+  recordPiEvent(sessionRecord as unknown as Record<string, unknown>, { surface: "chat", includeContent: opts.includeContent === true, model: opts.model });
 
   // Replay each assistant turn + paired tool results as message_end /
   // tool_execution_end events the shim already knows how to translate.
@@ -240,16 +253,18 @@ async function writeChatShim(opts: {
         return null;
       })
       .filter(Boolean);
-    shim.feed({
+    const record = {
       type: "message_end",
       sessionId,
       timestamp: now,
       message: { role: "assistant", content },
-    } as EmitterRecord);
+    } as EmitterRecord;
+    shim.feed(record);
+    recordPiEvent(record as unknown as Record<string, unknown>, { surface: "chat", includeContent: opts.includeContent === true, model: opts.model });
   }
   for (const tr of opts.turn.toolResults) {
     const text = tr.content.find((c) => c.type === "text");
-    shim.feed({
+    const record = {
       type: "tool_execution_end",
       sessionId,
       timestamp: now,
@@ -257,7 +272,9 @@ async function writeChatShim(opts: {
       toolName: tr.toolName,
       result: text && "text" in text ? text.text : "",
       isError: tr.isError,
-    } as EmitterRecord);
+    } as EmitterRecord;
+    shim.feed(record);
+    recordPiEvent(record as unknown as Record<string, unknown>, { surface: "chat", includeContent: opts.includeContent === true, model: opts.model });
   }
 
   shim.finalize({

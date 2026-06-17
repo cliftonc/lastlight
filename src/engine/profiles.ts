@@ -1,5 +1,5 @@
 import type { GitHubTokenPermissions } from "./git-auth.js";
-import type { SandboxBackend } from "../config.js";
+import type { OtelConfig, SandboxBackend } from "../config.js";
 import { loadAgentContext as loadResolvedAgentContext } from "../workflows/loader.js";
 
 /**
@@ -31,8 +31,8 @@ export interface ExecutorConfig {
   /**
    * Bypass the HTTP egress allowlist for this phase. When true:
    *   - gondolin: `allowedHttpHosts: ["*"]` is passed to agentic-pi.
-   *   - docker:   the sandbox container's HTTPS_PROXY points at the open
-   *               tinyproxy sidecar instead of the strict one.
+   *   - docker:   the sandbox container uses the open CoreDNS/nginx
+   *               egress-firewall pair instead of the strict one.
    *
    * Default false. Set via the `unrestricted_egress` field on a workflow
    * phase — used for phases that need broad web access (e.g. an explore
@@ -52,6 +52,14 @@ export interface ExecutorConfig {
    * one based on which API key env var is present (Tavily > Exa > Brave).
    */
   webSearchProvider?: "tavily" | "brave" | "exa";
+  /** Controls OTEL env forwarding and PI event redaction for workflow phase runs. */
+  otel?: OtelConfig;
+  telemetry?: {
+    workflowName?: string;
+    phaseName?: string;
+    triggerId?: string;
+    workflowRunId?: string;
+  };
   /**
    * Absolute host paths to skill directories (each containing SKILL.md
    * plus optional scripts/, references/, assets/). Staged into the

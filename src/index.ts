@@ -15,7 +15,8 @@ import { getJobs } from "./cron/jobs.js";
 import { dispatchCronWorkflow } from "./cron/fanout.js";
 import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
-import { writeEgressFirewallConfigs } from "./sandbox/egress-firewall-config.js";
+import { writeEgressFirewallConfigs, writeOtelCollectorConfig } from "./sandbox/egress-firewall-config.js";
+import { initTelemetry, shutdownTelemetry } from "./telemetry/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { screenForInjection, flagPrefix } from "./engine/screen.js";
@@ -90,6 +91,12 @@ async function main() {
     process.exit(78); // EX_CONFIG — sysexits.h convention
   }
   validateConfig(config);
+  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version?: string };
+  await initTelemetry(config.otel, { packageVersion: packageJson.version });
+  let telemetryShutdownStarted = false;
+  console.log(config.otel.enabled
+    ? `[otel] enabled service=${config.otel.serviceName} forwardToSandbox=${config.otel.forwardToSandbox} includeContent=${config.otel.includeContent}`
+    : "[otel] disabled");
 
   console.log(`[config] Port: ${config.port}, Model: ${config.model}`);
   const modelOverrides = Object.entries(config.models).filter(([k]) => k !== "default");
@@ -111,9 +118,23 @@ async function main() {
   // Regenerate egress firewall configs (nginx ssl_preread + coredns) from
   // the allowlist source of truth. Only meaningful for the docker backend;
   // cheap enough to do unconditionally so a backend switch doesn't leave
-  // stale configs on disk.
+  // stale configs on disk. The docker backend forwards sandbox telemetry
+  // through the in-network OTEL collector (reached by IP), so the strict
+  // SNI allowlist no longer needs collector hosts — that hop happens on
+  // the collector's trusted outbound leg, not through the firewall.
   const proxyDir = writeEgressFirewallConfigs(config.stateDir);
   console.log(`[state] Egress firewall configs: ${proxyDir}`);
+
+  // Generate the in-network OTEL collector config (docker backend). Derived
+  // from the harness's OTEL_* backend env so the collector re-exports to the
+  // same backend the harness uses — with auth headers that stay host-side.
+  // Forwarding is gated on telemetry being active: when disabled (or sandbox
+  // forwarding off) the collector renders an inert debug-only config so the
+  // static collector IP can't be used as a sandbox exfil path.
+  const collectorConfigPath = writeOtelCollectorConfig(config.stateDir, {
+    active: config.otel.enabled && config.otel.forwardToSandbox,
+  });
+  console.log(`[state] OTEL collector config: ${collectorConfigPath} (forwarding ${config.otel.enabled && config.otel.forwardToSandbox ? "active" : "disabled"})`);
 
   // Initialize state database first — ChatRunner needs SessionManager
   // (DB-backed) at construction time.
@@ -485,6 +506,7 @@ async function main() {
           sandboxDir: config.sandboxDir,
           sessionsDir: config.sessionsDir,
           sandbox: config.sandbox,
+          otel: config.otel,
         },
         callbacks,
         db,
@@ -1295,6 +1317,7 @@ async function main() {
       sandboxDir: config.sandboxDir,
       sessionsDir: config.sessionsDir,
       sandbox: config.sandbox,
+      otel: config.otel,
     },
     models: config.models,
     variants: config.variants,
@@ -1312,6 +1335,10 @@ async function main() {
     console.log("\n[main] Shutting down...");
     cron.stopAll();
     await registry.stopAll();
+    if (!telemetryShutdownStarted) {
+      telemetryShutdownStarted = true;
+      await shutdownTelemetry();
+    }
     db.close();
     process.exit(0);
   };
