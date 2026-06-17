@@ -8,6 +8,7 @@ import {
   NGINX_OPEN_IP,
   NGINX_STRICT_IP,
   OTEL_COLLECTOR_IP,
+  OTEL_COLLECTOR_UID,
   SANDBOX_EGRESS_SUBNET,
 } from "./egress-firewall-config.js";
 
@@ -135,12 +136,22 @@ describe("docker-compose egress topology", () => {
     });
 
     it("does NOT force root — runs as the image's non-root UID", () => {
-      // The harness writes the mode-0600 config and chowns it to the
-      // collector's UID (OTEL_COLLECTOR_UID), so the collector reads it as a
-      // non-root user. If this ever regresses to `user: "0:0"`, we'd be running
+      // The harness writes the mode-0600 config as UID OTEL_COLLECTOR_UID (its
+      // `lastlight` user is pinned to it), so the collector reads it as owner
+      // without root. If this ever regresses to `user: "0:0"`, we'd be running
       // a sandbox-facing service as root unnecessarily.
       expect(compose.services["otel-collector"]?.user).toBeUndefined();
     });
+  });
+
+  it("pins the harness `lastlight` UID to the collector image UID so it can read the 0600 config", () => {
+    // The collector reads the harness-written mode-0600 OTLP config as its
+    // owner. That only works if the harness writes it as the collector's UID,
+    // so the Dockerfile must `useradd -u <OTEL_COLLECTOR_UID> lastlight`. If
+    // the collector image's UID ever changes, this test fails loudly to force
+    // bumping both together.
+    const dockerfile = readFileSync(resolve(__dirname, "../../Dockerfile"), "utf-8");
+    expect(dockerfile).toMatch(new RegExp(`useradd[^\\n]*-u\\s+${OTEL_COLLECTOR_UID}\\s+lastlight`));
   });
 
   it("coredns containers do NOT attach to proxy-egress (no internet needed)", () => {

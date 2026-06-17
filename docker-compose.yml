@@ -165,12 +165,11 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector:0.115.0
     restart: unless-stopped
-    # Runs as the image's default non-root UID (10001). The harness/egress-init
-    # write the config (which can carry backend auth headers) mode 0600 and
-    # chown it to that UID (see OTEL_COLLECTOR_UID in egress-firewall-config.ts),
-    # so the collector reads it without running as root or making the secret
-    # world-readable. The UID here and that constant must stay in lockstep with
-    # this image tag.
+    # Runs as the image's default non-root UID (10001). The harness `lastlight`
+    # user is pinned to that same UID (Dockerfile `useradd -u 10001`), so the
+    # collector reads the mode-0600 config the harness writes as its owner —
+    # no root, no world-readable secret. The image tag and that pinned UID must
+    # move together if a future image changes its user.
     command: ["--config=/app/data/proxy/otel-collector.yaml"]
     volumes:
       - agent-data:/app/data:ro

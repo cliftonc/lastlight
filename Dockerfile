@@ -16,7 +16,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create non-root user. Add to docker group so the harness can spawn
 # sibling sandbox containers via socket when LASTLIGHT_SANDBOX=docker.
-RUN useradd -m -s /bin/bash lastlight && usermod -aG docker lastlight
+#
+# UID pinned to 10001 to match the `otel/opentelemetry-collector` image's
+# user (see OTEL_COLLECTOR_UID in src/sandbox/egress-firewall-config.ts). The
+# harness writes the OTLP collector config (which can carry backend auth
+# headers) mode 0600 onto the shared agent-data volume; the collector reads it
+# as UID 10001. Sharing the UID lets it read a 0600 file without running the
+# collector as root or making the secret world-readable. If the collector
+# image ever changes its UID, bump both together.
+RUN useradd -m -s /bin/bash -u 10001 lastlight && usermod -aG docker lastlight
 
 WORKDIR /app
 

@@ -1,4 +1,4 @@
-import { chownSync, mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { DEFAULT_ALLOWLIST, mergeAllowlist } from "./egress-allowlist.js";
 
@@ -60,17 +60,17 @@ export const OTEL_COLLECTOR_OTLP_GRPC_PORT = 4317;
 export const OTEL_COLLECTOR_SANDBOX_ENDPOINT = `http://${OTEL_COLLECTOR_IP}:${OTEL_COLLECTOR_OTLP_HTTP_PORT}`;
 
 /**
- * UID/GID the `otel/opentelemetry-collector` image runs as (its Dockerfile
- * `USER`). The collector reads its config (which can hold backend auth
- * headers) as this non-root user, so when the harness/egress-init write that
- * file as root we hand ownership to this UID — letting the collector read a
- * mode-0600 file WITHOUT running the collector as root or making the secret
- * world-readable. Pinned alongside the image tag in docker-compose.yml; if a
- * future image bumps the UID the collector fails to read (loud) and both move
- * together.
+ * UID the `otel/opentelemetry-collector` image runs as (its Dockerfile
+ * `USER`). The collector reads the OTLP config (which can hold backend auth
+ * headers) as this non-root user. To let it read a mode-0600 file from the
+ * shared volume WITHOUT running as root or making the secret world-readable,
+ * the harness's own `lastlight` user is pinned to this same UID (see the
+ * Dockerfile `useradd -u`), so the collector reads files it wrote as their
+ * owner. The Dockerfile and the collector image tag in docker-compose.yml
+ * must move together if a future image bumps the UID — enforced by a test in
+ * docker-compose.test.ts.
  */
 export const OTEL_COLLECTOR_UID = 10001;
-export const OTEL_COLLECTOR_GID = 10001;
 
 /** Subnet for sandbox-egress. Compose declares this CIDR so the IPs above are valid. */
 export const SANDBOX_EGRESS_SUBNET = "172.30.0.0/24";
@@ -462,19 +462,10 @@ export function writeOtelCollectorConfig(stateDir: string, opts: { active: boole
   const dir = join(stateDir, "proxy");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "otel-collector.yaml");
+  // Mode 0600 — it can carry backend auth headers. In the docker deployment
+  // the writer (harness/egress-init, gosu'd to `lastlight`) and the collector
+  // share UID 10001 (see OTEL_COLLECTOR_UID + the Dockerfile pin), so the
+  // collector reads this file as its owner without it being world-readable.
   writeFileSync(path, renderOtelCollectorConfig(opts), { mode: 0o600 });
-  // The collector runs as a fixed non-root UID and must read this 0600 file.
-  // When we're root (the docker harness / egress-init), hand ownership to that
-  // UID so the non-root collector can read it without loosening the mode.
-  // Outside docker (dev / non-root) nothing consumes this file, so skip —
-  // a non-root process can't chown to another UID anyway.
-  if (typeof process.getuid === "function" && process.getuid() === 0) {
-    try {
-      chownSync(path, OTEL_COLLECTOR_UID, OTEL_COLLECTOR_GID);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[otel] could not chown collector config to ${OTEL_COLLECTOR_UID}:${OTEL_COLLECTOR_GID}: ${msg}`);
-    }
-  }
   return path;
 }
