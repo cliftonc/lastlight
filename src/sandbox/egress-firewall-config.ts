@@ -290,47 +290,89 @@ function yamlQuote(s: string): string {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** OTLP signals the collector pipelines cover, in stable output order. */
+const OTLP_SIGNALS = ["traces", "metrics", "logs"] as const;
+type OtlpSignal = (typeof OTLP_SIGNALS)[number];
+
+interface SignalBackend {
+  /**
+   * otlphttp exporter field for this signal's endpoint. The OTEL spec
+   * gives the two endpoint forms different path semantics, and the
+   * collector's otlphttp exporter mirrors them:
+   *   - `endpoint` — a BASE URL; the collector appends `/v1/<signal>`.
+   *     Used for the generic `OTEL_EXPORTER_OTLP_ENDPOINT`.
+   *   - `<signal>_endpoint` — a FULL URL used verbatim. Used for a
+   *     signal-specific `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`.
+   * Picking the right field is what keeps a signal-specific endpoint from
+   * getting `/v1/<signal>` wrongly appended.
+   */
+  endpointField: "endpoint" | `${OtlpSignal}_endpoint`;
+  endpoint: string;
+  headers: Array<[string, string]>;
+}
+
+/**
+ * Resolve one signal's backend per the OTEL env precedence: a
+ * signal-specific endpoint/headers var wins, otherwise the generic one.
+ * Returns null when neither is set — that signal's pipeline then drops to
+ * the `debug` exporter instead of being misrouted to another signal's URL.
+ */
+function resolveSignalBackend(env: NodeJS.ProcessEnv, signal: OtlpSignal): SignalBackend | null {
+  const SIG = signal.toUpperCase();
+  const specificEndpoint = (env[`OTEL_EXPORTER_OTLP_${SIG}_ENDPOINT`] || "").trim();
+  const genericEndpoint = (env.OTEL_EXPORTER_OTLP_ENDPOINT || "").trim();
+  if (!specificEndpoint && !genericEndpoint) return null;
+
+  const specificHeaders = (env[`OTEL_EXPORTER_OTLP_${SIG}_HEADERS`] || "").trim();
+  const genericHeaders = env.OTEL_EXPORTER_OTLP_HEADERS;
+  return specificEndpoint
+    ? { endpointField: `${signal}_endpoint`, endpoint: specificEndpoint, headers: parseOtlpHeaders(specificHeaders || genericHeaders) }
+    : { endpointField: "endpoint", endpoint: genericEndpoint, headers: parseOtlpHeaders(specificHeaders || genericHeaders) };
+}
+
 /**
  * Render the in-network OTEL collector config (docker backend).
  *
  * The collector receives OTLP from sandboxes (which only know its internal
- * IP) and re-exports to the REAL backend — `OTEL_EXPORTER_OTLP_ENDPOINT`
- * and `OTEL_EXPORTER_OTLP_HEADERS` as configured on the harness. Those
- * credentials live here, in a file on the host mounted read-only into the
- * collector, and are NEVER forwarded into an untrusted sandbox. The
- * sandbox can only influence span *content* sent to the harness's own
- * fixed backend — it cannot redirect where the collector exports, so this
- * adds no SSRF/exfil surface.
+ * IP) and re-exports to the REAL backend — the standard
+ * `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` plus their
+ * per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` / `_HEADERS` overrides,
+ * resolved with the spec's precedence. Each signal gets its own exporter so
+ * a split traces/metrics/logs setup is routed correctly rather than all
+ * collapsing onto whichever endpoint won a fallback chain. Those credentials
+ * live here, in a file on the host mounted read-only into the collector, and
+ * are NEVER forwarded into an untrusted sandbox. The sandbox can only
+ * influence span *content* sent to the harness's own fixed backend — it
+ * cannot redirect where the collector exports, so this adds no SSRF/exfil
+ * surface.
  *
- * When no backend endpoint is configured, the collector wires a `debug`
- * exporter (drops data) so it still boots cleanly and accepts connections
- * — sandboxes that aren't given the endpoint simply never connect.
+ * A signal with no configured endpoint (neither specific nor generic) is
+ * wired to a `debug` exporter (drops data) so the collector still boots
+ * cleanly and accepts connections — sandboxes simply never send what isn't
+ * routed.
  */
 export function renderOtelCollectorConfig(env: NodeJS.ProcessEnv = process.env): string {
-  const backend = (
-    env.OTEL_EXPORTER_OTLP_ENDPOINT
-    || env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-    || env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-    || ""
-  ).trim();
-  const headers = parseOtlpHeaders(env.OTEL_EXPORTER_OTLP_HEADERS);
-  const hasBackend = backend.length > 0;
-  const exporterName = hasBackend ? "otlphttp/backend" : "debug";
+  const exporterBlocks: string[] = [];
+  const pipelineBlocks: string[] = [];
+  let needsDebug = false;
 
-  const exportersBlock = hasBackend
-    ? `  otlphttp/backend:
-    endpoint: ${yamlQuote(backend)}${headers.length
-        ? `
-    headers:
-${headers.map(([k, v]) => `      ${yamlQuote(k)}: ${yamlQuote(v)}`).join("\n")}`
-        : ""}`
-    : `  debug:
-    verbosity: normal`;
+  for (const signal of OTLP_SIGNALS) {
+    const backend = resolveSignalBackend(env, signal);
+    let exporterName: string;
+    if (!backend) {
+      exporterName = "debug";
+      needsDebug = true;
+    } else {
+      exporterName = `otlphttp/${signal}`;
+      const headerLines = backend.headers.length
+        ? `\n    headers:\n${backend.headers.map(([k, v]) => `      ${yamlQuote(k)}: ${yamlQuote(v)}`).join("\n")}`
+        : "";
+      exporterBlocks.push(`  ${exporterName}:\n    ${backend.endpointField}: ${yamlQuote(backend.endpoint)}${headerLines}`);
+    }
+    pipelineBlocks.push(`    ${signal}:\n      receivers: [otlp]\n      processors: [batch]\n      exporters: [${exporterName}]`);
+  }
 
-  const pipeline = (signal: string) => `    ${signal}:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [${exporterName}]`;
+  if (needsDebug) exporterBlocks.push(`  debug:\n    verbosity: normal`);
 
   return `# Generated by lastlight at harness boot. DO NOT EDIT BY HAND —
 # source of truth is src/sandbox/egress-firewall-config.ts.
@@ -351,13 +393,11 @@ processors:
   batch: {}
 
 exporters:
-${exportersBlock}
+${exporterBlocks.join("\n")}
 
 service:
   pipelines:
-${pipeline("traces")}
-${pipeline("metrics")}
-${pipeline("logs")}
+${pipelineBlocks.join("\n")}
 `;
 }
 

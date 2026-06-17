@@ -144,18 +144,57 @@ describe("otel collector config", () => {
     expect(cfg.receivers.otlp.protocols.grpc.endpoint).toBe(`0.0.0.0:${OTEL_COLLECTOR_OTLP_GRPC_PORT}`);
   });
 
-  it("re-exports to the configured backend endpoint with parsed auth headers", () => {
+  it("re-exports to the generic endpoint (as a base URL) with parsed auth headers on every signal", () => {
     const cfg = parseYaml(renderOtelCollectorConfig({
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.com:4318",
       OTEL_EXPORTER_OTLP_HEADERS: "api-key=secret-123,x-tenant=acme",
     })) as any;
-    const exp = cfg.exporters["otlphttp/backend"];
-    expect(exp.endpoint).toBe("https://collector.example.com:4318");
-    expect(exp.headers).toEqual({ "api-key": "secret-123", "x-tenant": "acme" });
-    // Every pipeline forwards to the backend exporter.
     for (const signal of ["traces", "metrics", "logs"]) {
-      expect(cfg.service.pipelines[signal].exporters).toEqual(["otlphttp/backend"]);
+      const exp = cfg.exporters[`otlphttp/${signal}`];
+      // Generic endpoint → `endpoint` field (collector appends /v1/<signal>).
+      expect(exp.endpoint).toBe("https://collector.example.com:4318");
+      expect(exp[`${signal}_endpoint`]).toBeUndefined();
+      expect(exp.headers).toEqual({ "api-key": "secret-123", "x-tenant": "acme" });
+      expect(cfg.service.pipelines[signal].exporters).toEqual([`otlphttp/${signal}`]);
     }
+  });
+
+  it("routes per-signal endpoints to their own pipeline (no fallback-chain misrouting)", () => {
+    // The bug the reviewer flagged: separate traces/metrics endpoints must not
+    // both export to whichever one won a `||` chain.
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://traces.example.com/v1/traces",
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://metrics.example.com/v1/metrics",
+    })) as any;
+    // Signal-specific endpoints are used verbatim via `<signal>_endpoint`.
+    expect(cfg.exporters["otlphttp/traces"].traces_endpoint).toBe("https://traces.example.com/v1/traces");
+    expect(cfg.exporters["otlphttp/metrics"].metrics_endpoint).toBe("https://metrics.example.com/v1/metrics");
+    expect(cfg.service.pipelines.traces.exporters).toEqual(["otlphttp/traces"]);
+    expect(cfg.service.pipelines.metrics.exporters).toEqual(["otlphttp/metrics"]);
+    // logs had no endpoint configured → debug, not silently misrouted.
+    expect(cfg.service.pipelines.logs.exporters).toEqual(["debug"]);
+    expect(cfg.exporters.debug).toBeDefined();
+  });
+
+  it("honours a logs-only endpoint instead of dropping it (the silent-drop case)", () => {
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "https://logs.example.com/v1/logs",
+    })) as any;
+    expect(cfg.exporters["otlphttp/logs"].logs_endpoint).toBe("https://logs.example.com/v1/logs");
+    expect(cfg.service.pipelines.logs.exporters).toEqual(["otlphttp/logs"]);
+    expect(cfg.service.pipelines.traces.exporters).toEqual(["debug"]);
+    expect(cfg.service.pipelines.metrics.exporters).toEqual(["debug"]);
+  });
+
+  it("lets a signal-specific endpoint override the generic one for just that signal", () => {
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://generic.example.com",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://traces.example.com/v1/traces",
+    })) as any;
+    // traces → verbatim specific URL; metrics/logs → generic base.
+    expect(cfg.exporters["otlphttp/traces"].traces_endpoint).toBe("https://traces.example.com/v1/traces");
+    expect(cfg.exporters["otlphttp/metrics"].endpoint).toBe("https://generic.example.com");
+    expect(cfg.exporters["otlphttp/logs"].endpoint).toBe("https://generic.example.com");
   });
 
   it("supports a non-443 / custom-port HTTPS backend the strict SNI firewall could not reach", () => {
@@ -165,7 +204,7 @@ describe("otel collector config", () => {
     const cfg = parseYaml(renderOtelCollectorConfig({
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://otel.internal:4318",
     })) as any;
-    expect(cfg.exporters["otlphttp/backend"].endpoint).toBe("https://otel.internal:4318");
+    expect(cfg.exporters["otlphttp/traces"].endpoint).toBe("https://otel.internal:4318");
   });
 
   it("preserves '=' inside header values (bearer tokens survive intact)", () => {
@@ -173,13 +212,13 @@ describe("otel collector config", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://b.example.com",
       OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer abc=def==",
     })) as any;
-    expect(cfg.exporters["otlphttp/backend"].headers.authorization).toBe("Bearer abc=def==");
+    expect(cfg.exporters["otlphttp/traces"].headers.authorization).toBe("Bearer abc=def==");
   });
 
   it("falls back to a debug exporter (no data leaves) when no backend is configured", () => {
     const cfg = parseYaml(renderOtelCollectorConfig({})) as any;
     expect(cfg.exporters.debug).toBeDefined();
-    expect(cfg.exporters["otlphttp/backend"]).toBeUndefined();
+    expect(cfg.exporters["otlphttp/traces"]).toBeUndefined();
     for (const signal of ["traces", "metrics", "logs"]) {
       expect(cfg.service.pipelines[signal].exporters).toEqual(["debug"]);
     }
@@ -192,7 +231,7 @@ describe("otel collector config", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://b.example.com",
       OTEL_EXPORTER_OTLP_HEADERS: `x-quote=it's "quoted" \\ backslash`,
     })) as any;
-    expect(cfg.exporters["otlphttp/backend"].headers["x-quote"]).toBe(`it's "quoted" \\ backslash`);
+    expect(cfg.exporters["otlphttp/traces"].headers["x-quote"]).toBe(`it's "quoted" \\ backslash`);
   });
 });
 
