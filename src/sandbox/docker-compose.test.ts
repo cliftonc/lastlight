@@ -134,12 +134,12 @@ describe("docker-compose egress topology", () => {
       expect(ipv4OnNetwork("otel-collector", "sandbox-egress")).toBe(OTEL_COLLECTOR_IP);
     });
 
-    it("runs as root so it can read the mode-0600 collector config the (root) harness writes", () => {
-      // The collector image defaults to non-root UID 10001 and could not read
-      // a root-owned 0600 file — it would fail to start and leave sandboxes
-      // pointed at a dead 172.30.0.30:4318. Running as root preserves the 0600
-      // secret protection rather than loosening the file mode.
-      expect(compose.services["otel-collector"]?.user).toBe("0:0");
+    it("does NOT force root — runs as the image's non-root UID", () => {
+      // The harness writes the mode-0600 config and chowns it to the
+      // collector's UID (OTEL_COLLECTOR_UID), so the collector reads it as a
+      // non-root user. If this ever regresses to `user: "0:0"`, we'd be running
+      // a sandbox-facing service as root unnecessarily.
+      expect(compose.services["otel-collector"]?.user).toBeUndefined();
     });
   });
 
