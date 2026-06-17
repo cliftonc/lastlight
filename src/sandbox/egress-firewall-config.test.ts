@@ -4,13 +4,19 @@ import {
   COREDNS_STRICT_IP,
   NGINX_OPEN_IP,
   NGINX_STRICT_IP,
+  OTEL_COLLECTOR_IP,
+  OTEL_COLLECTOR_OTLP_GRPC_PORT,
+  OTEL_COLLECTOR_OTLP_HTTP_PORT,
+  OTEL_COLLECTOR_SANDBOX_ENDPOINT,
   renderCorefileOpen,
   renderCorefileStrict,
   renderNginxOpenConf,
   renderNginxStrictConf,
+  renderOtelCollectorConfig,
   SANDBOX_EGRESS_SUBNET,
 } from "./egress-firewall-config.js";
 import { DEFAULT_ALLOWLIST } from "./egress-allowlist.js";
+import { parse as parseYaml } from "yaml";
 
 describe("static IP constants", () => {
   it("all four service IPs sit inside the sandbox-egress subnet", () => {
@@ -124,6 +130,69 @@ describe("coredns open Corefile", () => {
 
   it("returns NOERROR / empty for AAAA so IPv6 doesn't accidentally bypass us", () => {
     expect(conf).toMatch(/template\s+IN\s+AAAA\s*\{[\s\S]*rcode\s+NOERROR[\s\S]*\}/);
+  });
+});
+
+describe("otel collector config", () => {
+  it("sandbox endpoint points at the collector's static IP + OTLP/HTTP port", () => {
+    expect(OTEL_COLLECTOR_SANDBOX_ENDPOINT).toBe(`http://${OTEL_COLLECTOR_IP}:${OTEL_COLLECTOR_OTLP_HTTP_PORT}`);
+  });
+
+  it("receives OTLP on both http and grpc, on all interfaces", () => {
+    const cfg = parseYaml(renderOtelCollectorConfig({})) as any;
+    expect(cfg.receivers.otlp.protocols.http.endpoint).toBe(`0.0.0.0:${OTEL_COLLECTOR_OTLP_HTTP_PORT}`);
+    expect(cfg.receivers.otlp.protocols.grpc.endpoint).toBe(`0.0.0.0:${OTEL_COLLECTOR_OTLP_GRPC_PORT}`);
+  });
+
+  it("re-exports to the configured backend endpoint with parsed auth headers", () => {
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.com:4318",
+      OTEL_EXPORTER_OTLP_HEADERS: "api-key=secret-123,x-tenant=acme",
+    })) as any;
+    const exp = cfg.exporters["otlphttp/backend"];
+    expect(exp.endpoint).toBe("https://collector.example.com:4318");
+    expect(exp.headers).toEqual({ "api-key": "secret-123", "x-tenant": "acme" });
+    // Every pipeline forwards to the backend exporter.
+    for (const signal of ["traces", "metrics", "logs"]) {
+      expect(cfg.service.pipelines[signal].exporters).toEqual(["otlphttp/backend"]);
+    }
+  });
+
+  it("supports a non-443 / custom-port HTTPS backend the strict SNI firewall could not reach", () => {
+    // This is the case the reviewer flagged for the old direct-forward path.
+    // It now works because the collector dials the backend on its trusted
+    // outbound leg, not through ssl_preread.
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://otel.internal:4318",
+    })) as any;
+    expect(cfg.exporters["otlphttp/backend"].endpoint).toBe("https://otel.internal:4318");
+  });
+
+  it("preserves '=' inside header values (bearer tokens survive intact)", () => {
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://b.example.com",
+      OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer abc=def==",
+    })) as any;
+    expect(cfg.exporters["otlphttp/backend"].headers.authorization).toBe("Bearer abc=def==");
+  });
+
+  it("falls back to a debug exporter (no data leaves) when no backend is configured", () => {
+    const cfg = parseYaml(renderOtelCollectorConfig({})) as any;
+    expect(cfg.exporters.debug).toBeDefined();
+    expect(cfg.exporters["otlphttp/backend"]).toBeUndefined();
+    for (const signal of ["traces", "metrics", "logs"]) {
+      expect(cfg.service.pipelines[signal].exporters).toEqual(["debug"]);
+    }
+  });
+
+  it("produces valid YAML even with quote/backslash-bearing header values", () => {
+    // Crucially, a single quote in a header value no longer fails anything:
+    // it lives in the host-side collector config, never a sandbox shell wrap.
+    const cfg = parseYaml(renderOtelCollectorConfig({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://b.example.com",
+      OTEL_EXPORTER_OTLP_HEADERS: `x-quote=it's "quoted" \\ backslash`,
+    })) as any;
+    expect(cfg.exporters["otlphttp/backend"].headers["x-quote"]).toBe(`it's "quoted" \\ backslash`);
   });
 });
 

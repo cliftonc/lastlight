@@ -15,7 +15,7 @@ import { getJobs } from "./cron/jobs.js";
 import { dispatchCronWorkflow } from "./cron/fanout.js";
 import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
-import { writeEgressFirewallConfigs } from "./sandbox/egress-firewall-config.js";
+import { writeEgressFirewallConfigs, writeOtelCollectorConfig } from "./sandbox/egress-firewall-config.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
@@ -118,12 +118,19 @@ async function main() {
   // Regenerate egress firewall configs (nginx ssl_preread + coredns) from
   // the allowlist source of truth. Only meaningful for the docker backend;
   // cheap enough to do unconditionally so a backend switch doesn't leave
-  // stale configs on disk.
-  const proxyDir = writeEgressFirewallConfigs(
-    config.stateDir,
-    config.otel.enabled && config.otel.forwardToSandbox ? config.otel.collectorHosts : [],
-  );
+  // stale configs on disk. The docker backend forwards sandbox telemetry
+  // through the in-network OTEL collector (reached by IP), so the strict
+  // SNI allowlist no longer needs collector hosts — that hop happens on
+  // the collector's trusted outbound leg, not through the firewall.
+  const proxyDir = writeEgressFirewallConfigs(config.stateDir);
   console.log(`[state] Egress firewall configs: ${proxyDir}`);
+
+  // Generate the in-network OTEL collector config (docker backend). Derived
+  // from the harness's OTEL_* backend env so the collector re-exports to the
+  // same backend the harness uses — with auth headers that stay host-side.
+  // Regenerated unconditionally (cheap; debug-only exporter when no backend).
+  const collectorConfigPath = writeOtelCollectorConfig(config.stateDir);
+  console.log(`[state] OTEL collector config: ${collectorConfigPath}`);
 
   // Initialize state database first — ChatRunner needs SessionManager
   // (DB-backed) at construction time.

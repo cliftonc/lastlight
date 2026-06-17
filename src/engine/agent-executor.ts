@@ -20,7 +20,7 @@ import {
 import { AgenticShim, projectSlugForCwd, truncateForLog, safeStringify } from "./event-shim.js";
 import type { SandboxBackend } from "../config.js";
 import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST, mergeAllowlist } from "../sandbox/egress-allowlist.js";
-import { getOtelEnvForSandbox, recordError, recordExecutionMetrics, safeSpanAttributes, withSpan } from "../telemetry/index.js";
+import { getDockerSandboxOtelEnv, getOtelEnvForSandbox, recordError, recordExecutionMetrics, safeSpanAttributes, withSpan } from "../telemetry/index.js";
 import { recordPiEvent } from "../telemetry/pi-events.js";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
@@ -173,8 +173,14 @@ export async function executeAgent(
     if (process.env.EXA_API_KEY) ghEnv.EXA_API_KEY = process.env.EXA_API_KEY;
   }
 
+  // OTEL config for the agent runtime itself. On docker the agent runs
+  // inside the container, so it reads this (the container env) and is
+  // pointed at the in-network collector — never the real backend or its
+  // auth headers. On gondolin/none the agent runs in the harness process
+  // and inherits the harness SDK; forwarding the host's OTEL_* here just
+  // re-affirms that config for any child processes.
   if (config.otel?.enabled && config.otel.forwardToSandbox) {
-    Object.assign(ghEnv, getOtelEnvForSandbox());
+    Object.assign(ghEnv, backend === "docker" ? getDockerSandboxOtelEnv() : getOtelEnvForSandbox());
   }
 
   const prePopulate =
@@ -530,7 +536,10 @@ async function executeDocker(
   // host-UID bind mount). GITHUB_TOKEN/GH_TOKEN are auto-injected by
   // agentic-pi when --profile is set.
   const sandboxEnv: Record<string, string> = {
-    ...(config.otel?.enabled && config.otel.forwardToSandbox ? getOtelEnvForSandbox() : {}),
+    // Inner-run env for the agent's child shells. Points at the in-network
+    // collector (IP-only, no secret headers) so any OTLP a script emits is
+    // tunnelled the same way the agent's own telemetry is.
+    ...(config.otel?.enabled && config.otel.forwardToSandbox ? getDockerSandboxOtelEnv() : {}),
     GIT_AUTHOR_NAME: "last-light[bot]",
     GIT_AUTHOR_EMAIL: "last-light[bot]@users.noreply.github.com",
     GIT_COMMITTER_NAME: "last-light[bot]",

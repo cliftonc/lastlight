@@ -71,9 +71,16 @@ services:
   egress-init:
     image: lastlight-agent
     restart: "no"
+    # Reads OTEL_EXPORTER_OTLP_* so the collector config it pre-writes points
+    # at the real backend before the otel-collector service starts. The
+    # harness rewrites the same files at boot (idempotent); this just ensures
+    # they exist for the firewall + collector services' first read.
+    env_file:
+      - path: ./instance/secrets/.env
+        required: false
     command:
       ["node", "-e",
-       "require('/app/dist/sandbox/egress-firewall-config.js').writeEgressFirewallConfigs(process.env.STATE_DIR||'/app/data')"]
+       "const m=require('/app/dist/sandbox/egress-firewall-config.js');const d=process.env.STATE_DIR||'/app/data';m.writeEgressFirewallConfigs(d);m.writeOtelCollectorConfig(d)"]
     volumes:
       - agent-data:/app/data
     depends_on:
@@ -138,6 +145,32 @@ services:
     networks:
       sandbox-egress:
         ipv4_address: 172.30.0.21
+      proxy-egress: {}
+
+  # In-network OTEL collector. Sandboxes export telemetry here (by IP, on
+  # sandbox-egress) and it re-exports to the configured backend over
+  # proxy-egress. This is why the strict SNI firewall doesn't need to know
+  # about collector hosts or non-443 ports: the sandbox only ever dials this
+  # fixed internal endpoint, and the backend hop runs from a trusted,
+  # harness-controlled service that can use any port/scheme/headers. Backend
+  # auth headers live in the generated config (mode 0600 on the host volume)
+  # and are never forwarded into a sandbox.
+  #
+  # Dual-homed like the nginx firewalls — sandbox-egress (ingress) +
+  # proxy-egress (outbound). Deliberately NOT on `internal`, so it can't
+  # bridge a sandbox into harness services.
+  otel-collector:
+    image: otel/opentelemetry-collector:0.115.0
+    restart: unless-stopped
+    command: ["--config=/app/data/proxy/otel-collector.yaml"]
+    volumes:
+      - agent-data:/app/data:ro
+    depends_on:
+      egress-init:
+        condition: service_completed_successfully
+    networks:
+      sandbox-egress:
+        ipv4_address: 172.30.0.30
       proxy-egress: {}
 
   caddy:

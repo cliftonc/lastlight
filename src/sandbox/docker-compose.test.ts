@@ -7,6 +7,7 @@ import {
   COREDNS_STRICT_IP,
   NGINX_OPEN_IP,
   NGINX_STRICT_IP,
+  OTEL_COLLECTOR_IP,
   SANDBOX_EGRESS_SUBNET,
 } from "./egress-firewall-config.js";
 
@@ -116,6 +117,23 @@ describe("docker-compose egress topology", () => {
     }
   });
 
+  describe("otel-collector", () => {
+    const nets = networkNamesOf("otel-collector");
+
+    it("is dual-homed on sandbox-egress (ingress from sandboxes) + proxy-egress (outbound to backend)", () => {
+      expect(nets).toContain("sandbox-egress");
+      expect(nets).toContain("proxy-egress");
+    });
+
+    it("does NOT attach to the harness `internal` network (can't bridge a sandbox into harness services)", () => {
+      expect(nets).not.toContain("internal");
+    });
+
+    it("uses the static IP the harness bakes into the sandbox OTLP endpoint", () => {
+      expect(ipv4OnNetwork("otel-collector", "sandbox-egress")).toBe(OTEL_COLLECTOR_IP);
+    });
+  });
+
   it("coredns containers do NOT attach to proxy-egress (no internet needed)", () => {
     // CoreDNS only synthesises answers from its config; it never recurses.
     // Keeping it off proxy-egress is defence in depth.
@@ -140,10 +158,14 @@ describe("docker-compose egress topology", () => {
     });
   }
 
-  it("proxy-egress contains exactly the two nginx firewalls", () => {
+  it("proxy-egress contains exactly the two nginx firewalls and the otel-collector", () => {
+    // These are the only services allowed an outbound path: the firewalls
+    // tunnel sandbox HTTPS, and the collector re-exports sandbox telemetry.
+    // None touch `internal`, so none can bridge a sandbox into harness
+    // services. Any other service appearing here is a regression.
     const onProxyEgress = Object.keys(compose.services)
       .filter((name) => networkNamesOf(name).includes("proxy-egress"))
       .sort();
-    expect(onProxyEgress).toEqual(["nginx-egress-open", "nginx-egress-strict"]);
+    expect(onProxyEgress).toEqual(["nginx-egress-open", "nginx-egress-strict", "otel-collector"]);
   });
 });

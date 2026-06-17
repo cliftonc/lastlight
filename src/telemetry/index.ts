@@ -6,6 +6,7 @@ import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
 import type { OtelConfig } from "../config.js";
+import { OTEL_COLLECTOR_SANDBOX_ENDPOINT } from "../sandbox/egress-firewall-config.js";
 
 export type TelemetryPrimitive = string | number | boolean;
 export type TelemetryAttributes = Record<string, unknown>;
@@ -185,13 +186,63 @@ export function recordError(surface: string, error: unknown, attrs: TelemetryAtt
   meter().createCounter("lastlight.errors").add(1, safeMetricAttributes({ ...attrs, surface }));
 }
 
+/**
+ * Safe, non-secret OTEL descriptors passed through to a sandbox alongside
+ * the collector endpoint — span/resource labels only, never headers or the
+ * real backend endpoint.
+ */
+const OTEL_SANDBOX_LABEL_ENV = [
+  "OTEL_SERVICE_NAME",
+  "OTEL_RESOURCE_ATTRIBUTES",
+  "OTEL_TRACES_EXPORTER",
+  "OTEL_METRICS_EXPORTER",
+  "OTEL_LOGS_EXPORTER",
+] as const;
+
+/**
+ * OTEL env for the **docker** backend, where pi-coding-agent runs *inside*
+ * the container. The sandbox is pointed at the in-network collector by its
+ * static IP — it never learns the real backend endpoint or its auth
+ * headers (those stay host-side on the collector). Reached directly by IP
+ * on `sandbox-egress`, so it traverses neither the SNI firewall nor DNS,
+ * and works identically in strict and unrestricted-egress phases.
+ */
+export function getDockerSandboxOtelEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out: Record<string, string> = {
+    OTEL_EXPORTER_OTLP_ENDPOINT: OTEL_COLLECTOR_SANDBOX_ENDPOINT,
+    OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+  };
+  for (const key of OTEL_SANDBOX_LABEL_ENV) {
+    const value = env[key];
+    if (value && !/[\r\n']/.test(value)) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * OTEL env for the **in-process** backends (gondolin / none), where
+ * pi-coding-agent runs in the harness process rather than a container —
+ * its own telemetry already inherits the harness SDK. This forwards the
+ * host's OTEL_* config into the sandbox shell env for child processes the
+ * agent spawns. There is no in-network collector reachable from a gondolin
+ * VM, so the real endpoint/headers are forwarded directly; unsafe values
+ * (newline / single-quote, which would break downstream shell quoting) are
+ * dropped with a warning rather than forwarded.
+ */
 export function getOtelEnvForSandbox(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of OTEL_SANDBOX_ENV_ALLOWLIST) {
     const value = env[key];
     if (!value) continue;
-    if (/[\r\n]/.test(value)) {
-      console.warn(`[otel] not forwarding ${key}: value contains a newline`);
+    // The docker backend shell-quotes each value as `KEY='value'` when
+    // building `--sandbox-env`, so a newline or single-quote in the value
+    // would break the wrap and make docker.ts throw — aborting the whole
+    // agent run. Drop the unsafe value here (with a warning) instead, so
+    // telemetry forwarding degrades gracefully rather than taking the run
+    // down with it. OTLP header values legitimately almost never contain a
+    // single quote; when they do, the operator gets a clear log line.
+    if (/[\r\n']/.test(value)) {
+      console.warn(`[otel] not forwarding ${key}: value contains a newline or single quote`);
       continue;
     }
     out[key] = value;
