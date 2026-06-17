@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 /**
  * Single source of truth for sandbox HTTP egress allowlists.
  *
@@ -100,7 +102,38 @@ export const DEFAULT_ALLOWLIST: readonly string[] = [
  */
 export const ALLOW_ALL_SENTINEL = "*";
 
-const PRIVATE_OR_INTERNAL_HOST_RE = /^(localhost|metadata\.google\.internal|169\.254\.169\.254)$|^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/i;
+const INTERNAL_HOSTNAMES = new Set(["localhost", "metadata.google.internal"]);
+
+function isPrivateOrInternalIp(host: string): boolean {
+  const ip = host.replace(/^\[|\]$/g, "");
+  const family = isIP(ip);
+  if (family === 4) {
+    const octets = ip.split(".").map((part) => Number(part));
+    if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+    const [a, b] = octets;
+    return a === 0
+      || a === 10
+      || a === 127
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168);
+  }
+  if (family === 6) {
+    const lower = ip.toLowerCase();
+    const mappedIpv4 = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+    if (mappedIpv4) return isPrivateOrInternalIp(mappedIpv4);
+    if (lower.startsWith("::ffff:")) return true;
+    return lower === "::"
+      || lower === "::1"
+      || lower.startsWith("fe8")
+      || lower.startsWith("fe9")
+      || lower.startsWith("fea")
+      || lower.startsWith("feb")
+      || lower.startsWith("fc")
+      || lower.startsWith("fd");
+  }
+  return false;
+}
 
 export function normalizeAllowlistHost(host: string): string | null {
   const trimmed = host.trim().toLowerCase();
@@ -109,10 +142,11 @@ export function normalizeAllowlistHost(host: string): string | null {
   try {
     parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
   } catch {
-    parsed = trimmed.split("/")[0]?.split(":")[0] || "";
+    parsed = trimmed.split("/")[0] || "";
+    if (!parsed.startsWith("[")) parsed = parsed.split(":")[0] || "";
   }
-  parsed = parsed.replace(/^\.+|\.+$/g, "");
-  if (!parsed || parsed.includes("*") || PRIVATE_OR_INTERNAL_HOST_RE.test(parsed)) return null;
+  parsed = parsed.replace(/^\.+|\.+$/g, "").replace(/^\[|\]$/g, "");
+  if (!parsed || parsed.includes("*") || INTERNAL_HOSTNAMES.has(parsed) || isPrivateOrInternalIp(parsed)) return null;
   return parsed;
 }
 

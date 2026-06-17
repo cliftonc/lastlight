@@ -60,6 +60,24 @@ describe("egress-allowlist source of truth", () => {
     ]);
   });
 
+  it("rejects private and internal collector endpoints", () => {
+    for (const host of [
+      "0.0.0.0",
+      "127.0.0.1",
+      "10.0.0.4",
+      "172.16.0.1",
+      "192.168.1.10",
+      "http://[::1]:4318",
+      "http://[fe80::1]:4318",
+      "http://[fd00::1]:4318",
+      "http://[::ffff:127.0.0.1]:4318",
+      "metadata.google.internal",
+      "localhost",
+    ]) {
+      expect(normalizeAllowlistHost(host), host).toBeNull();
+    }
+  });
+
   it("derives collector hosts from OTEL endpoint env vars", () => {
     expect(collectorHostsFromOtelEnv({
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://otel.example.com:4318",

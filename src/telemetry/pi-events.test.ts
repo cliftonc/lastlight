@@ -23,14 +23,23 @@ describe("PI event telemetry sanitization", () => {
 
   it("includes truncated content when opted in", () => {
     const long = "x".repeat(5000);
-    const sanitized = sanitizePiEvent({
+    const tool = sanitizePiEvent({
       type: "tool_execution_end",
       toolName: "read",
       result: long,
       isError: false,
     }, true);
-    expect(sanitized["tool.name"]).toBe("read");
-    expect(String(sanitized["tool.result"]).length).toBeLessThanOrEqual(4096);
+    expect(tool["tool.name"]).toBe("read");
+    expect(String(tool["tool.result"]).length).toBeLessThanOrEqual(1024);
+
+    const message = sanitizePiEvent({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "visible after explicit opt-in" }],
+      },
+    }, true);
+    expect(String(message["message.content"])).toContain("visible after explicit opt-in");
   });
 
   it("maps extension, usage, and fatal error metadata", () => {

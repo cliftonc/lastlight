@@ -2,6 +2,7 @@ import { readFileSync, existsSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parse as parseYaml } from "yaml";
+import { normalizeAllowlistHost } from "./sandbox/egress-allowlist.js";
 
 /**
  * Load .env file into process.env (simple, no dependency).
@@ -504,7 +505,7 @@ function parseCollectorHosts(raw: unknown, path: string): string[] {
   const out: string[] = [];
   for (const value of values) {
     if (typeof value !== "string") throw new Error(`${path} must contain only strings`);
-    const host = normalizeCollectorHost(value);
+    const host = normalizeAllowlistHost(value);
     if (host) out.push(host);
   }
   return Array.from(new Set(out));
@@ -517,21 +518,6 @@ export function parseOtelCollectorHostsFromEnv(env: NodeJS.ProcessEnv = process.
     env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
     env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
   ].filter(Boolean), "OTEL_EXPORTER_OTLP_*_ENDPOINT");
-}
-
-function normalizeCollectorHost(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return null;
-  let host = trimmed;
-  try {
-    host = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
-  } catch {
-    host = trimmed.split("/")[0]?.split(":")[0] || "";
-  }
-  host = host.replace(/^\.+|\.+$/g, "");
-  if (!host || host.includes("*") || host === "localhost" || host === "metadata.google.internal" || host === "169.254.169.254") return null;
-  if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host)) return null;
-  return host;
 }
 
 function resolvePublicUrl(): string | undefined {

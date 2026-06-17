@@ -48,6 +48,13 @@ const METRIC_ATTR_ALLOWLIST = new Set([
   "github.profile",
 ]);
 
+const EXPLICIT_CONTENT_ATTR_ALLOWLIST = new Set([
+  "message.content",
+  "tool.result",
+  "tool.output",
+  "error.stack",
+]);
+
 let sdk: NodeSDK | undefined;
 let enabled = false;
 let includeContent = false;
@@ -72,7 +79,8 @@ export function telemetryIncludesContent(): boolean {
 export function safeSpanAttributes(attrs: TelemetryAttributes = {}): Record<string, TelemetryPrimitive> {
   const out: Record<string, TelemetryPrimitive> = {};
   for (const [key, value] of Object.entries(attrs)) {
-    if (/prompt|body|stack|secret|token|headers?/i.test(key) || /(^|\.)content$/i.test(key)) continue;
+    const explicitlyAllowedContent = EXPLICIT_CONTENT_ATTR_ALLOWLIST.has(key);
+    if (!explicitlyAllowedContent && (/prompt|body|stack|secret|token|headers?/i.test(key) || /(^|\.)content$/i.test(key))) continue;
     const p = primitive(value);
     if (p !== undefined) out[key] = p;
   }

@@ -229,6 +229,13 @@ describe('loadConfig — otel', () => {
     expect(config.otel.serviceName).toBe('env-service');
     expect(config.otel.collectorHosts).toEqual(['otel.example.com']);
   });
+
+  it('rejects private/internal OTEL collector hosts from env before sandbox allowlisting', () => {
+    vi.stubEnv('LASTLIGHT_OTEL_COLLECTOR_HOSTS', 'https://otel.example.com:4318,http://0.0.0.0:4318,http://[fd00::1]:4318');
+    vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://[::1]:4318/v1/traces');
+    const config = loadConfig();
+    expect(config.otel.collectorHosts).toEqual(['otel.example.com']);
+  });
 });
 
 describe('loadConfig — structure', () => {
