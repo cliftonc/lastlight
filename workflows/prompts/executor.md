@@ -5,17 +5,26 @@ pre-cloned it and your cwd is the repo root. Git is configured.
 
 Start by reading {{issueDir}}/architect-plan.md.
 
-EXECUTION:
-- Follow TDD: write failing test first, then implement, then verify
-- Run tests and verify they pass
+WORK FROM THE PLAN — it contains an exhaustive file manifest and the exact
+commands:
+- Implement the plan's file manifest directly. Read a file only immediately
+  before you edit it; do NOT re-explore areas the plan already mapped.
+- Use grep/find only to fill genuine gaps the plan didn't cover (if the plan
+  is missing a sibling file, fix it there and proceed).
+- Use the test/lint/typecheck commands the plan copied from the guardrails
+  report — no need to re-open guardrails-report.md unless the plan omitted them.
 
-BEFORE COMMITTING — ALL GUARDRAILS MUST PASS:
-1. Read {{issueDir}}/guardrails-report.md to find the exact commands
-2. Run the test command and verify ALL tests pass (zero failures)
-3. Run the lint command (if present) and fix ALL lint errors
-4. Run the typecheck command (if present) and fix ALL type errors
-5. If any guardrail fails, fix the issue and re-run until clean
-DO NOT commit or claim done until tests, lint, and typecheck all pass.
+EXECUTION:
+- Follow TDD: write the failing test first, then implement.
+- While iterating, run only the tests covering the files you changed — not the
+  whole suite on every edit.
+
+BEFORE COMMITTING — RUN THE FULL GATE ONCE, ALL MUST PASS:
+1. Run the full test command and verify ALL tests pass (zero failures).
+2. Run the lint command (if present) and fix ALL lint errors.
+3. Run the typecheck command (if present) once and fix ALL type errors.
+4. If any guardrail fails, fix it and re-run only what failed until clean.
+DO NOT commit or claim done until the full suite, lint, and typecheck all pass.
 
 AFTER ALL GUARDRAILS PASS:
 1. Write {{issueDir}}/executor-summary.md:

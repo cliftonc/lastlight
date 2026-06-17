@@ -123,3 +123,44 @@ describe("RunResultAccumulator usage accounting", () => {
     expect(acc.bestStats()).toBeUndefined();
   });
 });
+
+describe("RunResultAccumulator extension status", () => {
+  it("captures and normalizes extension_status events", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "session", id: "abc" });
+    acc.feed({
+      type: "extension_status",
+      extension: "file-search",
+      status: "configured",
+      mode: "override",
+      toolCount: 3,
+    });
+    acc.feed({
+      type: "extension_status",
+      extension: "github",
+      status: "configured",
+      profile: "repo-write",
+      toolCount: 5,
+    });
+    acc.feed({
+      type: "extension_status",
+      extension: "web-search",
+      status: "skipped",
+      reason: "no-credentials",
+    });
+
+    const ext = acc.extensions();
+    expect(ext).toEqual({
+      "file-search": { status: "configured", mode: "override", toolCount: 3 },
+      github: { status: "configured", toolCount: 5 },
+      "web-search": { status: "skipped", reason: "no-credentials" },
+    });
+  });
+
+  it("returns undefined when no extension_status events were seen", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "session", id: "abc" });
+    acc.feed(assistantMessageEnd({ input: 10, output: 5, cost: 0.001 }));
+    expect(acc.extensions()).toBeUndefined();
+  });
+});

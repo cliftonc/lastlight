@@ -12,6 +12,7 @@ phases:
     label: Guardrails
     prompt: prompts/guardrails.md
     model: "{{models.guardrails}}"
+    variant: "{{variants.guardrails}}"
     on_output:
       contains_BLOCKED:
         action: fail
@@ -102,6 +103,7 @@ phases:
     label: PR
     prompt: prompts/pr.md
     model: "{{models.pr}}"
+    variant: "{{variants.pr}}"
     on_success:
       set_phase: complete
     messages:

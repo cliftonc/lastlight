@@ -47,6 +47,23 @@ function fmtTime(iso?: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
+function fmtExtension(v: {
+  status: string;
+  mode?: string;
+  provider?: string;
+  toolCount?: number;
+  reason?: string;
+}): string {
+  const parts: string[] = [v.status];
+  if (v.mode) parts.push(v.mode);
+  if (v.provider) parts.push(v.provider);
+  if (typeof v.toolCount === "number") {
+    parts.push(`${v.toolCount} tool${v.toolCount === 1 ? "" : "s"}`);
+  }
+  if (v.status !== "configured" && v.reason) parts.push(v.reason);
+  return parts.join(" · ");
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -159,6 +176,21 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
               <Field label="Cache Create">{fmtTokens(execution.cacheCreationInputTokens)}</Field>
             </div>
           </div>
+
+          {execution.extensions && Object.keys(execution.extensions).length > 0 && (
+            <div>
+              <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
+                Extensions
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {Object.entries(execution.extensions).map(([name, v]) => (
+                  <Field key={name} label={name}>
+                    {fmtExtension(v)}
+                  </Field>
+                ))}
+              </div>
+            </div>
+          )}
 
           {execution.error && (
             <div>

@@ -13,7 +13,9 @@ SCOPE — review ONLY what changed in the fix cycle:
 CHECK:
 1. Were the specific issues you raised actually addressed?
 2. Did the fix introduce any new problems?
-3. Do tests still pass?
+3. Tests: the fix cycle already ran the full suite (see its summary section) —
+   don't re-run everything. Independently run the typecheck command and the
+   tests covering the fixed files.
 
 DO NOT re-review the entire changeset. Only verify your previous issues were fixed.
 

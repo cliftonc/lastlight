@@ -229,11 +229,41 @@ export class AgenticShim {
         return this.translateMessageEnd(r, ts, sessionId);
       case "tool_execution_end":
         return this.translateToolEnd(r, ts, sessionId);
+      case "extension_status":
+        return this.translateExtensionStatus(r, ts, sessionId);
       case "fatal_error":
         return this.translateFatal(r, ts, sessionId);
       default:
         return [];
     }
+  }
+
+  /**
+   * Mirror an agentic-pi `extension_status` event (file-search / github /
+   * web-search) as a `system` envelope near the top of the session log, so
+   * the raw JSONL shows which extensions were active. The dashboard's
+   * SessionReader ignores unknown envelope types, so this is render-safe.
+   */
+  private translateExtensionStatus(
+    r: EmitterRecord,
+    ts: string,
+    sessionId: string,
+  ): object[] {
+    if (typeof r.extension !== "string") return [];
+    return [
+      {
+        type: "system",
+        subtype: "extension_status",
+        extension: r.extension,
+        status: r.status,
+        ...(r.mode !== undefined ? { mode: r.mode } : {}),
+        ...(r.provider !== undefined ? { provider: r.provider } : {}),
+        ...(r.toolCount !== undefined ? { toolCount: r.toolCount } : {}),
+        ...(r.reason !== undefined ? { reason: r.reason } : {}),
+        timestamp: ts,
+        sessionId,
+      },
+    ];
   }
 
   private translateMessageEnd(

@@ -14,6 +14,7 @@ import {
   loadAgentContext,
   type ExecutorConfig,
   type ExecutionResult,
+  type ExtensionStatusMap,
   type GitSandboxAccess,
 } from "./profiles.js";
 import { AgenticShim, projectSlugForCwd } from "./event-shim.js";
@@ -384,7 +385,7 @@ async function executeInProcess(
   const better = acc.bestStats();
   if (better && (better.tokens?.total ?? 0) > 0) result.stats = better;
 
-  return finalizeFromRunResult(result, prompt, shim, startTime);
+  return finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions());
 }
 
 // ── Docker path ─────────────────────────────────────────────────────
@@ -537,7 +538,7 @@ async function executeDocker(
     };
   }
   await sbx.cleanup();
-  return finalizeFromRunResult(acc.build(0), prompt, shim, startTime);
+  return finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions());
 }
 
 /**
@@ -576,11 +577,23 @@ export class RunResultAccumulator {
   private msgCacheWrite = 0;
   private msgCost = 0;
 
+  // Extension status events (file-search / github / web-search), keyed by
+  // extension name. Emitted once each at run start; we keep the raw payload
+  // (minus type/extension) so build() can map them onto the RunResult.
+  private ext: Record<string, Record<string, unknown>> = {};
+
   feed(r: Record<string, unknown>): void {
     switch (r.type) {
       case "session":
         if (typeof r.id === "string") this.sessionId = r.id;
         break;
+      case "extension_status": {
+        if (typeof r.extension === "string") {
+          const { type: _t, extension: _e, ...rest } = r;
+          this.ext[r.extension] = rest;
+        }
+        break;
+      }
       case "message_end": {
         const m = r.message as
           | {
@@ -680,6 +693,29 @@ export class RunResultAccumulator {
       warnings: [],
     };
   }
+
+  /**
+   * Normalized extension status captured from `extension_status` events
+   * (file-search / github / web-search), or undefined if none reported.
+   * Decoupled from agentic-pi's `RunResult` type, which lags the runtime —
+   * the docker sandbox's agentic-pi emits file-search even when the harness's
+   * pinned `RunResult` type doesn't yet declare it.
+   */
+  extensions(): ExtensionStatusMap | undefined {
+    const out: ExtensionStatusMap = {};
+    for (const [name, v] of Object.entries(this.ext)) {
+      if (v && typeof v.status === "string") {
+        out[name] = {
+          status: v.status,
+          ...(typeof v.mode === "string" ? { mode: v.mode } : {}),
+          ...(typeof v.provider === "string" ? { provider: v.provider } : {}),
+          ...(typeof v.toolCount === "number" ? { toolCount: v.toolCount } : {}),
+          ...(typeof v.reason === "string" ? { reason: v.reason } : {}),
+        };
+      }
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -689,6 +725,7 @@ function finalizeFromRunResult(
   _prompt: string,
   shim: AgenticShim,
   startTime: number,
+  extensions?: ExtensionStatusMap,
 ): ExecutionResult {
   const durationMs = Date.now() - startTime;
   const stats = result.stats;
@@ -767,6 +804,7 @@ function finalizeFromRunResult(
     cacheReadInputTokens: cacheRead || undefined,
     cacheCreationInputTokens: cacheWrite || undefined,
     stopReason,
+    extensions,
   };
 }
 

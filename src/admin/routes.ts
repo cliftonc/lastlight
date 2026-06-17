@@ -26,6 +26,20 @@ import {
 import { getManagedRepos } from "../managed-repos.js";
 import type { PublicConfigBundle } from "../config.js";
 
+/**
+ * Parse the JSON `extension_status` column into the per-phase extensions map
+ * the dashboard renders. Tolerates null / malformed JSON (returns undefined)
+ * so a bad row never breaks the executions endpoint.
+ */
+function parseExtensionStatus(raw: string | undefined): unknown {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 export interface AdminConfig {
   stateDir: string;
   sessionsDir: string;
@@ -638,6 +652,7 @@ export function createAdminRoutes(
       outputTokens: r.outputTokens,
       apiDurationMs: r.apiDurationMs,
       stopReason: r.stopReason,
+      extensions: parseExtensionStatus(r.extensionStatus),
     }));
     return c.json({ executions });
   });

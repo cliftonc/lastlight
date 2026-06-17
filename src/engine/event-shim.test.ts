@@ -67,6 +67,35 @@ describe("AgenticShim per-message usage", () => {
     });
   });
 
+  it("writes an extension_status event as a system envelope line", async () => {
+    const { shim, filePath } = await makeShim();
+    shim.feed({ type: "session", id: "sess1" });
+    shim.feed({
+      type: "extension_status",
+      sessionId: "sess1",
+      extension: "file-search",
+      status: "configured",
+      mode: "override",
+      toolCount: 3,
+    });
+    await shim.flush();
+
+    const envelopes = await readEnvelopes(filePath);
+    const sys = envelopes.find(
+      (e) => e.type === "system" && e.subtype === "extension_status",
+    );
+    expect(sys).toBeDefined();
+    expect(sys).toMatchObject({
+      extension: "file-search",
+      status: "configured",
+      mode: "override",
+      toolCount: 3,
+    });
+    // The initial user (prompt) line precedes it — extension status lands near
+    // the top of the session log.
+    expect(envelopes[0]?.type).toBe("user");
+  });
+
   it("omits the usage block when the message carries no usage", async () => {
     const { shim, filePath } = await makeShim();
     shim.feed({ type: "session", id: "sess1" });

@@ -114,6 +114,11 @@ export interface ExecutionRecord {
   /** Result subtype, e.g. "success" or "error_max_turns". */
   stopReason?: string;
   /**
+   * JSON-serialized {@link ExtensionStatusMap} — which agentic-pi extensions
+   * (file-search / github / web-search) were active for this execution.
+   */
+  extensionStatus?: string;
+  /**
    * Workflow run that owns this execution. Scopes dedup: a fresh re-trigger
    * creates a new workflow_run_id, so `shouldRunPhase` won't find matching
    * rows from the prior run and will correctly run the phase again.
@@ -271,6 +276,10 @@ export class StateDb {
       // `workflow_runs.scratch` (which is read on every list query)
       // while still being available to the runner's resume path.
       "output_text TEXT",
+      // JSON map of agentic-pi extensions active for this execution
+      // (file-search / github / web-search → {status, mode?, provider?,
+      // toolCount?, reason?}). Surfaced in the dashboard phase-detail panel.
+      "extension_status TEXT",
     ]) {
       try {
         this.db.exec(`ALTER TABLE executions ADD COLUMN ${col}`);
@@ -346,6 +355,8 @@ export class StateDb {
       outputTokens?: number;
       apiDurationMs?: number;
       stopReason?: string;
+      /** JSON-serialized ExtensionStatusMap (extensions active this run). */
+      extensionStatus?: string;
     },
   ): void {
     this.db.prepare(`
@@ -362,7 +373,8 @@ export class StateDb {
           cache_read_input_tokens = COALESCE(?, cache_read_input_tokens),
           output_tokens = COALESCE(?, output_tokens),
           api_duration_ms = COALESCE(?, api_duration_ms),
-          stop_reason = COALESCE(?, stop_reason)
+          stop_reason = COALESCE(?, stop_reason),
+          extension_status = COALESCE(?, extension_status)
       WHERE id = ?
     `).run(
       new Date().toISOString(),
@@ -378,6 +390,7 @@ export class StateDb {
       result.outputTokens ?? null,
       result.apiDurationMs ?? null,
       result.stopReason ?? null,
+      result.extensionStatus ?? null,
       id,
     );
   }
@@ -664,6 +677,7 @@ export class StateDb {
         output_tokens   AS outputTokens,
         api_duration_ms AS apiDurationMs,
         stop_reason     AS stopReason,
+        extension_status AS extensionStatus,
         workflow_run_id AS workflowRunId
       FROM executions
       WHERE (workflow_run_id = ? OR (workflow_run_id IS NULL AND trigger_id = ?))
@@ -692,6 +706,7 @@ export class StateDb {
       outputTokens: (r.outputTokens as number | null) ?? undefined,
       apiDurationMs: (r.apiDurationMs as number | null) ?? undefined,
       stopReason: (r.stopReason as string | null) ?? undefined,
+      extensionStatus: (r.extensionStatus as string | null) ?? undefined,
       workflowRunId: (r.workflowRunId as string | null) ?? undefined,
     }));
   }

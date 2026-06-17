@@ -202,6 +202,14 @@ export interface WorkflowRunExecution {
   outputTokens?: number;
   apiDurationMs?: number;
   stopReason?: string;
+  /**
+   * agentic-pi extensions active for this phase, keyed by name
+   * ("file-search" | "github" | "web-search").
+   */
+  extensions?: Record<
+    string,
+    { status: string; mode?: string; provider?: string; toolCount?: number; reason?: string }
+  >;
 }
 
 export interface ContainerInfo {

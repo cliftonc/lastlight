@@ -307,6 +307,7 @@ async function runPhase(
       outputTokens: result.outputTokens,
       apiDurationMs: result.apiDurationMs,
       stopReason: result.stopReason,
+      extensionStatus: result.extensions ? JSON.stringify(result.extensions) : undefined,
     });
 
     return { result, executionId, skipped: false };

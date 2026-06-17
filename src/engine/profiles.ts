@@ -66,6 +66,29 @@ export interface ExecutorConfig {
 }
 
 /**
+ * Normalized status of one agentic-pi extension for a single run.
+ * Keyed by extension name ("file-search" | "github" | "web-search") in
+ * an {@link ExtensionStatusMap}. agentic-pi emits these as `extension_status`
+ * events at run start and on `RunResult.{fileSearch,github,webSearch}`;
+ * lastlight captures them so the dashboard and logs show which extensions
+ * (e.g. FFF file-search) were actually active.
+ */
+export interface ExtensionStatus {
+  /** "configured" when the extension loaded, "skipped" otherwise. */
+  status: string;
+  /** file-search only: "override" | "tools-only" | "tools-and-ui". */
+  mode?: string;
+  /** web-search only: the resolved search provider. */
+  provider?: string;
+  /** Number of tools the extension registered. */
+  toolCount?: number;
+  /** Why it was skipped (e.g. "no-credentials", "resolve-failed"). */
+  reason?: string;
+}
+
+export type ExtensionStatusMap = Record<string, ExtensionStatus>;
+
+/**
  * Result from an agent execution.
  */
 export interface ExecutionResult {
@@ -90,6 +113,12 @@ export interface ExecutionResult {
   apiDurationMs?: number;
   /** Mapped stop reason ("success" / "error_*" / etc.). */
   stopReason?: string;
+  /**
+   * Which agentic-pi extensions were active for this run, keyed by name.
+   * Surfaced in the dashboard's phase-detail panel and persisted to the
+   * `executions.extension_status` column.
+   */
+  extensions?: ExtensionStatusMap;
 }
 
 export type GitAccessProfile = "read" | "issues-write" | "review-write" | "repo-write";

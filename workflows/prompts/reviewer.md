@@ -12,7 +12,10 @@ Read {{issueDir}}/architect-plan.md and executor-summary.md for context.
 
 CHECK:
 1. Does implementation match the plan?
-2. Do tests pass?
+2. Tests: the executor already ran the FULL suite and pasted results in
+   executor-summary.md — review that output rather than re-running everything.
+   Independently run only the typecheck command and the tests covering the
+   changed files (your fast, independent signal).
 3. Security concerns?
 4. Logic errors or missed edge cases?
 
