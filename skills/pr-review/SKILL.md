@@ -33,6 +33,11 @@ ls -la         # do you see <repo>/.git/ in the listing?
   cd {{repo}}
   ```
 
+**Only the source is pre-cloned — dependencies are NOT installed** (no
+`node_modules` etc.). A diff-only read doesn't need them. But if the PR's
+correctness depends on it building or tests passing, install first and verify —
+see "Verify by building" in step 2.
+
 ### Target selection
 
 The runner provides PR context vars. Use them in this order:
@@ -76,6 +81,27 @@ Using MCP tools:
 - Trace data flow through modified functions
 - Check callers of modified functions for regression risk
 - Check if tests cover actual risk areas, not just happy paths
+
+#### Verify by building
+
+When the PR's correctness depends on it compiling, type-checking, or tests
+passing — build config, type/export changes, packaging, non-trivial logic — do
+NOT just reason statically. Build and run, then report real results.
+
+Dependencies are not pre-installed, so install them first. Detect the package
+manager from the lockfile and use the frozen/CI variant:
+- `package-lock.json` → `npm ci`
+- `pnpm-lock.yaml` → `corepack pnpm install --frozen-lockfile`
+- `yarn.lock` → `corepack yarn install --frozen-lockfile`
+
+Then run the project's own build/test commands (check `package.json` scripts /
+CI config) and cite the actual output in your findings. The sandbox egress
+allowlist permits the public package registries, so install will work.
+
+Skip this for pure style/docs PRs — installing just to nitpick formatting is
+wasted effort. If you genuinely can't verify (e.g. install fails), say so
+explicitly and scope your review to what you *could* check — don't imply you
+verified something you didn't.
 
 ### 3. Categorize findings
 

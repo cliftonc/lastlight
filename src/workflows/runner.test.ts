@@ -27,7 +27,7 @@ vi.mock("child_process", () => ({
 import { execSync } from "child_process";
 import { executeAgent } from "../engine/agent-executor.js";
 import { loadPromptTemplate } from "./loader.js";
-import { runWorkflow, gitAccessProfileForWorkflow } from "./runner.js";
+import { runWorkflow, gitAccessProfileForWorkflow, gitSandboxAccessForWorkflow } from "./runner.js";
 
 const mockExecuteAgent = vi.mocked(executeAgent);
 const mockLoadPromptTemplate = vi.mocked(loadPromptTemplate);
@@ -1137,4 +1137,17 @@ describe("gitAccessProfileForWorkflow — security workflows", () => {
   it("returns read for unknown workflow", () => {
     expect(gitAccessProfileForWorkflow("unknown-workflow")).toBe("read");
   });
+});
+
+describe("gitSandboxAccessForWorkflow — App PEM never enters the sandbox", () => {
+  // The github extension skips (pem-unreadable) instead of falling back to
+  // GITHUB_TOKEN when App creds are present but the PEM is unreadable in the
+  // sandbox. The harness mints a scoped token, so we never forward App creds.
+  it.each(["build", "pr-fix", "security-feedback", "pr-review", "issue-triage"])(
+    "sets allowMcpAppAuth=false for %s (even repo-write)",
+    (wf) => {
+      const access = gitSandboxAccessForWorkflow(wf, "owner", "repo");
+      expect(access.allowMcpAppAuth).toBe(false);
+    },
+  );
 });

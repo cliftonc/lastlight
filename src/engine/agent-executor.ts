@@ -102,10 +102,14 @@ export async function executeAgent(
   // defense in depth so a downstream tool gating regression can't burn
   // more access than the profile allowed.
   //
-  // GITHUB_APP_* env vars are forwarded to agentic-pi *only* when the
-  // access profile explicitly opts into App PEM access (repo-write or
-  // explicitly allowMcpAppAuth=true). All other runs see just
-  // `GITHUB_TOKEN` so they can't mint elevated tokens themselves.
+  // GITHUB_APP_* env vars are forwarded to agentic-pi *only* when the access
+  // profile opts into App PEM access via `allowMcpAppAuth`. That is currently
+  // never set (see gitSandboxAccessForWorkflow): the github extension can't
+  // read the PEM in the sandbox and skips rather than falling back, so we keep
+  // the App key out entirely and every run uses just the minted `GITHUB_TOKEN`
+  // below — which also stops agents minting elevated tokens themselves. The
+  // branch is retained so per-profile App auth can be re-enabled if the
+  // sandbox-side PEM is ever materialized.
   const ghEnv: Record<string, string> = {};
   let mintedToken: string | undefined;
   const access = opts?.githubAccess;

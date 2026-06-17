@@ -212,7 +212,7 @@ export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProf
   }
 }
 
-function gitSandboxAccessForWorkflow(
+export function gitSandboxAccessForWorkflow(
   workflowName: string,
   owner: string,
   repo: string,
@@ -223,8 +223,15 @@ function gitSandboxAccessForWorkflow(
     owner,
     repo,
     profile,
-    // Only high-trust code-writing workflows get sandbox-side app-key access.
-    allowMcpAppAuth: profile === "repo-write",
+    // Never forward the App PEM into sandboxes. agentic-pi's github extension
+    // prioritizes App auth whenever GITHUB_APP_* are all present and *skips
+    // entirely* (status: pem-unreadable) when the PEM isn't readable in the
+    // sandbox — which it never is (ALLOW_APP_PEM is not wired up, so the
+    // sandbox-side PEM copy is never materialized). It does NOT fall back to
+    // the minted GITHUB_TOKEN. The harness already mints a profile-scoped
+    // token and forwards it as GITHUB_TOKEN, so the agent gets github tools in
+    // static-token mode without the App private key ever entering the sandbox.
+    allowMcpAppAuth: false,
     prePopulateBranch,
   };
 }
