@@ -32,9 +32,18 @@ and won't exist in every backend.
 
 **All work is coordinated through GitHub issues.** Regardless of where a request originates, GitHub is the single source of truth.
 
-- **If an issue already exists:** Use it. Post context, progress, and results as comments.
+- **If an issue already exists:** Use it for context, and post genuine
+  *deliverables* there when a phase asks for one (a triage decision, a
+  published spec, a PR review, a created-issue link).
 - **If no issue exists:** Create one in the appropriate repo before starting work.
-- **Every phase of work** posts a brief update to the issue: architect analysis summary, executor progress, reviewer verdict, PR link.
+- **Do NOT post routine per-phase progress comments** ("starting executor",
+  "implementation complete", "PR opened", etc.). For multi-phase
+  build/explore/pr-fix runs the harness already posts and live-updates a single
+  status checklist on the issue/thread — your own progress comments just
+  duplicate it and create noise. Write each phase's artifacts (plan, summary,
+  verdict) to files under the issue dir on the branch (the harness links them
+  from the checklist); only post a comment when a phase's prompt explicitly
+  tells you to.
 
 ## Git Authentication
 

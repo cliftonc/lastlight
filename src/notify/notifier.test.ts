@@ -2,12 +2,13 @@ import { describe, it, expect, vi } from "vitest";
 import { ProgressNotifier } from "./notifier.js";
 import type { NotifierTransport, ProgressModel } from "./types.js";
 
-function fakeTransport() {
+function fakeTransport(opts: { terminalPing?: boolean } = {}) {
   const published: string[] = [];
   const notes: string[] = [];
   const t: NotifierTransport = {
     publish: vi.fn(async (md: string) => { published.push(md); }),
     note: vi.fn(async (md: string) => { notes.push(md); }),
+    terminalPing: opts.terminalPing,
   };
   return { t, published, notes };
 }
@@ -61,6 +62,16 @@ describe("ProgressNotifier", () => {
     const n = new ProgressNotifier([bad, ok.t]);
     await expect(n.start(model)).resolves.toBeUndefined();
     expect(ok.published).toHaveLength(1); // healthy transport still got it
+  });
+
+  it("noteTerminal only hits transports that want a terminal ping", async () => {
+    const gh = fakeTransport({ terminalPing: false });   // GitHub: no terminal ping
+    const slack = fakeTransport({ terminalPing: true });  // Slack: wants it
+    const n = new ProgressNotifier([gh.t, slack.t]);
+    await n.start(model);
+    await n.noteTerminal("✅ build complete — PR #1.");
+    expect(slack.notes).toEqual(["✅ build complete — PR #1."]);
+    expect(gh.notes).toEqual([]);
   });
 
   it("no-ops cleanly with zero transports", async () => {

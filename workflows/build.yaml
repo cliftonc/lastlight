@@ -32,7 +32,7 @@ phases:
       contains_READY:
         action: continue
     messages:
-      on_success: "**Guardrails check: READY** — verified. Starting architect analysis..."
+      on_success: "READY — foundational tooling verified"
       on_blocked: |
         **Guardrails check: BLOCKED** — missing foundational tooling.
 
@@ -54,12 +54,9 @@ phases:
       **To proceed:** comment `@last-light approve`
       **To abort:** comment `@last-light reject [reason]`
     messages:
-      on_success: |
-        **Architect analysis complete.**
-        - Branch: `{{branch}}`
-        - Plan: `{{issueDir}}/architect-plan.md`
-
-        Starting implementation...
+      # Single-line messages become the one-line detail on the checklist step,
+      # so keep them concise and link the artifact on the branch.
+      on_success: "Plan ready — [view plan]({{branchUrl architect-plan.md}})"
 
   - name: executor
     label: Executor
@@ -67,12 +64,9 @@ phases:
     model: "{{models.executor}}"
     variant: "{{variants.executor}}"
     messages:
-      on_start: "**Starting executor** — implementing the architect's plan..."
-      on_skipped_done: "**Executor** already completed — proceeding to review..."
-      on_success: |
-        **Implementation complete.** Running independent review...
-        - Branch: `{{branch}}`
-        - Summary: `{{issueDir}}/executor-summary.md`
+      on_start: "implementing the architect's plan…"
+      on_skipped_done: "already completed"
+      on_success: "Implemented — [summary]({{branchUrl executor-summary.md}})"
 
   - name: reviewer
     label: Reviewer
@@ -89,8 +83,8 @@ phases:
         re_review_prompt: prompts/re-reviewer.md
       approval_gate: post_reviewer
       messages:
-        on_cycle_start: "**Starting reviewer** (cycle {{cycle}}) — independent verification..."
-        on_approved: "**Review: APPROVED** — proceeding to PR."
+        on_cycle_start: "independent verification (cycle {{cycle}})…"
+        on_approved: "Approved — [verdict]({{branchUrl reviewer-verdict.md}})"
         on_request_changes: "**Review: REQUEST_CHANGES** — fixing issues (cycle {{cycle}}/{{maxCycles}})..."
         on_fix_start: "**Starting fix loop** (cycle {{cycle}}/{{maxCycles}}) — addressing reviewer feedback..."
         on_fix_failed: "Fix cycle {{cycle}} failed. Proceeding to PR with known issues."
@@ -111,4 +105,4 @@ phases:
     on_success:
       set_phase: complete
     messages:
-      on_start: "**Creating PR** — packaging changes for review..."
+      on_start: "packaging changes for review…"

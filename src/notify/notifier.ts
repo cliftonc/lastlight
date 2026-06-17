@@ -75,10 +75,18 @@ export class ProgressNotifier implements ProgressReporter {
   }
 
   note(markdown: string): Promise<void> {
+    return this.noteTo(this.transports, markdown);
+  }
+
+  noteTerminal(markdown: string): Promise<void> {
+    return this.noteTo(this.transports.filter((t) => t.terminalPing), markdown);
+  }
+
+  private noteTo(transports: NotifierTransport[], markdown: string): Promise<void> {
     return this.enqueue(async () => {
-      if (!markdown.trim()) return;
+      if (!markdown.trim() || transports.length === 0) return;
       await Promise.all(
-        this.transports.map((t) =>
+        transports.map((t) =>
           t.note(markdown).catch((err: unknown) => {
             const m = err instanceof Error ? err.message : String(err);
             console.warn(`[notifier] note failed: ${m}`);

@@ -54,11 +54,18 @@ export interface NotifierTransport {
   /** Create-or-update the single status surface with the rendered markdown. */
   publish(markdown: string): Promise<void>;
   /**
-   * Post a *new, separate* message (not an edit). Used for the terminal ping
-   * and approval prompts — moments worth an actual notification, since an
-   * in-place edit is silent on both platforms.
+   * Post a *new, separate* message (not an edit). Used for approval prompts —
+   * moments worth an actual notification, since an in-place edit is silent.
    */
   note(markdown: string): Promise<void>;
+  /**
+   * Whether this surface wants a separate *completion* ping at the end of a
+   * run. Slack sets this (its in-place edits are silent and it has no other
+   * signal); GitHub leaves it false — the edited checklist plus the
+   * PR-opened event already notify watchers, so a terminal comment would just
+   * be noise. Default false.
+   */
+  readonly terminalPing?: boolean;
 }
 
 /**
@@ -76,8 +83,13 @@ export interface ProgressReporter {
    * or not found.
    */
   insertStep(step: ProgressStep, beforeKey?: string): Promise<void>;
-  /** Post a standalone message (terminal ping / approval prompt). */
+  /** Post a standalone message to every surface (e.g. an approval prompt). */
   note(markdown: string): Promise<void>;
+  /**
+   * Post the run's completion message, but only to surfaces that want a
+   * terminal ping (Slack) — GitHub is left with just the finished checklist.
+   */
+  noteTerminal(markdown: string): Promise<void>;
 }
 
 /** Persisted in-place-update handles, stored under `workflow_runs.scratch.notifier`. */

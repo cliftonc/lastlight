@@ -18,6 +18,8 @@ export interface GitHubTransportDeps {
 }
 
 export class GitHubTransport implements NotifierTransport {
+  /** No terminal ping — the finished checklist + the PR-opened event suffice. */
+  readonly terminalPing = false;
   private commentId?: number;
 
   constructor(private readonly deps: GitHubTransportDeps) {

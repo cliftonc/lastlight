@@ -1207,11 +1207,16 @@ export async function runWorkflow(
   const success = !anyFailed;
 
   let prNumber: number | undefined;
+  let prUrl: string | undefined;
   const terminalPhase = [...definition.phases].reverse().find((p) => p.on_success?.set_phase);
   if (terminalPhase) {
     const terminalResult = phases.find((p) => p.phase === terminalPhase.name);
     const prMatch = terminalResult?.output?.match(/#(\d+)/);
     if (prMatch) prNumber = parseInt(prMatch[1], 10);
+    // The PR phase outputs the PR URL; pull it out so we can link it straight
+    // from the checklist instead of a separate "PR opened" comment.
+    const urlMatch = terminalResult?.output?.match(/https?:\/\/[^\s)]+\/pull\/\d+/);
+    if (urlMatch) prUrl = urlMatch[0];
     if (success && terminalPhase.on_success?.set_phase) {
       persistPhase(
         terminalPhase.on_success.set_phase,
@@ -1229,12 +1234,17 @@ export async function runWorkflow(
     failWorkflow(firstFailure?.error || "workflow failed");
   }
 
-  // Terminal ping. The in-place checklist edits are silent on both platforms,
-  // so post one standalone closing message when the checklist is active — the
-  // single "real" notification of the run's outcome.
   if (reporter) {
+    // Put the PR link in the checklist itself (on the terminal step) so the
+    // list is self-contained — no separate "PR opened" comment.
+    if (success && prNumber && terminalPhase) {
+      const link = prUrl ? `[PR #${prNumber}](${prUrl})` : `PR #${prNumber}`;
+      await reporter.step(terminalPhase.name, "done", link);
+    }
+    // Completion ping — only to surfaces that want one (Slack). GitHub keeps
+    // just the finished checklist; the PR-opened event already notifies there.
     const prSuffix = prNumber ? ` — PR #${prNumber}` : "";
-    await reporter.note(
+    await reporter.noteTerminal(
       success
         ? `✅ **${definition.name} complete**${prSuffix}.`
         : `❌ **${definition.name} failed** — see the checklist above for the failing step.`,

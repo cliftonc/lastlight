@@ -18,6 +18,8 @@ export interface SlackTransportDeps {
 }
 
 export class SlackTransport implements NotifierTransport {
+  /** Slack edits are silent and there's no other signal — so it wants the ping. */
+  readonly terminalPing = true;
   private ts?: string;
 
   constructor(private readonly deps: SlackTransportDeps) {

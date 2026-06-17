@@ -395,6 +395,7 @@ async function main() {
           step: (k, s, d) => notifier?.step(k, s, d) ?? Promise.resolve(),
           insertStep: (st, b) => notifier?.insertStep(st, b) ?? Promise.resolve(),
           note: (m) => notifier?.note(m) ?? Promise.resolve(),
+          noteTerminal: (m) => notifier?.noteTerminal(m) ?? Promise.resolve(),
         }
       : undefined;
 

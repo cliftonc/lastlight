@@ -30,9 +30,10 @@ Use the MCP tool create_pull_request with the following:
 
 Note: There are unresolved reviewer issues after {{review.cycles}} fix cycles. See reviewer-verdict.md on the branch.{{/if}}
 
-Then use add_issue_comment on issue #{{issueNumber}} to post the PR link.
+Do NOT post a comment with the PR link — the harness adds it to the status
+checklist on the issue automatically. Just create the PR.
 
 Update status.md: current_phase = complete, add pr_number.
 git add .lastlight/ && git commit -m "status: PR created for #{{issueNumber}}" && git push origin HEAD
 
-OUTPUT: The PR number and URL.
+OUTPUT: The PR number and URL (so the harness can link the PR from the checklist).

@@ -67,6 +67,13 @@ describe("SlackTransport", () => {
     expect(saved).toEqual(["111.222"]);
   });
 
+  it("wants a terminal ping (silent edits, no other signal) unlike GitHub", () => {
+    const slack = new SlackTransport({ slack: {} as unknown as SlackConnector, channel: "C", thread: "T" });
+    const gh = new GitHubTransport({ github: {} as unknown as GitHubClient, owner: "o", repo: "r", issueNumber: 1 });
+    expect(slack.terminalPing).toBe(true);
+    expect(gh.terminalPing).toBeFalsy();
+  });
+
   it("re-attaches to an existing ts (resume) and only updates", async () => {
     const sendMessage = vi.fn(async () => "x");
     const updateMessage = vi.fn(async () => {});
