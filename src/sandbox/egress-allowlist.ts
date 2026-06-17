@@ -99,3 +99,41 @@ export const DEFAULT_ALLOWLIST: readonly string[] = [
  * nginx-egress + coredns-open pair — this sentinel is for gondolin only.
  */
 export const ALLOW_ALL_SENTINEL = "*";
+
+const PRIVATE_OR_INTERNAL_HOST_RE = /^(localhost|metadata\.google\.internal|169\.254\.169\.254)$|^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/i;
+
+export function normalizeAllowlistHost(host: string): string | null {
+  const trimmed = host.trim().toLowerCase();
+  if (!trimmed) return null;
+  let parsed = trimmed;
+  try {
+    parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
+  } catch {
+    parsed = trimmed.split("/")[0]?.split(":")[0] || "";
+  }
+  parsed = parsed.replace(/^\.+|\.+$/g, "");
+  if (!parsed || parsed.includes("*") || PRIVATE_OR_INTERNAL_HOST_RE.test(parsed)) return null;
+  return parsed;
+}
+
+export function mergeAllowlist(base: readonly string[], extra: readonly string[] = []): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of [...base, ...extra]) {
+    const host = normalizeAllowlistHost(candidate);
+    if (host && !seen.has(host)) {
+      seen.add(host);
+      out.push(host);
+    }
+  }
+  return out;
+}
+
+export function collectorHostsFromOtelEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return mergeAllowlist([], [
+    env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+    env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+  ].filter((v): v is string => typeof v === "string" && v.length > 0));
+}

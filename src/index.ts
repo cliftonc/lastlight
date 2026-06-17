@@ -16,6 +16,7 @@ import { dispatchCronWorkflow } from "./cron/fanout.js";
 import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { writeEgressFirewallConfigs } from "./sandbox/egress-firewall-config.js";
+import { initTelemetry, shutdownTelemetry } from "./telemetry/index.js";
 import { authMiddleware } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github.js";
 import { screenForInjection, flagPrefix } from "./engine/screen.js";
@@ -90,6 +91,12 @@ async function main() {
     process.exit(78); // EX_CONFIG — sysexits.h convention
   }
   validateConfig(config);
+  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version?: string };
+  await initTelemetry(config.otel, { packageVersion: packageJson.version });
+  let telemetryShutdownStarted = false;
+  console.log(config.otel.enabled
+    ? `[otel] enabled service=${config.otel.serviceName} forwardToSandbox=${config.otel.forwardToSandbox} includeContent=${config.otel.includeContent}`
+    : "[otel] disabled");
 
   console.log(`[config] Port: ${config.port}, Model: ${config.model}`);
   const modelOverrides = Object.entries(config.models).filter(([k]) => k !== "default");
@@ -112,7 +119,10 @@ async function main() {
   // the allowlist source of truth. Only meaningful for the docker backend;
   // cheap enough to do unconditionally so a backend switch doesn't leave
   // stale configs on disk.
-  const proxyDir = writeEgressFirewallConfigs(config.stateDir);
+  const proxyDir = writeEgressFirewallConfigs(
+    config.stateDir,
+    config.otel.enabled && config.otel.forwardToSandbox ? config.otel.collectorHosts : [],
+  );
   console.log(`[state] Egress firewall configs: ${proxyDir}`);
 
   // Initialize state database first — ChatRunner needs SessionManager
@@ -485,6 +495,7 @@ async function main() {
           sandboxDir: config.sandboxDir,
           sessionsDir: config.sessionsDir,
           sandbox: config.sandbox,
+          otel: config.otel,
         },
         callbacks,
         db,
@@ -1295,6 +1306,7 @@ async function main() {
       sandboxDir: config.sandboxDir,
       sessionsDir: config.sessionsDir,
       sandbox: config.sandbox,
+      otel: config.otel,
     },
     models: config.models,
     variants: config.variants,
@@ -1312,6 +1324,10 @@ async function main() {
     console.log("\n[main] Shutting down...");
     cron.stopAll();
     await registry.stopAll();
+    if (!telemetryShutdownStarted) {
+      telemetryShutdownStarted = true;
+      await shutdownTelemetry();
+    }
     db.close();
     process.exit(0);
   };

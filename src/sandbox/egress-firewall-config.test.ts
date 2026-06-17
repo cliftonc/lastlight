@@ -57,6 +57,11 @@ describe("nginx strict config", () => {
     // black-hole default. Pin the contract so it can't regress.
     expect(conf).toMatch(/map\s+\$ssl_preread_server_name\s+\$upstream_target\s*\{\s*\n\s*hostnames;/);
   });
+
+  it("includes extra collector hosts in the strict allowlist", () => {
+    const withCollector = renderNginxStrictConf(["otel.example.com"]);
+    expect(withCollector).toContain(".otel.example.com $ssl_preread_server_name:443;");
+  });
 });
 
 describe("nginx open config", () => {
@@ -95,6 +100,10 @@ describe("coredns strict Corefile", () => {
 
   it("catches every unmatched query with an NXDOMAIN template", () => {
     expect(conf).toMatch(/template\s+IN\s+ANY\s*\{[\s\S]*rcode\s+NXDOMAIN[\s\S]*\}/);
+  });
+
+  it("includes extra collector hosts in strict CoreDNS matches", () => {
+    expect(renderCorefileStrict(["otel.example.com"])).toContain("(^|\\.)otel\\.example\\.com\\.$");
   });
 });
 

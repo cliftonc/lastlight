@@ -401,6 +401,12 @@ Sandbox egress (docker backend only):
   coredns sidecar passed to `docker run --dns ...` (defaults: `172.30.0.10`
   and `172.30.0.11`, matching the static IPs in docker-compose.yml).
 
+OpenTelemetry (optional):
+
+- Disabled by default. Enable with `LASTLIGHT_OTEL_ENABLED=true`; standard `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES` env vars configure exporter endpoints/headers/resources.
+- Last Light exports workflow/phase/agent/chat metadata by default. `LASTLIGHT_OTEL_INCLUDE_CONTENT=true` opts into sensitive prompt/message/tool-result content (truncated).
+- `LASTLIGHT_OTEL_FORWARD_TO_SANDBOX=true` forwards allowlisted `OTEL_*` env vars into agentic-pi workflow sandboxes; collector hosts are derived from endpoint env vars and `LASTLIGHT_OTEL_COLLECTOR_HOSTS` for strict egress allowlists.
+
 Web search (optional, opt-in per workflow phase):
 
 - `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY` / `EXA_API_KEY` — set any one

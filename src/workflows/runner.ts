@@ -19,6 +19,7 @@ import { renderTemplate, type TemplateContext } from "./templates.js";
 import { evalUntilExpression } from "./loop-eval.js";
 import { buildDag, getReadyNodes, getNodesToSkip, isComplete } from "./dag.js";
 import type { ProgressReporter, StepStatus, ProgressStep } from "../notify/types.js";
+import { recordError, recordExecutionMetrics, withSpan } from "../telemetry/index.js";
 
 /**
  * Reject shell commands containing mustache template markers to prevent
@@ -202,6 +203,11 @@ function pickResult(r: ExecutionResult): Pick<ExecutionResult, "success" | "outp
   return { success: r.success, output: r.output, error: r.error };
 }
 
+function issueNumberFromTrigger(triggerId: string): number | undefined {
+  const m = triggerId.match(/#(\d+)$/);
+  return m ? Number(m[1]) : undefined;
+}
+
 export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProfile {
   switch (workflowName) {
     case "build":
@@ -267,72 +273,100 @@ async function runPhase(
   | { skipped: true; reason: "running" | "done" }
 > {
   const dedupKey = `${workflowName}:${phaseName}`;
-  if (db) {
-    const status = db.shouldRunPhase(dedupKey, triggerId, workflowRunId);
+  const attrs = {
+    "workflow.name": workflowName,
+    "phase.name": phaseName,
+    "workflow.run_id": workflowRunId,
+    "trigger.id": triggerId,
+    "task.id": taskId,
+    repo: githubAccess?.repo,
+    "issue.number": issueNumberFromTrigger(triggerId),
+    "sandbox.backend": config.sandbox,
+    model: modelOverride || config.model,
+  };
+  return withSpan("lastlight.workflow.phase", attrs, async (span) => {
+    if (db) {
+      const status = db.shouldRunPhase(dedupKey, triggerId, workflowRunId);
 
-    if (status === "running") {
-      const alive = await isContainerAlive(taskId);
-      if (alive) {
-        console.log(`[runner] Phase ${phaseName} is already running (container alive) — skipping`);
-        return { skipped: true, reason: "running" };
+      if (status === "running") {
+        const alive = await isContainerAlive(taskId);
+        if (alive) {
+          console.log(`[runner] Phase ${phaseName} is already running (container alive) — skipping`);
+          span?.addEvent("lastlight.workflow.phase.skipped", { reason: "running" });
+          return { skipped: true, reason: "running" };
+        }
+        console.log(`[runner] Phase ${phaseName} was running but container is dead — cleaning up`);
+        db.markStaleAsFailed(dedupKey, triggerId, workflowRunId);
+      } else if (status === "done") {
+        console.log(`[runner] Phase ${phaseName} already completed successfully — skipping`);
+        span?.addEvent("lastlight.workflow.phase.skipped", { reason: "done" });
+        return { skipped: true, reason: "done" };
       }
-      console.log(`[runner] Phase ${phaseName} was running but container is dead — cleaning up`);
-      db.markStaleAsFailed(dedupKey, triggerId, workflowRunId);
-    } else if (status === "done") {
-      console.log(`[runner] Phase ${phaseName} already completed successfully — skipping`);
-      return { skipped: true, reason: "done" };
+
+      const executionId = randomUUID();
+      db.recordStart({
+        id: executionId,
+        triggerType: "webhook",
+        triggerId,
+        skill: dedupKey,
+        repo: githubAccess?.repo,
+        issueNumber: issueNumberFromTrigger(triggerId),
+        startedAt: new Date().toISOString(),
+        workflowRunId,
+      });
+
+      const baseConfig = modelOverride ? { ...config, model: modelOverride } : config;
+      const phaseConfigBase = variantOverride ? { ...baseConfig, variant: variantOverride } : baseConfig;
+      const phaseConfig: ExecutorConfig = {
+        ...phaseConfigBase,
+        telemetry: { workflowName, phaseName, triggerId, workflowRunId },
+      };
+      try {
+        const result = await executeAgent(prompt, phaseConfig, {
+          taskId,
+          githubAccess,
+          // Persist the session id as soon as it arrives so the dashboard can
+          // show live agent logs for an in-flight phase, not just completed ones.
+          onSessionId: (sessionId) => {
+            try {
+              db.recordSessionId(executionId, sessionId);
+            } catch (err) {
+              console.warn(`[runner] Failed to persist session id mid-run for ${phaseName}:`, err);
+            }
+          },
+        });
+
+        db.recordFinish(executionId, {
+          success: result.success,
+          error: result.error,
+          turns: result.turns,
+          durationMs: result.durationMs,
+          sessionId: result.sessionId,
+          costUsd: result.costUsd,
+          inputTokens: result.inputTokens,
+          cacheCreationInputTokens: result.cacheCreationInputTokens,
+          cacheReadInputTokens: result.cacheReadInputTokens,
+          outputTokens: result.outputTokens,
+          apiDurationMs: result.apiDurationMs,
+          stopReason: result.stopReason,
+          extensionStatus: result.extensions ? JSON.stringify(result.extensions) : undefined,
+        });
+        span?.setAttributes({ success: result.success, stop_reason: result.stopReason ?? "unknown" });
+        recordExecutionMetrics("phase", { ...attrs, success: result.success, stop_reason: result.stopReason, durationMs: result.durationMs, costUsd: result.costUsd, inputTokens: result.inputTokens, outputTokens: result.outputTokens });
+        return { result, executionId, skipped: false };
+      } catch (err) {
+        recordError("phase", err, attrs);
+        throw err;
+      }
     }
 
-    const executionId = randomUUID();
-    db.recordStart({
-      id: executionId,
-      triggerType: "webhook",
-      triggerId,
-      skill: dedupKey,
-      repo: undefined,
-      issueNumber: undefined,
-      startedAt: new Date().toISOString(),
-      workflowRunId,
-    });
-
     const baseConfig = modelOverride ? { ...config, model: modelOverride } : config;
-    const phaseConfig = variantOverride ? { ...baseConfig, variant: variantOverride } : baseConfig;
-    const result = await executeAgent(prompt, phaseConfig, {
-      taskId,
-      githubAccess,
-      // Persist the session id as soon as it arrives so the dashboard can
-      // show live agent logs for an in-flight phase, not just completed ones.
-      onSessionId: (sessionId) => {
-        try {
-          db.recordSessionId(executionId, sessionId);
-        } catch (err) {
-          console.warn(`[runner] Failed to persist session id mid-run for ${phaseName}:`, err);
-        }
-      },
-    });
-
-    db.recordFinish(executionId, {
-      success: result.success,
-      error: result.error,
-      turns: result.turns,
-      durationMs: result.durationMs,
-      sessionId: result.sessionId,
-      costUsd: result.costUsd,
-      inputTokens: result.inputTokens,
-      cacheCreationInputTokens: result.cacheCreationInputTokens,
-      cacheReadInputTokens: result.cacheReadInputTokens,
-      outputTokens: result.outputTokens,
-      apiDurationMs: result.apiDurationMs,
-      stopReason: result.stopReason,
-      extensionStatus: result.extensions ? JSON.stringify(result.extensions) : undefined,
-    });
-
-    return { result, executionId, skipped: false };
-  }
-
-  const phaseConfig = modelOverride ? { ...config, model: modelOverride } : config;
-  const result = await executeAgent(prompt, phaseConfig, { taskId, githubAccess });
-  return { result, skipped: false };
+    const phaseConfigBase = variantOverride ? { ...baseConfig, variant: variantOverride } : baseConfig;
+    const phaseConfig: ExecutorConfig = { ...phaseConfigBase, telemetry: { workflowName, phaseName, triggerId, workflowRunId } };
+    const result = await executeAgent(prompt, phaseConfig, { taskId, githubAccess });
+    recordExecutionMetrics("phase", { ...attrs, success: result.success, stop_reason: result.stopReason, durationMs: result.durationMs, costUsd: result.costUsd, inputTokens: result.inputTokens, outputTokens: result.outputTokens });
+    return { result, skipped: false };
+  });
 }
 
 // ── Resume logic ─────────────────────────────────────────────────────────────

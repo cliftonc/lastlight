@@ -17,6 +17,7 @@ describe("loadConfig overlay", () => {
     vi.stubEnv("OPENCODE_MODEL", "");
     vi.stubEnv("OPENCODE_MODELS", "");
     vi.stubEnv("LASTLIGHT_OVERLAY_DIR", "");
+    vi.stubEnv("OTEL_EXPORTER_OTLP_HEADERS", "");
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -60,6 +61,19 @@ describe("loadConfig overlay", () => {
     mkdirSync(join(overlay, "secrets"));
     vi.stubEnv("LASTLIGHT_OVERLAY_DIR", overlay);
     expect(() => loadConfig()).not.toThrow();
+  });
+
+  it("merges overlay otel config and keeps OTLP header env out of public config", () => {
+    const overlay = tmp();
+    writeFileSync(join(overlay, "config.yaml"), `managedRepos:\n  - acme/repo\notel:\n  enabled: true\n  includeContent: true\n  forwardToSandbox: false\n  collectorHosts:\n    - otel.example.com\n`);
+    vi.stubEnv("LASTLIGHT_OVERLAY_DIR", overlay);
+    vi.stubEnv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer secret");
+    const cfg = loadConfig();
+    expect(cfg.otel.enabled).toBe(true);
+    expect(cfg.otel.includeContent).toBe(true);
+    expect(cfg.otel.forwardToSandbox).toBe(false);
+    expect(cfg.otel.collectorHosts).toEqual(["otel.example.com"]);
+    expect(JSON.stringify(cfg.publicConfig)).not.toContain("authorization=Bearer secret");
   });
 
   it("redacts secret-looking keys an operator mistakenly put in config.yaml", () => {

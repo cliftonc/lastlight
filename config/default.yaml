@@ -8,6 +8,14 @@ models:
 
 variants: {}
 
+otel:
+  enabled: false
+  serviceName: lastlight
+  includeContent: false
+  forwardToSandbox: true
+  strict: false
+  collectorHosts: []
+
 sandbox:
   backend: gondolin
   maxTurns: 200

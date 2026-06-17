@@ -5,6 +5,9 @@ import {
   GITHUB_HOSTS,
   PACKAGE_REGISTRY_HOSTS,
   PROVIDER_HOSTS,
+  collectorHostsFromOtelEnv,
+  mergeAllowlist,
+  normalizeAllowlistHost,
 } from "./egress-allowlist.js";
 
 describe("egress-allowlist source of truth", () => {
@@ -46,5 +49,23 @@ describe("egress-allowlist source of truth", () => {
 
   it("ALLOW_ALL_SENTINEL is the wildcard string the gondolin matcher honours", () => {
     expect(ALLOW_ALL_SENTINEL).toBe("*");
+  });
+
+  it("normalizes and merges extra allowlist hosts", () => {
+    expect(normalizeAllowlistHost("https://Collector.Example.com:4318/v1/traces")).toBe("collector.example.com");
+    expect(normalizeAllowlistHost("169.254.169.254")).toBeNull();
+    expect(mergeAllowlist(["github.com"], ["GitHub.com", "otel.example.com"])).toEqual([
+      "github.com",
+      "otel.example.com",
+    ]);
+  });
+
+  it("derives collector hosts from OTEL endpoint env vars", () => {
+    expect(collectorHostsFromOtelEnv({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://otel.example.com:4318",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://traces.example.com/v1/traces",
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "not a url.example.org/path",
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://169.254.169.254/latest/meta-data",
+    })).toEqual(["otel.example.com", "traces.example.com", "not a url.example.org"]);
   });
 });
