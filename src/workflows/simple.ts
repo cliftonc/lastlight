@@ -13,6 +13,7 @@ import {
 import type { TemplateContext } from "./templates.js";
 import { slugify } from "./templates.js";
 import { wrapUntrusted } from "../engine/screen.js";
+import { buildProgressModel } from "../notify/model.js";
 
 /**
  * Lightweight invocation request for any agent workflow. The runner handles
@@ -206,6 +207,32 @@ export async function runSimpleWorkflow(
     callbacks.onRunStart(workflowId).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[simple] onRunStart callback threw: ${msg}`);
+    });
+  }
+
+  // ── Seed the in-place progress checklist ───────────────────────────────────
+  //
+  // For workflows that opt into `status_checklist`, build the task-list model
+  // from the definition's phases and publish the initial surface (one GitHub
+  // comment / one Slack message that subsequent phases edit in place). On a
+  // resumed run we re-seed the SAME surface (the transport re-attaches to the
+  // stored comment id / message ts) and mark already-completed phases done.
+  if (callbacks.reporter && definition.status_checklist) {
+    const completed = new Set(
+      (existingRun?.phaseHistory ?? []).map((h) => h.phase),
+    );
+    const model = buildProgressModel(definition, {
+      workflowName,
+      number,
+      issueTitle: request.issueTitle,
+      owner,
+      repo,
+      branch,
+      completed,
+    });
+    await callbacks.reporter.start(model).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[simple] reporter.start threw: ${msg}`);
     });
   }
 

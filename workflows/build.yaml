@@ -2,6 +2,10 @@ kind: build
 name: build
 description: "Architect -> Executor -> Reviewer build cycle"
 trigger: build
+# Render progress as a single in-place task-list comment/message that updates
+# as phases run, instead of a new comment per phase. The per-phase
+# `messages.on_*` below become the one-line detail on each checklist step.
+status_checklist: true
 
 phases:
   - name: phase_0

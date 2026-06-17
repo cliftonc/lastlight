@@ -5,6 +5,12 @@ import type { ModelConfig, VariantConfig } from "../config.js";
 import { runWorkflow, type ApprovalGateConfig, type RunnerCallbacks } from "./runner.js";
 import { getWorkflow } from "./loader.js";
 import { slugify, type TemplateContext } from "./templates.js";
+import {
+  ProgressNotifier,
+  GitHubTransport,
+  buildProgressModel,
+  type NotifierState,
+} from "../notify/index.js";
 
 export interface ResumeOptions {
   db: StateDb;
@@ -227,12 +233,57 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
     }
   }
 
+  let callbacks: RunnerCallbacks =
+    slackCallbacks || makeCallbacks(opts.github, owner, repo, issueNumber, run.workflowName);
+
+  // Re-attach the in-place checklist on GitHub boot-recovery so a run that was
+  // mid-flight when the harness died keeps editing its original status comment
+  // instead of posting a fresh one. The stored comment id lives in
+  // scratch.notifier; completed phases are re-seeded from phase_history.
+  // (The Slack boot-recovery path only has a post function here — no
+  // chat.update — so it stays on legacy comments.)
+  if (!slackCallbacks && definition.status_checklist && opts.github && issueNumber) {
+    try {
+      const saved = ((run.scratch?.notifier) ?? {}) as NotifierState;
+      const github = opts.github;
+      const persist = (patch: Partial<NotifierState>) => {
+        const cur = ((opts.db.getWorkflowRun(run.id)?.scratch?.notifier) ?? {}) as NotifierState;
+        opts.db.updateWorkflowRunScratch(run.id, { notifier: { ...cur, ...patch } });
+      };
+      const transport = new GitHubTransport({
+        github,
+        owner,
+        repo,
+        issueNumber,
+        commentId: saved.githubCommentId,
+        save: (id) => persist({ githubCommentId: id }),
+      });
+      const notifier = new ProgressNotifier([transport]);
+      const completed = new Set(run.phaseHistory.map((h) => h.phase));
+      await notifier.start(
+        buildProgressModel(definition, {
+          workflowName: run.workflowName,
+          number: issueNumber,
+          issueTitle: issue.title,
+          owner,
+          repo,
+          branch,
+          completed,
+        }),
+      );
+      callbacks = { ...callbacks, reporter: notifier };
+    } catch (err: unknown) {
+      const m = err instanceof Error ? err.message : String(err);
+      console.warn(`[resume] notifier setup failed: ${m}`);
+    }
+  }
+
   try {
     const result = await runWorkflow(
       definition,
       ctx,
       opts.config,
-      slackCallbacks || makeCallbacks(opts.github, owner, repo, issueNumber, run.workflowName),
+      callbacks,
       opts.db,
       opts.models,
       opts.approvalConfig,

@@ -236,6 +236,17 @@ export const AgentWorkflowSchema = z.object({
   description: z.string().optional(),
   /** What can trigger this workflow (informational; routing is in code). */
   trigger: z.string().optional(),
+  /**
+   * Render progress as a single in-place "task list" comment/message that is
+   * edited as phases run, instead of posting a new comment per phase. When
+   * true, the runner drives `callbacks.reporter` (see `src/notify/`) and the
+   * per-phase `messages.on_*` strings become the one-line detail on each
+   * checklist step. Default (absent/false) keeps the legacy one-comment-per-
+   * phase behavior. Opt in on chatty multi-phase workflows (build, explore,
+   * pr-fix); leave off for single-deliverable workflows (triage, pr-review,
+   * health) that post their own result.
+   */
+  status_checklist: z.boolean().optional(),
   variables: z.record(z.string(), z.string()).optional(),
   phases: z.array(PhaseDefinitionSchema),
 });

@@ -18,6 +18,7 @@ import { loadPromptTemplate, resolveSkillPaths } from "./loader.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
 import { evalUntilExpression } from "./loop-eval.js";
 import { buildDag, getReadyNodes, getNodesToSkip, isComplete } from "./dag.js";
+import type { ProgressReporter, StepStatus, ProgressStep } from "../notify/types.js";
 
 /**
  * Reject shell commands containing mustache template markers to prevent
@@ -144,6 +145,15 @@ export interface RunnerCallbacks {
   onPhaseStart?: (phase: string) => Promise<void>;
   onPhaseEnd?: (phase: string, result: PhaseResult) => Promise<void>;
   postComment?: (body: string) => Promise<void>;
+  /**
+   * In-place "task list" progress surface. When set (workflows that opt in via
+   * `status_checklist: true`), the runner drives this instead of posting a new
+   * comment per phase — phase transitions become checklist step updates and the
+   * `messages.on_*` strings become each step's one-line detail. When unset, the
+   * runner falls back to `postComment` (legacy one-comment-per-phase). See
+   * `src/notify/`.
+   */
+  reporter?: ProgressReporter;
   /**
    * Fires once the workflow_runs row is known — either freshly created or
    * reused from a running/paused trigger. Used by the Slack dispatch path
@@ -421,8 +431,15 @@ export async function runWorkflow(
     : undefined;
   const githubAccess = gitSandboxAccessForWorkflow(definition.name, ctx.owner, ctx.repo, prePopulateBranch);
   const notify = callbacks.postComment || (async () => {});
+  const reporter = callbacks.reporter;
   const onStart = callbacks.onPhaseStart || (async () => {});
   const onEnd = callbacks.onPhaseEnd || (async () => {});
+
+  // Terminal step key — dynamic loop steps (re-review / fix cycles) are
+  // inserted just above it so the checklist reads top-to-bottom in run order.
+  const lastPhaseKey = [...definition.phases]
+    .reverse()
+    .find((p) => (p.type ?? "agent") !== "context")?.name;
 
   const modelFor = (taskType: string): string | undefined =>
     models ? resolveModel(models, taskType) : undefined;
@@ -435,14 +452,75 @@ export async function runWorkflow(
     return renderTemplate(template, { ...ctx, phaseOutputs, ...(extraCtx || {}) });
   };
 
-  /** Render a YAML-provided message template and post it as a comment. */
+  /**
+   * Render a YAML message template and post it as a *standalone* message — a
+   * new GitHub comment / Slack message. Used for genuine notes (approval
+   * prompts, reply-gate questions, abort notices). When the in-place checklist
+   * is active it routes through `reporter.note()` (a real ping); otherwise it
+   * falls back to the legacy `postComment`.
+   */
   const notifyMessage = async (
     template: string | undefined,
     extraCtx?: Partial<TemplateContext>,
   ): Promise<void> => {
     if (!template) return;
     const rendered = renderTemplate(template, { ...ctx, phaseOutputs, ...(extraCtx || {}) });
-    if (rendered.trim()) await notify(rendered);
+    if (!rendered.trim()) return;
+    if (reporter) await reporter.note(rendered);
+    else await notify(rendered);
+  };
+
+  /** Post a pre-rendered standalone message (already-built string, no template). */
+  const postNote = async (text: string): Promise<void> => {
+    if (!text.trim()) return;
+    if (reporter) await reporter.note(text);
+    else await notify(text);
+  };
+
+  /**
+   * Collapse a rendered multi-line message into a compact one-line checklist
+   * detail (first non-empty line, length-capped). The full message is still
+   * available — `notifyMessage`/`note` post it verbatim when a standalone
+   * message is wanted.
+   */
+  const collapseDetail = (s: string): string | undefined => {
+    const first = s
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (!first) return undefined;
+    return first.length > 160 ? `${first.slice(0, 159)}…` : first;
+  };
+
+  /**
+   * Transition a checklist step (and optionally render a YAML message as its
+   * one-line detail). When no reporter is wired this falls back to posting the
+   * full rendered message as a legacy comment, so opted-out workflows behave
+   * exactly as before. `insert` adds a dynamic step (loop iterations); `note`
+   * additionally posts the full message as a standalone ping (approval gates).
+   */
+  const reportStep = async (
+    key: string,
+    status: StepStatus,
+    template?: string,
+    extraCtx?: Partial<TemplateContext>,
+    opts?: { label?: string; insertBefore?: string; insert?: boolean; alsoNote?: boolean },
+  ): Promise<void> => {
+    const rendered = template
+      ? renderTemplate(template, { ...ctx, phaseOutputs, ...(extraCtx || {}) }).trim()
+      : "";
+    if (reporter) {
+      const detail = collapseDetail(rendered);
+      if (opts?.insert) {
+        const step: ProgressStep = { key, label: opts.label ?? key, status, detail };
+        await reporter.insertStep(step, opts.insertBefore ?? lastPhaseKey);
+      } else {
+        await reporter.step(key, status, detail);
+      }
+      if (opts?.alsoNote && rendered) await reporter.note(rendered);
+    } else if (rendered) {
+      await notify(rendered);
+    }
   };
 
   /** Persist a phase transition to the DB workflow run. */
@@ -500,7 +578,7 @@ export async function runWorkflow(
   if (hasDependencies(definition)) {
     return runDagWorkflow(
       definition, ctx, config, db, workflowId,
-      { phases, phaseOutputs, triggerId, notify, notifyMessage, onStart, onEnd, modelFor, variantFor, renderPrompt, persistPhase, failWorkflow, gateEnabled, githubAccess },
+      { phases, phaseOutputs, triggerId, notify, notifyMessage, reportStep, onStart, onEnd, modelFor, variantFor, renderPrompt, persistPhase, failWorkflow, gateEnabled, githubAccess },
     );
   }
 
@@ -568,7 +646,17 @@ export async function runWorkflow(
         }
 
         await onStart(reviewLabel);
-        await notifyMessage(loop.messages?.on_cycle_start, { cycle: fixCycles + 1, maxCycles: MAX_CYCLES });
+        // First cycle reuses the seeded review step; re-reviews insert a new
+        // "<Reviewer> (cycle N)" row just above the terminal step.
+        await reportStep(
+          reviewLabel,
+          "running",
+          loop.messages?.on_cycle_start,
+          { cycle: fixCycles + 1, maxCycles: MAX_CYCLES },
+          fixCycles === 0
+            ? undefined
+            : { insert: true, label: `${phase.label ?? phaseName} (cycle ${fixCycles + 1})` },
+        );
 
         // Choose prompt: first cycle uses phase.prompt or phase.skill (via
         // buildPhasePrompt), subsequent cycles always use the re_review_prompt
@@ -631,7 +719,7 @@ export async function runWorkflow(
         if (isApproved) {
           approved = true;
           persistPhase(reviewLabel, "APPROVED");
-          await notifyMessage(loop.messages?.on_approved, { cycle: fixCycles + 1 });
+          await reportStep(reviewLabel, "done", loop.messages?.on_approved, { cycle: fixCycles + 1 });
         } else if (fixCycles < MAX_CYCLES) {
           fixCycles++;
           persistPhase(reviewLabel, "REQUEST_CHANGES");
@@ -655,20 +743,34 @@ export async function runWorkflow(
               summary: `Waiting for approval: ${gateKey} (${approvalId})`,
             });
             db.pauseWorkflowRun(workflowId);
-            await notifyMessage(loop.messages?.on_pause_for_approval, {
-              cycle: fixCycles,
-              maxCycles: MAX_CYCLES,
-              gateKey,
-            });
+            // Mark the review row as awaiting and post a real ping — approval
+            // is an actionable moment, so unlike normal phase transitions it
+            // gets a standalone message rather than only an in-place edit.
+            await reportStep(
+              reviewLabel,
+              "awaiting",
+              loop.messages?.on_pause_for_approval,
+              { cycle: fixCycles, maxCycles: MAX_CYCLES, gateKey },
+              { alsoNote: true },
+            );
             return { success: true, phases, paused: true };
           }
 
-          await notifyMessage(loop.messages?.on_request_changes, { cycle: fixCycles, maxCycles: MAX_CYCLES });
+          await reportStep(reviewLabel, "done", loop.messages?.on_request_changes, {
+            cycle: fixCycles,
+            maxCycles: MAX_CYCLES,
+          });
 
           // Run fix phase
           const fixLabel = `${phaseName}_fix_${fixCycles}`;
           await onStart(fixLabel);
-          await notifyMessage(loop.messages?.on_fix_start, { cycle: fixCycles, maxCycles: MAX_CYCLES });
+          await reportStep(
+            fixLabel,
+            "running",
+            loop.messages?.on_fix_start,
+            { cycle: fixCycles, maxCycles: MAX_CYCLES },
+            { insert: true, label: `Fix (cycle ${fixCycles})` },
+          );
 
           const fixModelRaw = loop.on_request_changes.fix_model
             ? renderTemplate(loop.on_request_changes.fix_model, ctx)
@@ -709,15 +811,22 @@ export async function runWorkflow(
 
             if (!fr.result.success) {
               if (!isTerminated(fr.result.error)) {
-                await notifyMessage(loop.messages?.on_fix_failed, { cycle: fixCycles, maxCycles: MAX_CYCLES });
+                await reportStep(fixLabel, "failed", loop.messages?.on_fix_failed, {
+                  cycle: fixCycles,
+                  maxCycles: MAX_CYCLES,
+                });
               }
               break;
             }
             persistPhase(fixLabel);
+            await reportStep(fixLabel, "done");
           }
         } else {
           persistPhase(reviewLabel, "REQUEST_CHANGES — max cycles reached");
-          await notifyMessage(loop.messages?.on_max_cycles, { cycle: fixCycles, maxCycles: MAX_CYCLES });
+          await reportStep(reviewLabel, "blocked", loop.messages?.on_max_cycles, {
+            cycle: fixCycles,
+            maxCycles: MAX_CYCLES,
+          }, { alsoNote: true });
           break;
         }
       }
@@ -763,6 +872,8 @@ export async function runWorkflow(
         (scratchSlot.lastOutputExecutionId && db
           ? db.getExecutionOutput(scratchSlot.lastOutputExecutionId as string) ?? ""
           : (scratchSlot.lastOutput as string | undefined) ?? "");
+
+      await reportStep(phaseName, "running");
 
       while (!complete && iteration < MAX_ITER) {
         iteration++;
@@ -815,7 +926,7 @@ export async function runWorkflow(
 
         if (!ir.result.success) {
           if (!isTerminated(ir.result.error)) {
-            await notifyMessage(phase.messages?.on_failure, { iteration });
+            await reportStep(phaseName, "failed", phase.messages?.on_failure, { iteration });
           }
           failWorkflow(ir.result.error);
           return { success: false, phases };
@@ -878,6 +989,7 @@ export async function runWorkflow(
             scratch[scratchKey] = slot;
           }
           persistPhase(iterLabel, `iteration ${iteration} — condition met`);
+          await reportStep(phaseName, "done");
           break;
         }
 
@@ -919,14 +1031,15 @@ export async function runWorkflow(
             summary: `Waiting for ${isReply ? "reply" : "approval"}: ${phaseName}_iter_${iteration} (${approvalId})`,
           });
           db.pauseWorkflowRun(workflowId);
+          await reportStep(phaseName, "awaiting");
 
           if (isReply) {
             // Combine the agent's questions + gate hint into one message
             // so it reads as a single comment on GitHub / Slack.
             const parts = [iterOutput.trim(), gateMsg.trim()].filter(Boolean);
-            if (parts.length > 0) await notify(parts.join("\n\n---\n\n"));
+            if (parts.length > 0) await postNote(parts.join("\n\n---\n\n"));
           } else {
-            await notify(
+            await postNote(
               `**${phaseName} iteration ${iteration}/${MAX_ITER} complete** — approval required to continue.\n\n` +
                 `${gateMsg}\n\n` +
                 `**To continue:** comment \`@last-light approve\`\n` +
@@ -940,7 +1053,7 @@ export async function runWorkflow(
       }
 
       if (!complete) {
-        await notifyMessage(phase.messages?.on_failure, {
+        await reportStep(phaseName, "failed", phase.messages?.on_failure, {
           iteration,
           maxIterations: MAX_ITER,
         });
@@ -956,7 +1069,7 @@ export async function runWorkflow(
     if (!shouldRun(phaseName)) continue;
 
     await onStart(phaseName);
-    await notifyMessage(phase.messages?.on_start);
+    await reportStep(phaseName, "running", phase.messages?.on_start);
 
     // Resolve model + variant
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
@@ -992,7 +1105,7 @@ export async function runWorkflow(
       // even though it succeeded.
       persistPhase(phaseName, "Already completed (deduplicated)");
       await onEnd(phaseName, { phase: phaseName, success: true, output: "Already completed" });
-      await notifyMessage(phase.messages?.on_skipped_done);
+      await reportStep(phaseName, "done", phase.messages?.on_skipped_done);
     } else {
       phases.push({ phase: phaseName, ...pickResult(pr.result) });
       await onEnd(phaseName, phases[phases.length - 1]);
@@ -1008,7 +1121,7 @@ export async function runWorkflow(
 
       if (!pr.result.success) {
         if (!isTerminated(pr.result.error)) {
-          await notifyMessage(phase.messages?.on_failure);
+          await reportStep(phaseName, "failed", phase.messages?.on_failure);
         }
         failWorkflow(pr.result.error);
         return { success: false, phases };
@@ -1047,7 +1160,7 @@ export async function runWorkflow(
             failWorkflow(rule.message || "BLOCKED");
             const blockedTemplate = rule.message || phase.messages?.on_blocked;
             if (blockedTemplate) {
-              await notifyMessage(blockedTemplate);
+              await reportStep(phaseName, "blocked", blockedTemplate);
             }
             return { success: false, phases };
           }
@@ -1073,12 +1186,14 @@ export async function runWorkflow(
           summary: `Waiting for approval: ${gateKey} (${approvalId})`,
         });
         db.pauseWorkflowRun(workflowId);
-        await notifyMessage(phase.approval_gate_message, { gateKey });
+        // Awaiting human approval — show it on the checklist and post a real
+        // ping (an in-place edit alone wouldn't notify the approver).
+        await reportStep(phaseName, "awaiting", phase.approval_gate_message, { gateKey }, { alsoNote: true });
         return { success: true, phases, paused: true };
       }
 
       persistPhase(phaseName);
-      await notifyMessage(phase.messages?.on_success);
+      await reportStep(phaseName, "done", phase.messages?.on_success);
     }
   }
 
@@ -1114,6 +1229,18 @@ export async function runWorkflow(
     failWorkflow(firstFailure?.error || "workflow failed");
   }
 
+  // Terminal ping. The in-place checklist edits are silent on both platforms,
+  // so post one standalone closing message when the checklist is active — the
+  // single "real" notification of the run's outcome.
+  if (reporter) {
+    const prSuffix = prNumber ? ` — PR #${prNumber}` : "";
+    await reporter.note(
+      success
+        ? `✅ **${definition.name} complete**${prSuffix}.`
+        : `❌ **${definition.name} failed** — see the checklist above for the failing step.`,
+    );
+  }
+
   return { success, phases, prNumber };
 }
 
@@ -1125,6 +1252,13 @@ interface DagRunnerCtx {
   githubAccess: GitSandboxAccess;
   notify: (msg: string) => Promise<void>;
   notifyMessage: (template: string | undefined, extraCtx?: Partial<TemplateContext>) => Promise<void>;
+  reportStep: (
+    key: string,
+    status: StepStatus,
+    template?: string,
+    extraCtx?: Partial<TemplateContext>,
+    opts?: { label?: string; insertBefore?: string; insert?: boolean; alsoNote?: boolean },
+  ) => Promise<void>;
   onStart: (phase: string) => Promise<void>;
   onEnd: (phase: string, result: PhaseResult) => Promise<void>;
   modelFor: (taskType: string) => string | undefined;
@@ -1153,6 +1287,7 @@ async function runDagWorkflow(
     triggerId,
     githubAccess,
     notifyMessage,
+    reportStep,
     onStart,
     onEnd,
     modelFor,
@@ -1175,7 +1310,7 @@ async function runDagWorkflow(
     phase: NonNullable<ReturnType<typeof phaseMap.get>>,
     phaseName: string,
   ): Promise<{ result: PhaseResult; paused?: boolean }> {
-    await notifyMessage(phase.messages?.on_start);
+    await reportStep(phaseName, "running", phase.messages?.on_start);
     const phaseCtx: Partial<TemplateContext> = { phaseOutputs: { ...outputs } };
     const prompt = buildPhasePrompt(phase, ctx, phaseCtx);
     const modelRaw = phase.model ? renderTemplate(phase.model, ctx) : undefined;
@@ -1204,7 +1339,7 @@ async function runDagWorkflow(
     const result: PhaseResult = { phase: phaseName, ...pickResult(pr.result) };
 
     if (!pr.result.success) {
-      await notifyMessage(phase.messages?.on_failure);
+      await reportStep(phaseName, "failed", phase.messages?.on_failure);
       return { result };
     }
 
@@ -1219,7 +1354,7 @@ async function runDagWorkflow(
       } else if (rule.action === "fail") {
         db?.markLatestAsFailed(`${definition.name}:${phaseName}`, triggerId, rule.message || "BLOCKED", workflowId);
         failWorkflow(rule.message || "BLOCKED");
-        await notifyMessage(rule.message || phase.messages?.on_blocked);
+        await reportStep(phaseName, "blocked", rule.message || phase.messages?.on_blocked);
         return { result: { phase: phaseName, success: false, output: pr.result.output ?? "", error: "BLOCKED" } };
       }
     }
@@ -1243,12 +1378,12 @@ async function runDagWorkflow(
         summary: `Waiting for approval: ${gateKey} (${approvalId})`,
       });
       db.pauseWorkflowRun(workflowId);
-      await notifyMessage(phase.approval_gate_message, { gateKey });
+      await reportStep(phaseName, "awaiting", phase.approval_gate_message, { gateKey }, { alsoNote: true });
       return { result, paused: true };
     }
 
     persistPhase(phaseName);
-    await notifyMessage(phase.messages?.on_success);
+    await reportStep(phaseName, "done", phase.messages?.on_success);
     return { result };
   }
 
@@ -1465,7 +1600,7 @@ async function runDagWorkflow(
         }
 
         if (!complete) {
-          await notifyMessage(phase.messages?.on_failure, { iteration, maxIterations: MAX_ITER });
+          await reportStep(node.name, "failed", phase.messages?.on_failure, { iteration, maxIterations: MAX_ITER });
         }
         if (phase.output_var) {
           outputs[phase.output_var] = { completed: complete, iterations: iteration };

@@ -8,6 +8,9 @@ description: |
   for Slack-initiated runs).
 
 trigger: explore
+# Single in-place task-list comment/message instead of a comment per phase.
+# Reply-gate questions and the published spec still post as standalone notes.
+status_checklist: true
 
 phases:
   - name: phase_0

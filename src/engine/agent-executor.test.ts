@@ -164,3 +164,49 @@ describe("RunResultAccumulator extension status", () => {
     expect(acc.extensions()).toBeUndefined();
   });
 });
+
+describe("RunResultAccumulator tool errors", () => {
+  it("captures the failing tool name and error text", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({
+      type: "tool_execution_end",
+      tool: "bash",
+      isError: true,
+      error: "insufficient_quota: You exceeded your current quota",
+    });
+    expect(acc.toolError()).toEqual({
+      tool: "bash",
+      message: "insufficient_quota: You exceeded your current quota",
+    });
+  });
+
+  it("falls back to result/output when no `error` field is present", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "tool_execution_end", isError: true, result: "boom" });
+    expect(acc.toolError()).toEqual({ tool: undefined, message: "boom" });
+  });
+
+  it("stringifies non-string error payloads", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({
+      type: "tool_execution_end",
+      tool: "github",
+      isError: true,
+      error: { status: 403, message: "forbidden" },
+    });
+    expect(acc.toolError()?.message).toContain("forbidden");
+  });
+
+  it("keeps the last error when several tools fail", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "tool_execution_end", tool: "read", isError: true, error: "first" });
+    acc.feed({ type: "tool_execution_end", tool: "bash", isError: true, error: "second" });
+    expect(acc.toolError()).toEqual({ tool: "bash", message: "second" });
+  });
+
+  it("returns undefined when no tool errored", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "tool_execution_end", tool: "read", isError: false, result: "ok" });
+    expect(acc.toolError()).toBeUndefined();
+  });
+});

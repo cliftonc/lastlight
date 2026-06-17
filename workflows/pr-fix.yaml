@@ -2,6 +2,8 @@ kind: pr-fix
 name: pr-fix
 description: "Lightweight PR fix — no architect/reviewer, just fix and push"
 trigger: pr-fix
+# Single in-place task-list comment/message instead of a comment per phase.
+status_checklist: true
 
 phases:
   - name: fix

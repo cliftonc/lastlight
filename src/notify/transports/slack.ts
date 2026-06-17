@@ -1,0 +1,44 @@
+/**
+ * Slack binding for the progress notifier. Owns a single message `ts` and
+ * edits it in place via `chat.update` on every `publish()`; `note()` posts a
+ * fresh threaded message for moments that deserve a real ping (approval
+ * prompts, terminal summary) — `chat.update` itself is silent.
+ */
+import type { SlackConnector } from "../../connectors/slack/connector.js";
+import type { NotifierTransport } from "../types.js";
+
+export interface SlackTransportDeps {
+  slack: SlackConnector;
+  channel: string;
+  thread: string;
+  /** Existing status-message ts from a resumed run, if any. */
+  ts?: string;
+  /** Persist the ts the first time it's created (so resume re-attaches). */
+  save?: (ts: string) => void;
+}
+
+export class SlackTransport implements NotifierTransport {
+  private ts?: string;
+
+  constructor(private readonly deps: SlackTransportDeps) {
+    this.ts = deps.ts;
+  }
+
+  async publish(markdown: string): Promise<void> {
+    const { slack, channel, thread } = this.deps;
+    if (this.ts !== undefined) {
+      await slack.updateMessage(channel, this.ts, markdown);
+    } else {
+      const ts = await slack.sendMessage(channel, thread, markdown);
+      if (typeof ts === "string") {
+        this.ts = ts;
+        this.deps.save?.(ts);
+      }
+    }
+  }
+
+  async note(markdown: string): Promise<void> {
+    const { slack, channel, thread } = this.deps;
+    await slack.sendMessage(channel, thread, markdown);
+  }
+}

@@ -73,6 +73,22 @@ export class SlackConnector extends MessagingConnector {
     return result.ts;
   }
 
+  /**
+   * Edit a previously-sent message in place (`chat.update`). Paired with the
+   * `ts` returned by `sendMessage`, this powers the single in-place status
+   * checklist (see `src/notify/transports/slack.ts`) so a workflow's progress
+   * updates one message instead of flooding the thread. Note: `chat.update` is
+   * silent — it does not re-notify — so a separate terminal message is posted
+   * at the end for an actual ping.
+   */
+  async updateMessage(channelId: string, ts: string, text: string): Promise<void> {
+    await this.app.client.chat.update({
+      channel: channelId,
+      ts,
+      text: markdownToSlackMrkdwn(text),
+    });
+  }
+
   async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
     try {
       await this.app.client.reactions.add({

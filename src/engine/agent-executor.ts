@@ -17,7 +17,7 @@ import {
   type ExtensionStatusMap,
   type GitSandboxAccess,
 } from "./profiles.js";
-import { AgenticShim, projectSlugForCwd } from "./event-shim.js";
+import { AgenticShim, projectSlugForCwd, truncateForLog, safeStringify } from "./event-shim.js";
 import type { SandboxBackend } from "../config.js";
 import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST } from "../sandbox/egress-allowlist.js";
 
@@ -389,7 +389,7 @@ async function executeInProcess(
   const better = acc.bestStats();
   if (better && (better.tokens?.total ?? 0) > 0) result.stats = better;
 
-  return finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions());
+  return finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions(), acc.toolError());
 }
 
 // ── Docker path ─────────────────────────────────────────────────────
@@ -542,7 +542,7 @@ async function executeDocker(
     };
   }
   await sbx.cleanup();
-  return finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions());
+  return finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions(), acc.toolError());
 }
 
 /**
@@ -566,6 +566,7 @@ export class RunResultAccumulator {
   private finalText = "";
   private agentEnded = false;
   private toolErrors = false;
+  private lastToolError?: { tool?: string; message: string };
   private fatalError?: { name: string; message: string };
   private snapshotStats?: RunResult["stats"];
   private messages: unknown[] = [];
@@ -622,7 +623,26 @@ export class RunResultAccumulator {
       }
       case "tool_execution_end":
         this.toolResults += 1;
-        if (r.isError === true) this.toolErrors = true;
+        if (r.isError === true) {
+          this.toolErrors = true;
+          // Keep the actual failure text (not just a boolean) so a run that
+          // ends in `error_tool` can report which tool failed and why —
+          // e.g. a provider `insufficient_quota` surfaced through an MCP
+          // call, or a bash command's stderr. Last error wins (it's the
+          // one that ended the run). truncate: tool output can be huge.
+          const raw = r.error ?? r.result ?? r.output;
+          const message = truncateForLog(
+            typeof raw === "string" ? raw : safeStringify(raw),
+            4096,
+          );
+          const tool =
+            typeof r.tool === "string"
+              ? r.tool
+              : typeof r.toolName === "string"
+              ? r.toolName
+              : undefined;
+          if (message) this.lastToolError = { tool, message };
+        }
         break;
       case "agent_end":
         this.agentEnded = true;
@@ -720,6 +740,15 @@ export class RunResultAccumulator {
     }
     return Object.keys(out).length > 0 ? out : undefined;
   }
+
+  /**
+   * The last tool result that came back with `isError: true`, including the
+   * failure text — or undefined if no tool errored. This is what turns a
+   * bare `error_tool` stop reason into a human-readable cause.
+   */
+  toolError(): { tool?: string; message: string } | undefined {
+    return this.lastToolError;
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -730,6 +759,7 @@ function finalizeFromRunResult(
   shim: AgenticShim,
   startTime: number,
   extensions?: ExtensionStatusMap,
+  toolError?: { tool?: string; message: string },
 ): ExecutionResult {
   const durationMs = Date.now() - startTime;
   const stats = result.stats;
@@ -741,6 +771,15 @@ function finalizeFromRunResult(
   const agentError = extractAgentError(result);
   const stopReason = agentError?.stopReason ?? mapStopReason(result);
   const success = stopReason === "success";
+
+  // A bare `error_tool` stop reason is useless on its own. Surface the
+  // failing tool's actual error text so the executions row and dashboard
+  // show *why* the run died (e.g. "Tool `bash` failed: insufficient_quota").
+  const toolErrorText = toolError
+    ? toolError.tool
+      ? `Tool \`${toolError.tool}\` failed: ${toolError.message}`
+      : toolError.message
+    : undefined;
 
   const inputTokens = stats?.tokens.input ?? 0;
   const outputTokens = stats?.tokens.output ?? 0;
@@ -765,14 +804,19 @@ function finalizeFromRunResult(
     cacheCreationInputTokens: cacheWrite,
     stopReason,
     durationMs,
-    apiErrorMessage: agentError?.errorMessage,
+    apiErrorMessage: agentError?.errorMessage ?? (success ? undefined : toolErrorText),
   });
   void shim.flush();
 
+  // Only fold the tool error into account-error detection on a failed run.
+  // A *successful* run may carry a tool result that legitimately contains
+  // "unauthorized" / "rate limit" (e.g. a curl probing a 401 endpoint as
+  // part of the task) — folding that in would wrongly fail the run.
   const combined = [
     result.fatalError?.message,
     agentError?.errorMessage,
     result.finalText,
+    success ? undefined : toolErrorText,
   ]
     .filter((s): s is string => typeof s === "string" && s.length > 0)
     .join("\n")
@@ -788,6 +832,7 @@ function finalizeFromRunResult(
   const errorText =
     result.fatalError?.message ||
     agentError?.errorMessage ||
+    toolErrorText ||
     result.finalText ||
     stopReason;
   if (!success || accountError) {

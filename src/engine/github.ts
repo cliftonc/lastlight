@@ -23,11 +23,33 @@ export class GitHubClient {
     });
   }
 
-  async postComment(owner: string, repo: string, issueNumber: number, body: string): Promise<void> {
-    await this.octokit.rest.issues.createComment({
+  /**
+   * Create a new comment on an issue/PR. Returns the new comment id so callers
+   * that want to edit it later (the in-place status checklist — see
+   * `src/notify/transports/github.ts`) can hold onto a handle. Callers that
+   * just post a one-off comment can ignore the return.
+   */
+  async postComment(owner: string, repo: string, issueNumber: number, body: string): Promise<number> {
+    const { data } = await this.octokit.rest.issues.createComment({
       owner,
       repo,
       issue_number: issueNumber,
+      body,
+    });
+    return data.id;
+  }
+
+  /**
+   * Edit an existing issue/PR comment in place. Paired with `postComment` to
+   * maintain a single status comment that updates as a workflow progresses,
+   * rather than posting a new comment per phase. GitHub does NOT notify
+   * watchers on edits, which is exactly why this keeps the thread quiet.
+   */
+  async updateComment(owner: string, repo: string, commentId: number, body: string): Promise<void> {
+    await this.octokit.rest.issues.updateComment({
+      owner,
+      repo,
+      comment_id: commentId,
       body,
     });
   }

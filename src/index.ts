@@ -5,7 +5,7 @@ import { loadConfig, resolveModel, resolveVariant } from "./config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
 import { routeEvent } from "./engine/router.js";
 import { CHAT_SYSTEM_SUFFIX, handleChatMessage, loadAgentContext } from "./engine/chat.js";
-import { configureWorkflowAssets, validateAssets } from "./workflows/loader.js";
+import { configureWorkflowAssets, validateAssets, getWorkflow } from "./workflows/loader.js";
 import { ChatRunner } from "./engine/chat-runner.js";
 import { buildReadSkillTool, loadChatSkillCatalogue } from "./engine/chat-skills.js";
 import { configureGitAuth } from "./engine/git-auth.js";
@@ -22,6 +22,14 @@ import { screenForInjection, flagPrefix } from "./engine/screen.js";
 import { runSimpleWorkflow, type SimpleWorkflowRequest } from "./workflows/simple.js";
 import type { RunnerCallbacks } from "./workflows/runner.js";
 import { resumeOrphanedWorkflows } from "./workflows/resume.js";
+import {
+  ProgressNotifier,
+  GitHubTransport,
+  SlackTransport,
+  type NotifierTransport,
+  type NotifierState,
+  type ProgressReporter,
+} from "./notify/index.js";
 import type { EventEnvelope } from "./connectors/types.js";
 
 /**
@@ -351,7 +359,87 @@ async function main() {
         }
       : undefined;
 
+    // In-place "task list" progress checklist — opt-in per workflow via
+    // `status_checklist: true` in the YAML. Build a transport for whichever
+    // surface triggered the run (GitHub comment and/or Slack thread) and hand
+    // the runner a ProgressNotifier instead of letting it post a comment per
+    // phase. The notifier is created inside onRunStart because it needs the
+    // workflow-run id (only known once simple.ts creates the row) to persist
+    // its in-place update handles to scratch.notifier. better-sqlite3 is
+    // synchronous and simple.ts invokes onRunStart synchronously before the
+    // first reporter call, so the notifier is ready in time; the proxy guards
+    // the brief window before assignment.
+    // Which in-place surface(s) can the checklist edit? Knowable synchronously
+    // (transport existence needs only github/issue or slack/channel/thread —
+    // the run id is needed solely for persistence + resume handles).
+    const ghChecklist = !!(github && typeof issueNumber === "number");
+    const slackChecklist = !!(
+      slackConnector && typeof channelId === "string" && typeof threadId === "string"
+    );
+    let statusChecklist = false;
+    try {
+      // Only activate the checklist when the workflow opts in AND there's a
+      // surface to render it on — otherwise leave `reporter` undefined so the
+      // runner keeps its legacy per-phase comment behavior instead of going
+      // silent.
+      statusChecklist =
+        getWorkflow(workflowName).status_checklist === true && (ghChecklist || slackChecklist);
+    } catch {
+      /* unknown workflow — surfaced downstream by runSimpleWorkflow */
+    }
+
+    let notifier: ProgressNotifier | undefined;
+    const reporterProxy: ProgressReporter | undefined = statusChecklist
+      ? {
+          start: (m) => notifier?.start(m) ?? Promise.resolve(),
+          step: (k, s, d) => notifier?.step(k, s, d) ?? Promise.resolve(),
+          insertStep: (st, b) => notifier?.insertStep(st, b) ?? Promise.resolve(),
+          note: (m) => notifier?.note(m) ?? Promise.resolve(),
+        }
+      : undefined;
+
+    const notifierOnRunStart = statusChecklist
+      ? (runId: string): void => {
+          try {
+            const saved = ((db.getWorkflowRun(runId)?.scratch?.notifier) ?? {}) as NotifierState;
+            const persist = (patch: Partial<NotifierState>) => {
+              const cur = ((db.getWorkflowRun(runId)?.scratch?.notifier) ?? {}) as NotifierState;
+              db.updateWorkflowRunScratch(runId, { notifier: { ...cur, ...patch } });
+            };
+            const transports: NotifierTransport[] = [];
+            if (ghChecklist && github && typeof issueNumber === "number") {
+              transports.push(
+                new GitHubTransport({
+                  github,
+                  owner,
+                  repo,
+                  issueNumber,
+                  commentId: saved.githubCommentId,
+                  save: (id) => persist({ githubCommentId: id }),
+                }),
+              );
+            }
+            if (slackChecklist && slackConnector && typeof channelId === "string" && typeof threadId === "string") {
+              transports.push(
+                new SlackTransport({
+                  slack: slackConnector,
+                  channel: channelId,
+                  thread: threadId,
+                  ts: saved.slackTs,
+                  save: (ts) => persist({ slackTs: ts, slackChannel: channelId, slackThread: threadId }),
+                }),
+              );
+            }
+            if (transports.length > 0) notifier = new ProgressNotifier(transports);
+          } catch (err: unknown) {
+            const m = err instanceof Error ? err.message : String(err);
+            console.warn(`[dispatch] notifier setup failed: ${m}`);
+          }
+        }
+      : undefined;
+
     const callbacks: RunnerCallbacks = {
+      reporter: reporterProxy,
       postComment: slackPost
         ?? (github && issueNumber
           ? async (msg) => {
@@ -374,7 +462,15 @@ async function main() {
       },
       onPhaseEnd: async (phase, result) =>
         console.log(`[dispatch] ◀ ${workflowName}/${phase}: ${result.success ? "OK" : "FAILED"}`),
-      onRunStart,
+      onRunStart: notifierOnRunStart
+        ? async (runId: string) => {
+            // Synchronous notifier setup must finish before simple.ts calls
+            // reporter.start() (the next statement after it invokes this), so
+            // run it first, then chain any caller-provided onRunStart.
+            notifierOnRunStart(runId);
+            if (onRunStart) await onRunStart(runId);
+          }
+        : onRunStart,
     };
 
     try {

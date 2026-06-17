@@ -434,6 +434,54 @@ Slack (optional):
   (OIDC via arctic, uses `openid.connect.userInfo`)
 - `SLACK_ALLOWED_WORKSPACE` — restrict OAuth login to one team_id / domain
 
+## Deployment
+
+Production runs on a single host (the production server — connection details
+are kept out of this file; see local agent memory) as a **Docker Compose**
+stack — *not* the native systemd model described in `deploy/native/README.md`
+(that `lastlight.service` is `inactive`; the README is aspirational). The repo
+is checked out at **`/home/lastlight/lastlight`** and the private deployment
+overlay (`cliftonc/lastlight-instance`) is cloned into
+`/home/lastlight/lastlight/instance/` (mounted read-only at `/app/instance`,
+holds `config.yaml` + asset overrides + `secrets/.env` + `secrets/*.pem`).
+
+### Redeploy a code change
+
+```bash
+ssh <production-server> /home/lastlight/deploy.sh
+```
+
+`/home/lastlight/deploy.sh` is the single source of truth. It:
+
+1. `git pull` in `/home/lastlight/lastlight` (this repo, `main`).
+2. Pulls/clones the `instance/` overlay as the `lastlight` user (its read-only
+   deploy key, `git@github-instance:cliftonc/lastlight-instance.git`) and
+   symlinks `instance/docker-compose.override.yml` into the project root.
+3. `docker compose build agent sandbox` then `docker compose up -d
+   --remove-orphans` (recreates only what changed — the `agent` service plus
+   the egress-firewall sidecars).
+4. Force-restarts the four egress sidecars (`coredns-strict`, `coredns-open`,
+   `nginx-egress-strict`, `nginx-egress-open`) so they re-read any regenerated
+   nginx/coredns configs.
+5. Health-checks `http://127.0.0.1:8644/health`.
+
+So a normal deploy is: **commit + push to `main`, then run `deploy.sh` on the
+host.** Code changes (anything under `src/`, `workflows/`, `skills/`,
+`agent-context/`, `config/default.yaml`) need the full `deploy.sh` (image
+rebuild). Deployment-only config (the `instance/` overlay) can instead be
+edited + committed to the `lastlight-instance` repo and applied with just
+`docker compose restart agent` — no image rebuild.
+
+### Operate / debug
+
+```bash
+ssh <production-server>
+cd /home/lastlight/lastlight
+docker compose ps                  # service health
+docker compose logs -f agent       # live harness logs
+docker compose restart agent       # restart after an instance/ overlay edit
+```
+
 ## Sub-folder docs
 
 - `src/workflows/CLAUDE.md` — runner internals: phase types, linear vs DAG,
