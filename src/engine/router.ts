@@ -101,7 +101,7 @@ export async function routeEvent(
       // resume the conversation naturally.
       if (deps.db && envelope.issueNumber) {
         const triggerId = `${envelope.repo}#${envelope.issueNumber}`;
-        const pendingReply = deps.db.getPendingReplyGateByTrigger(triggerId);
+        const pendingReply = deps.db.approvals.getPendingReplyGateByTrigger(triggerId);
         if (pendingReply) {
           return {
             action: "skill",
@@ -277,7 +277,7 @@ export async function routeEvent(
       // the next reply — this must sit above all slash-command handling
       // so replies don't get mis-parsed as commands.
       if (deps.db && slackTriggerId) {
-        const pendingReply = deps.db.getPendingReplyGateByTrigger(slackTriggerId);
+        const pendingReply = deps.db.approvals.getPendingReplyGateByTrigger(slackTriggerId);
         if (pendingReply) {
           return {
             action: "skill",

@@ -33,15 +33,21 @@ vi.mock("arctic", () => {
 
 // Minimal mocks
 const mockDb = {
-  executionStats: vi.fn(() => ({ total: 0, running: 0, success: 0, failed: 0 })),
-  dailyStats: vi.fn(() => []),
-  hourlyStats: vi.fn(() => []),
-  allExecutions: vi.fn(() => []),
-  listWorkflowRuns: vi.fn(() => ({ runs: [], total: 0 })),
-  distinctWorkflowNames: vi.fn(() => []),
-  getWorkflowRun: vi.fn(() => null),
-  listPendingApprovals: vi.fn(() => []),
-  runningExecutions: vi.fn(() => []),
+  executions: {
+    executionStats: vi.fn(() => ({ total: 0, running: 0, success: 0, failed: 0 })),
+    dailyStats: vi.fn(() => []),
+    hourlyStats: vi.fn(() => []),
+    allExecutions: vi.fn(() => []),
+    runningExecutions: vi.fn(() => []),
+  },
+  runs: {
+    list: vi.fn(() => ({ runs: [], total: 0 })),
+    distinctNames: vi.fn(() => []),
+    getRun: vi.fn(() => null),
+  },
+  approvals: {
+    listPending: vi.fn(() => []),
+  },
 } as unknown as StateDb;
 
 const mockSessions = {
@@ -521,20 +527,26 @@ describe("POST /workflow-runs/:id/cancel", () => {
     const cancels: string[] = [];
     const db = {
       ...((mockDb as unknown) as Record<string, unknown>),
-      getWorkflowRun: vi.fn(() => opts.run.status === "cancelled" ? null : {
-        id: opts.run.id,
-        workflowName: "pr-review",
-        triggerId: opts.run.triggerId,
-        currentPhase: "review",
-        phaseHistory: [],
-        status: opts.run.status,
-        context: opts.run.taskId ? { taskId: opts.run.taskId } : {},
-        startedAt: "",
-        updatedAt: "",
-      }),
-      cancelWorkflowRun: vi.fn((id: string) => { cancels.push(id); }),
-      runningExecutions: vi.fn(() => opts.runningExecutions ?? []),
-      recordFinish: vi.fn((id: string, res: { error?: string }) => { finishes.push({ id, error: res.error }); }),
+      runs: {
+        ...((mockDb as unknown as { runs: Record<string, unknown> }).runs),
+        getRun: vi.fn(() => opts.run.status === "cancelled" ? null : {
+          id: opts.run.id,
+          workflowName: "pr-review",
+          triggerId: opts.run.triggerId,
+          currentPhase: "review",
+          phaseHistory: [],
+          status: opts.run.status,
+          context: opts.run.taskId ? { taskId: opts.run.taskId } : {},
+          startedAt: "",
+          updatedAt: "",
+        }),
+        cancelRun: vi.fn((id: string) => { cancels.push(id); }),
+      },
+      executions: {
+        ...((mockDb as unknown as { executions: Record<string, unknown> }).executions),
+        runningExecutions: vi.fn(() => opts.runningExecutions ?? []),
+        recordFinish: vi.fn((id: string, res: { error?: string }) => { finishes.push({ id, error: res.error }); }),
+      },
     } as unknown as StateDb;
     return { db, finishes, cancels };
   }
@@ -542,7 +554,10 @@ describe("POST /workflow-runs/:id/cancel", () => {
   it("returns 404 when run not found", async () => {
     const db = {
       ...((mockDb as unknown) as Record<string, unknown>),
-      getWorkflowRun: vi.fn(() => null),
+      runs: {
+        ...((mockDb as unknown as { runs: Record<string, unknown> }).runs),
+        getRun: vi.fn(() => null),
+      },
     } as unknown as StateDb;
     const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
     const res = await request(app, "/workflow-runs/run-abc/cancel", { method: "POST" });

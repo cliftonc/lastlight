@@ -423,10 +423,10 @@ async function main() {
     const notifierOnRunStart = statusChecklist
       ? (runId: string): void => {
           try {
-            const saved = ((db.getWorkflowRun(runId)?.scratch?.notifier) ?? {}) as NotifierState;
+            const saved = ((db.runs.getRun(runId)?.scratch?.notifier) ?? {}) as NotifierState;
             const persist = (patch: Partial<NotifierState>) => {
-              const cur = ((db.getWorkflowRun(runId)?.scratch?.notifier) ?? {}) as NotifierState;
-              db.updateWorkflowRunScratch(runId, { notifier: { ...cur, ...patch } });
+              const cur = ((db.runs.getRun(runId)?.scratch?.notifier) ?? {}) as NotifierState;
+              db.runs.mergeScratch(runId, { notifier: { ...cur, ...patch } });
             };
             const transports: NotifierTransport[] = [];
             if (ghChecklist && github && typeof issueNumber === "number") {
@@ -616,7 +616,7 @@ async function main() {
           console.warn(`[admin] Cannot resume workflow ${workflowRun.id}: missing owner/repo/issueNumber`);
           return;
         }
-        db.resumeWorkflowRun(workflowRun.id);
+        db.runs.setRunning(workflowRun.id);
         console.log(`[admin] Resuming ${workflowRun.workflowName} for ${owner}/${repo}#${issueNumber} after dashboard approval by ${sender}`);
         dispatchWorkflow(workflowRun.workflowName, {
           repo: `${owner}/${repo}`,
@@ -747,7 +747,7 @@ async function main() {
       // alongside sandbox runs. triggerId is the messaging-session id, so a
       // whole Slack thread groups together with `GROUP BY trigger_id`.
       const executionId = randomUUID();
-      db.recordStart({
+      db.executions.recordStart({
         id: executionId,
         triggerType: "chat",
         triggerId: messagingSessionId,
@@ -776,7 +776,7 @@ async function main() {
           sessionManager.setAgentSessionId(messagingSessionId, result.agentSessionId);
         }
 
-        db.recordFinish(executionId, {
+        db.executions.recordFinish(executionId, {
           success: result.success,
           error: result.error,
           turns: result.turns,
@@ -798,7 +798,7 @@ async function main() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[event] Chat error:`, msg);
-        db.recordFinish(executionId, {
+        db.executions.recordFinish(executionId, {
           success: false,
           error: msg,
           durationMs: 0,
@@ -820,7 +820,7 @@ async function main() {
 
     // Status report: return running executions
     if (skill === "status-report") {
-      const running = db.runningExecutions();
+      const running = db.executions.runningExecutions();
       if (running.length === 0) {
         await envelope.reply("No tasks currently running.");
       } else {
@@ -834,7 +834,7 @@ async function main() {
 
     // Check if already running for this trigger
     const triggerId = String(envelope.issueNumber || envelope.id);
-    if (db.isRunning(skill, triggerId)) {
+    if (db.executions.isRunning(skill, triggerId)) {
       console.log(`[event] Skipping: ${skill} already running for ${triggerId}`);
       // Notify messaging users that the task is already in progress
       if (envelope.type === "message") {
@@ -910,29 +910,29 @@ async function main() {
       const replyText = (context.reply as string) || "";
       const sender = (context.sender as string) || "unknown";
 
-      const run = db.getWorkflowRun(workflowRunId);
+      const run = db.runs.getRun(workflowRunId);
       if (!run) {
         console.warn(`[event] explore-reply: run ${workflowRunId} not found`);
         return;
       }
-      const pending = db.getPendingApprovalForWorkflow(workflowRunId);
+      const pending = db.approvals.getPendingForWorkflow(workflowRunId);
       if (!pending || pending.kind !== "reply") {
         console.warn(`[event] explore-reply: no pending reply gate on ${workflowRunId}`);
         return;
       }
-      db.resolveReplyGate(pending.id, replyText, sender);
 
-      // Append the QA entry to scratch.socratic.qa. The runner reads this
-      // via {{scratch.socratic.qa}} on the next iteration. The bot's last
-      // question lives on the execution row that produced it — resolve
-      // `lastOutputExecutionId` through the DB; legacy rows that still
-      // inline `lastOutput` work too.
+      // Build the QA entry for scratch.socratic.qa. The runner reads this via
+      // {{scratch.socratic.qa}} on the next iteration. The bot's last question
+      // lives on the execution row that produced it — resolve
+      // `lastOutputExecutionId` through the DB; legacy rows that still inline
+      // `lastOutput` work too. The explore-domain `qa` shape is computed here
+      // by the caller and passed into the generic store as an opaque patch.
       const prevScratch = (run.scratch || {}) as Record<string, unknown>;
       const prevSocratic = (prevScratch.socratic || {}) as Record<string, unknown>;
       const qaList = Array.isArray(prevSocratic.qa) ? [...(prevSocratic.qa as unknown[])] : [];
       const lastQuestion =
         (prevSocratic.lastOutputExecutionId
-          ? db.getExecutionOutput(prevSocratic.lastOutputExecutionId as string) ?? ""
+          ? db.executions.getExecutionOutput(prevSocratic.lastOutputExecutionId as string) ?? ""
           : (prevSocratic.lastOutput as string | undefined) ?? "");
       qaList.push({
         question: lastQuestion,
@@ -940,15 +940,20 @@ async function main() {
         sender,
         at: new Date().toISOString(),
       });
-      db.updateWorkflowRunScratch(workflowRunId, {
-        socratic: { ...prevSocratic, qa: qaList },
-      });
 
-      // Resume is ledger-driven: the runner re-runs from the top, completed
-      // phases skip via shouldRunPhase, and the generic-loop node picks up
-      // from `scratch.iteration` (persisted when it paused). No currentPhase
-      // manipulation is needed.
-      db.resumeWorkflowRun(workflowRunId);
+      // One transaction: resolve the reply gate (recording the reply text),
+      // merge the QA into scratch, and flip the run back to running. Resume is
+      // then ledger-driven (the generic-loop node picks up from
+      // `scratch.iteration`). The atomic op's double-reply guard throws on a
+      // racing second reply — we bail without a duplicate dispatch.
+      try {
+        db.runs.resolveReplyGateAndResume(workflowRunId, pending.id, replyText, sender, {
+          socratic: { ...prevSocratic, qa: qaList },
+        });
+      } catch (err) {
+        console.warn(`[event] explore-reply: reply gate ${pending.id} already resolved — skipping duplicate resume:`, err);
+        return;
+      }
 
       // Re-dispatch. Use channelId/threadId from the current event context
       // (the router captured them from the reply envelope), not from stored
@@ -985,9 +990,9 @@ async function main() {
         : undefined;
 
       const approval = context.workflowRunId
-        ? db.getPendingApprovalForWorkflow(context.workflowRunId as string)
+        ? db.approvals.getPendingForWorkflow(context.workflowRunId as string)
         : triggerId
-        ? db.getPendingApprovalByTrigger(triggerId)
+        ? db.approvals.getPendingByTrigger(triggerId)
         : null;
 
       if (!approval) {
@@ -995,12 +1000,12 @@ async function main() {
         return;
       }
 
-      db.respondToApproval(approval.id, decision, sender, reason);
-
       if (decision === "approved") {
         // Re-trigger the build cycle — resume logic in orchestrator will pick up from DB state
-        const workflowRun = db.getWorkflowRun(approval.workflowRunId);
+        const workflowRun = db.runs.getRun(approval.workflowRunId);
         if (workflowRun && !github) {
+          // Record the approval, but we can't resume without the GitHub App.
+          db.approvals.respond(approval.id, "approved", sender, reason);
           await envelope.reply("Approval recorded, but cannot resume: GitHub App is not configured. Configure GITHUB_APP_ID and related env vars to enable build resumption.");
           return;
         }
@@ -1011,7 +1016,9 @@ async function main() {
             : ["", ""];
           const issueNumber = workflowRun.issueNumber;
           if (owner && repo && issueNumber) {
-            db.resumeWorkflowRun(workflowRun.id);
+            // One transaction: respond 'approved' + flip the run to running.
+            // The long-running re-dispatch happens after the commit.
+            db.runs.resolveGateAndResume(approval.id, sender);
             dispatchWorkflow(workflowRun.workflowName, {
               repo: `${owner}/${repo}`,
               issueNumber,
@@ -1020,13 +1027,18 @@ async function main() {
               sender,
               _triggerType: "approval",
             }).catch((err) => console.error(`[approval] Resume failed:`, err));
+          } else {
+            // Can't reconstruct the dispatch target — record without resuming.
+            db.approvals.respond(approval.id, "approved", sender, reason);
           }
+        } else {
+          // No workflow run for this approval — just record the response.
+          db.approvals.respond(approval.id, "approved", sender, reason);
         }
       } else {
-        const workflowRun = db.getWorkflowRun(approval.workflowRunId);
-        if (workflowRun) {
-          db.finishWorkflowRun(approval.workflowRunId, "failed", `Rejected by ${sender}: ${reason || "no reason given"}`);
-        }
+        // One transaction: respond 'rejected' + fail the run (a no-op if the
+        // run is already gone).
+        db.runs.resolveGateAndFail(approval.id, sender, reason);
         await envelope.reply(`Rejected by ${sender}. Build cycle aborted.${reason ? ` Reason: ${reason}` : ""}`);
       }
       return;
@@ -1063,7 +1075,7 @@ async function main() {
       }
 
       const executionId = randomUUID();
-      db.recordStart({
+      db.executions.recordStart({
         id: executionId,
         triggerType: envelope.type === "message" ? "chat" : "webhook",
         triggerId: String(issueNumber),
@@ -1101,7 +1113,7 @@ async function main() {
         sender: (context.sender as string) || "unknown",
         _triggerType: envelope.type === "message" ? "chat" : "webhook",
       }).then((result) => {
-        db.recordFinish(executionId, {
+        db.executions.recordFinish(executionId, {
           success: result.success,
           error: result.success ? undefined : "Build cycle failed",
           durationMs: 0,
@@ -1111,7 +1123,7 @@ async function main() {
         }
       }).catch((err) => {
         console.error(`[event] Build cycle failed:`, err);
-        db.recordFinish(executionId, { success: false, error: err.message, durationMs: 0 });
+        db.executions.recordFinish(executionId, { success: false, error: err.message, durationMs: 0 });
       });
 
       return;
