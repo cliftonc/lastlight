@@ -223,6 +223,7 @@ export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProf
     case "pr-comment":
     case "explore":
     case "security-review":
+    case "maintenance-review":
       return "issues-write";
     case "security-feedback":
       return "repo-write";

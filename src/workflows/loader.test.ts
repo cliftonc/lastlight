@@ -293,7 +293,7 @@ describe("loader — missing workflow directory", () => {
   });
 });
 
-describe("loader — security workflow YAML files", () => {
+describe("loader — health/security/maintenance workflow YAML files", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -359,6 +359,46 @@ context:
     expect(jobs[0].name).toBe("weekly-security-scan");
     expect(jobs[0].schedule).toBe("0 10 * * 1");
     expect(jobs[0].workflow).toBe("security-review");
+  });
+
+  it("parses maintenance-review.yaml without errors", () => {
+    writeFileSync(
+      join(dir, "maintenance-review.yaml"),
+      `kind: health
+name: maintenance-review
+description: "Weekly low-noise continuous maintenance scan."
+phases:
+  - name: scan
+    label: Maintenance scan
+    skill: maintenance-review
+    model: "{{models.health}}"
+    variant: "{{variants.health}}"
+`.trim(),
+    );
+    const wf = getWorkflow("maintenance-review");
+    expect(wf.name).toBe("maintenance-review");
+    expect(wf.kind).toBe("health");
+    expect(wf.phases).toHaveLength(1);
+    expect(wf.phases[0].name).toBe("scan");
+    expect(wf.phases[0].skill).toBe("maintenance-review");
+  });
+
+  it("parses cron-maintenance.yaml without errors", () => {
+    writeFileSync(
+      join(dir, "cron-maintenance.yaml"),
+      `kind: cron
+name: weekly-maintenance-scan
+schedule: "0 11 * * 6"
+workflow: maintenance-review
+context:
+  mode: scan
+`.trim(),
+    );
+    const jobs = getCronWorkflows();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].name).toBe("weekly-maintenance-scan");
+    expect(jobs[0].schedule).toBe("0 11 * * 6");
+    expect(jobs[0].workflow).toBe("maintenance-review");
   });
 });
 
