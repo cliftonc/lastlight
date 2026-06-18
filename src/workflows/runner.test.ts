@@ -234,8 +234,12 @@ describe("runWorkflow — guardrails on_output rules", () => {
 
     expect(result.success).toBe(false);
     expect(comments.some((c) => c.includes("BLOCKED"))).toBe(true);
-    // architect should not have run
-    expect(result.phases.map((p) => p.phase)).not.toContain("architect");
+    // architect's agent must not have run — only guardrails was dispatched.
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+    // Under the unified scheduler a failed phase cascades downstream as a skip,
+    // recorded in phases[] rather than omitted.
+    const architect = result.phases.find((p) => p.phase === "architect");
+    expect(architect?.output).toContain("Skipped");
   });
 
   it("bypasses BLOCKED for bootstrap tasks (by label)", async () => {
@@ -388,6 +392,7 @@ function makeMockDb(currentPhase = "phase_0"): StateDb {
     shouldRunPhase: vi.fn(() => "run"),
     recordStart: vi.fn(),
     recordFinish: vi.fn(),
+    recordSkippedPhase: vi.fn(),
     recordOutputText: vi.fn(),
     getExecutionOutput: vi.fn(() => null),
     markStaleAsFailed: vi.fn(),
@@ -434,10 +439,13 @@ describe("runWorkflow — approval gate", () => {
     expect(result.phases.map((p) => p.phase)).not.toContain("executor");
   });
 
-  it("resumes from executor after post_architect gate approval (currentPhase=architect in DB)", async () => {
-    // Simulate what simple.ts does after approval: update currentPhase to the
-    // gate-owning phase ("architect") so nextPhaseAfter lands on "executor".
+  it("resumes past an approved gate via the executions ledger (architect already done)", async () => {
+    // Ledger-driven resume: architect's execution row is success=1 ("done"),
+    // so runPhase skips it and the gate isn't re-hit — executor + pr run.
     const db = makeMockDb("architect");
+    vi.mocked(db.shouldRunPhase).mockImplementation((skill: string) =>
+      skill === "gated:architect" ? "done" : "run",
+    );
     const approvalConfig: ApprovalGateConfig = { post_architect: true };
 
     mockExecuteAgent
@@ -455,11 +463,10 @@ describe("runWorkflow — approval gate", () => {
       "wf-gate-1",
     );
 
-    // Not paused — gate phase (architect) was skipped, executor and pr ran
+    // Not paused — architect was deduped (done), executor and pr ran.
     expect(result.paused).toBeUndefined();
     expect(result.success).toBe(true);
     expect(result.prNumber).toBe(5);
-    // Only executor + pr ran (architect skipped by shouldRun check)
     expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
   });
 
@@ -905,7 +912,7 @@ describe("runWorkflow — DAG parallel execution", () => {
     expect(mockExecuteAgent).toHaveBeenCalledTimes(4);
   });
 
-  it("runs executor_a and executor_b concurrently (both called)", async () => {
+  it("runs every ready node sequentially in declaration order", async () => {
     mockExecuteAgent.mockResolvedValue(makeSuccessResult("done"));
 
     const started: string[] = [];
@@ -914,9 +921,9 @@ describe("runWorkflow — DAG parallel execution", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(started).toContain("executor_a");
-    expect(started).toContain("executor_b");
-    expect(started).toContain("merge");
+    // Sequential, declaration order — the two independent executors no longer
+    // run in parallel; the earliest-declared ready node goes first.
+    expect(started).toEqual(["phase_0", "architect", "executor_a", "executor_b", "merge"]);
   });
 
   it("skips downstream nodes when upstream fails (all_success rule)", async () => {
@@ -980,7 +987,34 @@ describe("runWorkflow — DAG parallel execution", () => {
     expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // architect + executor
   });
 
-  it.todo("placeholder for future DAG tests");
+  it("uses ONE shared workspace (taskId) for every phase of a DAG run", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult());
+
+    await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {});
+
+    // Every executeAgent call carries the same taskId — the per-phase
+    // `${taskId}-${phaseName}` clones of the old DAG runner are gone.
+    const taskIds = mockExecuteAgent.mock.calls.map((c) => (c[2] as { taskId: string }).taskId);
+    expect(taskIds.length).toBe(4);
+    expect(new Set(taskIds)).toEqual(new Set([BASE_CTX.taskId]));
+  });
+
+  it("records skipped phases in the executions ledger", async () => {
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("architect done"))
+      .mockResolvedValueOnce(makeFailResult("executor_a exploded"))
+      .mockResolvedValue(makeSuccessResult("done"));
+
+    const db = makeMockDb("phase_0");
+    const recordSkipped = vi.fn();
+    (db as unknown as { recordSkippedPhase: typeof recordSkipped }).recordSkippedPhase = recordSkipped;
+
+    await runWorkflow(PARALLEL_WORKFLOW, BASE_CTX, {} as never, {}, db, undefined, undefined, "wf-skip-1");
+
+    // merge is skipped (executor_a failed) → one skip row in the ledger.
+    const skippedSkills = recordSkipped.mock.calls.map((c) => c[0]);
+    expect(skippedSkills).toContain("parallel-test:merge");
+  });
 });
 
 describe("runWorkflow — definition-driven resume + YAML messages", () => {
@@ -1000,19 +1034,27 @@ describe("runWorkflow — definition-driven resume + YAML messages", () => {
         { name: "ship", type: "agent", prompt: "prompts/ship.md" },
       ],
     };
-    // Simulate the DB row saying we already completed "plan" → resume from "implement"
+    // Ledger-driven resume: discover + plan are already done; implement + ship
+    // still need to run. The runner re-runs from the top and dedups the
+    // completed phases via shouldRunPhase.
     const db = makeMockDb("plan");
+    const done = new Set(["custom:discover", "custom:plan"]);
+    vi.mocked(db.shouldRunPhase).mockImplementation((skill: string) =>
+      done.has(skill) ? "done" : "run",
+    );
     mockExecuteAgent
       .mockResolvedValueOnce(makeSuccessResult("implement done"))
       .mockResolvedValueOnce(makeSuccessResult("ship done"));
 
     const result = await runWorkflow(workflow, BASE_CTX, {} as never, {}, db, undefined, undefined, "wf-custom-resume");
     expect(result.success).toBe(true);
+    // Only implement + ship actually dispatched an agent — discover + plan deduped.
     expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
-    const phaseNames = result.phases.map((p) => p.phase);
-    expect(phaseNames).toEqual(expect.arrayContaining(["implement", "ship"]));
-    expect(phaseNames).not.toContain("discover");
-    expect(phaseNames).not.toContain("plan");
+    const startedSkills = vi.mocked(db.recordStart).mock.calls.map((c) => c[0].skill);
+    expect(startedSkills).toContain("custom:implement");
+    expect(startedSkills).toContain("custom:ship");
+    expect(startedSkills).not.toContain("custom:discover");
+    expect(startedSkills).not.toContain("custom:plan");
   });
 
   it("renders phase.messages.on_start through the template engine", async () => {

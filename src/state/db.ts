@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { resolve } from "path";
+import { randomUUID } from "crypto";
 
 const DEFAULT_DB_PATH = "lastlight.db";
 
@@ -46,7 +47,6 @@ export interface WorkflowRun {
    * loop to accumulate Q&A across reply-gate pauses.
    */
   scratch?: Record<string, unknown>;
-  nodeStatuses?: Record<string, "pending" | "running" | "succeeded" | "failed" | "skipped">;
   /**
    * Number of times `resumeOrphanedWorkflows` has re-dispatched this run
    * after a harness restart. Bounded by a small limit so a run that
@@ -212,13 +212,6 @@ export class StateDb {
       CREATE INDEX IF NOT EXISTS idx_approvals_workflow ON workflow_approvals(workflow_run_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON workflow_approvals(status);
     `);
-
-    // Add node_statuses column for DAG parallelism (safe for existing DBs)
-    try {
-      this.db.exec(`ALTER TABLE workflow_runs ADD COLUMN node_statuses TEXT`);
-    } catch {
-      // Column already exists — ignore
-    }
 
     // Mutable phase-to-phase state for features like the socratic explore
     // loop that accumulate data across reply-gate pauses.
@@ -392,6 +385,40 @@ export class StateDb {
       result.stopReason ?? null,
       result.extensionStatus ?? null,
       id,
+    );
+  }
+
+  /**
+   * Record a phase that the scheduler skipped because its trigger rule was
+   * not satisfied (a failed/skipped upstream cascaded down a chain). The
+   * executions ledger is the single source of truth the dashboard derives
+   * phase status from, so skips are written here too — as a finished,
+   * non-successful row (`success = 0`, `stop_reason = 'skipped'`). Because it
+   * is not `success = 1`, `shouldRunPhase` re-evaluates it on resume (the node
+   * will simply be re-skipped if the upstream is still failed).
+   */
+  recordSkippedPhase(
+    skill: string,
+    triggerId: string,
+    workflowRunId?: string,
+    repo?: string,
+  ): void {
+    const now = new Date().toISOString();
+    const m = triggerId.match(/#(\d+)$/);
+    const issueNumber = m ? Number(m[1]) : null;
+    this.db.prepare(`
+      INSERT INTO executions
+        (id, trigger_type, trigger_id, skill, repo, issue_number, started_at, finished_at, success, error, stop_reason, workflow_run_id)
+      VALUES (?, 'webhook', ?, ?, ?, ?, ?, ?, 0, 'skipped: trigger rule not satisfied', 'skipped', ?)
+    `).run(
+      randomUUID(),
+      triggerId,
+      skill,
+      repo ?? null,
+      issueNumber,
+      now,
+      now,
+      workflowRunId ?? null,
     );
   }
 
@@ -1036,8 +1063,8 @@ export class StateDb {
         .get(...params) as { c: number }
     ).c;
 
-    // Explicit column list — the heavy JSON blobs (`context`, `scratch`,
-    // `node_statuses`) can each be many MB on long-running build runs and
+    // Explicit column list — the heavy JSON blobs (`context`, `scratch`)
+    // can each be many MB on long-running build runs and
     // the dashboard list view doesn't read them. Returning them turned a
     // 20-row page into a 14MB payload. The single-row endpoint
     // (`getWorkflowRun`) still uses `SELECT *` so the detail panel keeps
@@ -1216,20 +1243,6 @@ export class StateDb {
     `).run(status, respondedBy, response ?? null, now, id);
   }
 
-  /** Update a single node's status in the workflow run's nodeStatuses map. */
-  updateNodeStatus(
-    workflowId: string,
-    nodeName: string,
-    status: "pending" | "running" | "succeeded" | "failed" | "skipped",
-  ): void {
-    const now = new Date().toISOString();
-    const row = this.db.prepare(`SELECT node_statuses FROM workflow_runs WHERE id = ?`).get(workflowId) as { node_statuses: string | null } | undefined;
-    if (!row) return;
-    const statuses = row.node_statuses ? JSON.parse(row.node_statuses) as Record<string, string> : {};
-    statuses[nodeName] = status;
-    this.db.prepare(`UPDATE workflow_runs SET node_statuses = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(statuses), now, workflowId);
-  }
-
   // ── Cron overrides ─────────────────────────────────────────────
 
   /** Get the override row for a single cron, or null if none. */
@@ -1378,7 +1391,6 @@ export class StateDb {
       status: row.status as WorkflowRun["status"],
       context: row.context ? JSON.parse(row.context as string) as Record<string, unknown> : undefined,
       scratch: row.scratch ? JSON.parse(row.scratch as string) as Record<string, unknown> : undefined,
-      nodeStatuses: row.node_statuses ? JSON.parse(row.node_statuses as string) as Record<string, "pending" | "running" | "succeeded" | "failed" | "skipped"> : undefined,
       restartCount: typeof row.restart_count === "number" ? row.restart_count : 0,
       startedAt: row.started_at as string,
       updatedAt: row.updated_at as string,

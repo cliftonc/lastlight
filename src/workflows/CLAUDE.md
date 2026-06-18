@@ -13,9 +13,10 @@ should require **only a YAML file** in `workflows/`, no runner changes.
 | `loader.ts` | Reads `workflows/*.yaml`, validates against the schema, caches parsed definitions. `getWorkflow(name)` is the only lookup the rest of the code uses. |
 | `templates.ts` | Mustache-ish template engine. Handles `{{branch}}`, `{{issueDir}}`, `{{contextSnapshot}}`, `{{models.architect}}`, `{{phaseOutputs.guardrails.output}}`, list iteration, and `unless_*` clauses. |
 | `simple.ts` | Top-of-stack entry: `runSimpleWorkflow(workflowName, request, …)`. Picks the trigger id, builds the template context, creates or reuses a `workflow_runs` row, then calls `runWorkflow`. |
-| `runner.ts` | The actual executor — linear walk over `definition.phases`, dispatches to DAG runner when dependencies are declared, handles loops and approval gates. Contains `runPhase`, `runWorkflow`, `runDagWorkflow`, `isTerminated`. |
-| `dag.ts` | Pure graph logic: `buildDag`, `evaluateTriggerRule`, `getReadyNodes`, `topoSort`. No IO. `runDagWorkflow` in `runner.ts` uses it for dependency-aware scheduling. |
-| `phase-ref.ts` | `PhaseRef` value object — the single authority for building loop-iteration labels (`format()`) and resolving them back (`phaseIndexInDefinition`, exact-match first) — plus `nextPhaseAfter`. No IO. |
+| `runner.ts` | The **scheduler**. One sequential walk over a chain-synthesized DAG — no separate linear/DAG paths. Owns the `phases[]`/`outputs{}` accumulation, node status, cancel/skip handling, and the terminal `set_phase`/PR wrap-up. Delegates each node's body to `PhaseExecutor`. Also: `gitAccessProfileForWorkflow`, `gitSandboxAccessForWorkflow`. Re-exports `isTerminated`. |
+| `phase-executor.ts` | `PhaseExecutor` — owns every per-phase body (context / standard agent / reviewer-loop / generic-loop, plus approval & reply gates) behind `execute(node, outputs) → PhaseOutcome`. Constructed once per run from three collaborators: run-scoped data, a `PhaseReporter`, a `PhaseResolver`. Also home to `runPhase`, `buildPhasePrompt`, `phaseConfigFor`, `isTerminated`. Unit-tested with fakes (`phase-executor.test.ts`). |
+| `dag.ts` | Pure graph logic: `buildDag(phases, { chainIfNoDeps })`, `evaluateTriggerRule`, `getReadyNodes`, `getNodesToSkip`, `isComplete`, `topoSort`. No IO. `chainIfNoDeps` synthesizes a previous-phase chain when no phase declares `depends_on`. |
+| `phase-ref.ts` | `PhaseRef` value object — the single authority for building loop-iteration labels (`format()`) and parsing them back (`parse()` → base + kind). No IO. |
 | `verdict.ts` | `parseReviewerVerdict(output) → { verdict, viaFallback }` — the one pure parser for a reviewer phase's `VERDICT:` marker (with the fallback heuristic). Both runner verdict sites call it. |
 | `loop-eval.ts` | Expression evaluator for `generic_loop.until` conditions (`output.contains('PASS')`, `verdict == 'APPROVED'`). |
 | `resume.ts` | Startup orphan recovery + approval-gate resume entry point. Called both on harness boot (recover `running` / `paused` runs) and when a user responds to an approval gate. |
@@ -29,18 +30,20 @@ EventEnvelope
       → runSimpleWorkflow()
         → loader.getWorkflow(name)   loads + validates YAML
         → db.createWorkflowRun()     or reuses an existing paused/running row
-        → runWorkflow()              [src/workflows/runner.ts]
-          ├─ runPhase()              per phase: context / agent / loop
-          │    └─ executeAgent()     [src/engine/opencode-executor.ts]
-          │         └─ spawns a docker sandbox, runs `opencode run --format json`,
-          │           parses the event stream + writes the dashboard shim jsonl
-          └─ runDagWorkflow()        invoked when any phase has depends_on
+        → runWorkflow()              [src/workflows/runner.ts] — the scheduler
+          └─ PhaseExecutor.execute()  [src/workflows/phase-executor.ts]
+               └─ runPhase()          per node: context / agent / loop
+                    └─ executeAgent()  [src/engine/agent-executor.ts]
+                         └─ spawns a docker sandbox, runs the agent,
+                           parses the event stream + writes the dashboard shim jsonl
 ```
 
 Approval-gate resumption bypasses the router and re-enters via
-`src/workflows/resume.ts → resumeOrphanedWorkflows / resumeWorkflowRun →
-runSimpleWorkflow`. The runner's `nextPhaseAfter(definition, currentPhase)`
-derives the resume point from the YAML alone — no per-workflow branching.
+`src/workflows/resume.ts → resumeOrphanedWorkflows → runWorkflow` (boot
+recovery) or `runSimpleWorkflow` (a fresh trigger on a paused/running run).
+Resume is **ledger-driven**: the runner always re-runs from the top and the
+`executions` table (via `shouldRunPhase`) skips already-completed phases — no
+per-workflow branching, no `currentPhase`-derived resume index.
 
 ## Phase types
 
@@ -157,22 +160,34 @@ third-party docs goes through the same firewall path. See the
 "Environment" section of the top-level `CLAUDE.md` for the required
 provider env vars.
 
-## Linear vs DAG runner
+## One scheduler (every workflow is a DAG)
 
-`runWorkflow` checks `hasDependencies(definition)`. If any phase has
-`depends_on`, it hands off to `runDagWorkflow`; otherwise it walks
-`definition.phases` in declaration order.
+There is a single scheduler — no separate linear/DAG paths. `runWorkflow`
+builds a DAG with `buildDag(phases, { chainIfNoDeps: true })`:
 
-- **Linear runner** shares one `taskId` across all phases of the run. The
-  sandbox workspace persists between phases (architect writes `plan.md`,
-  executor reads it). This is the default for build / triage / review.
-- **DAG runner** gives each phase its own phase-scoped taskId
-  (`${taskId}-${phaseName}`) so concurrent phases can't race on the
-  workspace. Uses `buildDag` + `getReadyNodes` from `dag.ts` to dispatch
-  ready nodes in parallel.
+- **No `depends_on`** (every production workflow) → chain synthesis adds
+  `depends_on: [previousPhase]` (`all_success`) to each phase, reproducing the
+  old linear semantics including the failure cascade.
+- **Any `depends_on` declared** (only `examples/parallel-review.yaml`) → the
+  declared edges are used as-is.
 
-Loop iterations always run serially (even in the DAG path) because each
-fix cycle reads the previous reviewer verdict.
+The scheduler then loops `while (!isComplete(dag))`: it skips nodes whose
+trigger rule fails (a failure cascades down the chain as **skips**, recorded
+in the `executions` ledger), and runs the earliest-declared ready node — **one
+at a time, sequentially, in declaration order**. Real concurrency via git
+worktrees is deferred to a later issue.
+
+- **One workspace.** Every phase and every loop iteration uses the single
+  `ctx.taskId`. The sandbox workspace persists between phases (architect writes
+  `plan.md`, executor reads it). The old DAG path's per-phase
+  `${taskId}-${phaseName}` clones are gone.
+- **Uniform skip semantics.** A node runs iff its trigger rule is satisfied by
+  its deps' statuses; otherwise it is skipped (no downstream agent calls; the
+  run ends `success: false`). `isTerminated` errors (OOM/cancel) are not
+  reported as phase failures, and the failing node's error propagates to the
+  run.
+- Loop iterations run serially within their node because each fix cycle reads
+  the previous reviewer verdict.
 
 ## Loop iteration naming
 
@@ -191,8 +206,8 @@ First reviewer pass       → reviewer
 ```
 
 All generated labels are built by `PhaseRef.format()` (`phase-ref.ts`) — the
-single authority — and resolved back via `phaseIndexInDefinition` (exact-match
-first). `n` is the 1-based **cycle**; `fix_k` and `recheck_k` pair within a
+single authority — and parsed back via `PhaseRef.parse()` (base + kind).
+`n` is the 1-based **cycle**; `fix_k` and `recheck_k` pair within a
 cycle:
 
 - `${parentPhaseName}` — the initial run
@@ -230,8 +245,11 @@ The user then resolves the gate via one of:
 All three paths funnel into the same `resumeWorkflowRun(run, sender)`
 callback wired in `src/index.ts`. It updates `workflow_approvals`,
 flips the run back to `running`, and re-enters `runSimpleWorkflow`. The
-runner's `nextPhaseAfter(definition, run.currentPhase)` skips already-
-completed phases, so the re-entry picks up exactly where it paused.
+runner re-runs from the top and the `executions` ledger (`shouldRunPhase`)
+skips already-completed phases, so the re-entry picks up exactly where it
+paused. For an **approve** gate the gated phase is already `done` so the
+runner proceeds past it; for a **reply** gate the generic-loop node resumes
+from `scratch.iteration`. No `currentPhase`-reset scaffolding is involved.
 
 ## taskId scoping
 
@@ -244,12 +262,10 @@ ${repo}-${issueNumber}-${workflowName}-${runId.slice(0, 8)}
 
 - Includes the run id suffix so two parallel runs against the same
   issue can't collide on the sandbox workspace.
-- Linear runner passes this exact taskId to every `runPhase` call →
-  all phases share one workspace.
-- DAG runner uses `${taskId}-${phaseName}` for parallel phases →
-  concurrent writes are isolated.
-- Loop iterations use the linear taskId (fixes read the reviewer's
-  output from the same workspace).
+- The scheduler passes this exact taskId to every `runPhase` call →
+  all phases **and all loop iterations** share one workspace (fixes read
+  the reviewer's output from the same checkout). The old DAG path's
+  per-phase `${taskId}-${phaseName}` clones are gone.
 
 `resume.ts` reconstructs the taskId from the stored `context.taskId` so
 a resumed run lands in the same sandbox dir the original started in.
@@ -275,10 +291,15 @@ and similar.
 
 Unit tests for every non-trivial piece live alongside the source:
 
-- `runner.test.ts` — 1000+ lines, covers linear and DAG paths, context
-  phases, loop cycles, approval gates, resume, guardrails bypass, and
-  the nextPhaseAfter / isTerminated helpers.
-- `dag.test.ts` — pure graph scheduling.
+- `runner.test.ts` — covers the unified scheduler: chain + declared-DAG
+  workflows, context phases, loop cycles, approval gates, ledger-driven
+  resume, guardrails bypass, sequential ordering, one-workspace, and
+  skip-in-ledger.
+- `phase-executor.test.ts` — direct unit tests for `PhaseExecutor.execute`
+  with fake collaborators (each per-phase body, gates, dedup).
+- `golden-build.test.ts` — pins `build.yaml`'s phase sequence under the
+  unified scheduler (regression guard against reorders).
+- `dag.test.ts` — pure graph scheduling + chain synthesis.
 - `loader.test.ts` — YAML validation.
 - `templates.test.ts` — variable substitution and `unless_*`.
 - `loop-eval.test.ts` — expression evaluator.

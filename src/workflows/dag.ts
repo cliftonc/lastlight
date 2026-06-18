@@ -13,8 +13,21 @@ export interface DagNode {
 
 const TERMINAL: NodeStatus[] = ["succeeded", "failed", "skipped"];
 
+export interface BuildDagOptions {
+  /**
+   * When set and **no** phase declares `depends_on`, synthesize a chain:
+   * each phase depends on the one declared before it (trigger rule
+   * `all_success`). This reproduces the old linear runner's semantics —
+   * sequential execution with a failure cascade — as a degenerate DAG, so
+   * the unified scheduler can treat every workflow uniformly. When any phase
+   * declares an explicit edge, the declared graph is used verbatim (no
+   * synthesis).
+   */
+  chainIfNoDeps?: boolean;
+}
+
 /** Build a DAG from phase definitions. Validates edges and detects cycles. */
-export function buildDag(phases: PhaseDefinition[]): DagNode[] {
+export function buildDag(phases: PhaseDefinition[], opts: BuildDagOptions = {}): DagNode[] {
   const names = new Set(phases.map((p) => p.name));
 
   for (const phase of phases) {
@@ -25,9 +38,14 @@ export function buildDag(phases: PhaseDefinition[]): DagNode[] {
     }
   }
 
-  const nodes: DagNode[] = phases.map((p) => ({
+  const anyDeclared = phases.some((p) => p.depends_on && p.depends_on.length > 0);
+  const synthesizeChain = opts.chainIfNoDeps === true && !anyDeclared;
+
+  const nodes: DagNode[] = phases.map((p, i) => ({
     name: p.name,
-    depends_on: p.depends_on ?? [],
+    depends_on: synthesizeChain
+      ? (i > 0 ? [phases[i - 1].name] : [])
+      : (p.depends_on ?? []),
     trigger_rule: p.trigger_rule ?? "all_success",
     status: "pending" as NodeStatus,
   }));

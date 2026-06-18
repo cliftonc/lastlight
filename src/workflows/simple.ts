@@ -9,7 +9,7 @@ import {
   type RunnerCallbacks,
   type WorkflowResult,
 } from "./runner.js";
-import { nextPhaseAfter } from "./phase-ref.js";
+import { PhaseRef } from "./phase-ref.js";
 import type { TemplateContext } from "./templates.js";
 import { slugify } from "./templates.js";
 import { wrapUntrusted } from "../engine/screen.js";
@@ -142,8 +142,8 @@ export async function runSimpleWorkflow(
   // ── Resume handling ────────────────────────────────────────────────────────
   //
   // If a workflow_run already exists for this trigger, reuse its id. The
-  // runner's `nextPhaseAfter(definition, currentPhase)` derives the resume
-  // point — no per-workflow branching needed.
+  // runner re-runs from the top and the executions ledger (`shouldRunPhase`)
+  // skips already-completed phases — no per-workflow branching needed.
 
   // Only reuse a workflow_run row when the existing run is still live
   // (running/paused). `getWorkflowRunByTrigger` already filters out
@@ -347,53 +347,32 @@ async function handleExistingRun(
   notify: (msg: string) => Promise<void>,
   db: StateDb,
 ): Promise<WorkflowResult | null> {
-  // Workflow already completed (currentPhase points past the last real phase
-  // — e.g. a set_phase terminal marker like "complete"). Don't re-run.
-  // "waiting_approval" is a synthetic phase set when the runner pauses at a
-  // gate — it's NOT a terminal marker, so exclude it from this check.
+  // Workflow already completed: currentPhase is a terminal set_phase marker
+  // (e.g. "complete") — i.e. not a declared phase, not a generated loop label
+  // (`*_fix_N` / `*_recheck_N` / `*_iter_N`), and not the synthetic
+  // "waiting_approval" pause marker. Don't re-run.
   if (
     run.currentPhase &&
     run.currentPhase !== "waiting_approval" &&
-    nextPhaseAfter(definition, run.currentPhase) === null
+    !definition.phases.some((p) => p.name === run.currentPhase) &&
+    PhaseRef.parse(run.currentPhase).kind === "phase"
   ) {
-    const exactIdx = definition.phases.findIndex((p) => p.name === run.currentPhase);
-    if (exactIdx === -1) {
-      await notify(`Workflow \`${run.workflowName}\` is already complete for this trigger.`);
-      return {
-        success: true,
-        phases: [{ phase: "resume", success: true, output: "Already complete" }],
-      };
-    }
+    await notify(`Workflow \`${run.workflowName}\` is already complete for this trigger.`);
+    return {
+      success: true,
+      phases: [{ phase: "resume", success: true, output: "Already complete" }],
+    };
   }
 
   // Paused awaiting approval — see if a human has responded.
   if (run.status === "paused" && run.currentPhase === "waiting_approval") {
     const pendingApproval = db.getPendingApprovalForWorkflow(run.id);
     if (pendingApproval?.status === "approved") {
-      // Reply gates are a different shape than approve gates: the runner
-      // needs to RE-ENTER the same phase (to run the next loop iteration)
-      // rather than skip past it. Find the phase that owns the gate, and
-      // set currentPhase to the phase BEFORE it so nextPhaseAfter lands
-      // on the owning phase on resume.
-      const owningPhase = findPhaseOwningLoopGate(definition, pendingApproval.gate)
-        ?? findPhaseOwningGate(definition, pendingApproval.gate);
-      if (owningPhase && pendingApproval.kind === "reply") {
-        const ownIdx = definition.phases.findIndex((p) => p.name === owningPhase);
-        const priorPhase = ownIdx > 0 ? definition.phases[ownIdx - 1].name : "";
-        db.updateWorkflowPhase(run.id, priorPhase || owningPhase, {
-          phase: priorPhase || owningPhase,
-          timestamp: new Date().toISOString(),
-          success: true,
-          summary: `Resumed after reply on gate: ${pendingApproval.gate}`,
-        });
-      } else if (owningPhase) {
-        db.updateWorkflowPhase(run.id, owningPhase, {
-          phase: owningPhase,
-          timestamp: new Date().toISOString(),
-          success: true,
-          summary: `Resumed after gate approval: ${pendingApproval.gate}`,
-        });
-      }
+      // Resume is ledger-driven: the runner re-runs from the top and every
+      // completed phase skips via `shouldRunPhase` (the executions ledger).
+      // No currentPhase manipulation is needed — for an approve gate the
+      // gated phase is already `done` so the runner proceeds past it; for a
+      // reply gate the loop node resumes from `scratch.iteration`.
       console.log(
         `[simple] ${pendingApproval.kind === "reply" ? "Reply" : "Approval"} received for gate ${pendingApproval.gate} — resuming ${run.workflowName}`,
       );
@@ -420,33 +399,5 @@ async function handleExistingRun(
   console.log(
     `[simple] Resuming ${run.workflowName} for ${run.triggerId} (last phase: ${run.currentPhase})`,
   );
-  return null;
-}
-
-/** Walk definition.phases and return the phase that declares this gate. */
-function findPhaseOwningGate(
-  definition: ReturnType<typeof getWorkflow>,
-  gateName: string,
-): string | null {
-  for (const p of definition.phases) {
-    if (p.approval_gate === gateName) return p.name;
-    if (p.loop?.approval_gate === gateName) return p.name;
-  }
-  return null;
-}
-
-/**
- * Generic-loop gates are named `${phaseName}_iter_${N}`, so walk the phases
- * with `generic_loop` set and match by prefix. Used for reply-gate resume
- * where the gate name isn't declared up front.
- */
-function findPhaseOwningLoopGate(
-  definition: ReturnType<typeof getWorkflow>,
-  gateName: string,
-): string | null {
-  for (const p of definition.phases) {
-    if (!p.generic_loop) continue;
-    if (gateName.startsWith(`${p.name}_iter_`)) return p.name;
-  }
   return null;
 }

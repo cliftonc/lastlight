@@ -126,6 +126,36 @@ describe("workflow_runs CRUD", () => {
   });
 });
 
+describe("node_statuses store removed (issue #94)", () => {
+  it("no longer exposes updateNodeStatus and getWorkflowRun has no nodeStatuses", () => {
+    const id = randomUUID();
+    db.createWorkflowRun({
+      id,
+      workflowName: "build",
+      triggerId: "owner/repo#77",
+      currentPhase: "phase_0",
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+    expect((db as unknown as Record<string, unknown>).updateNodeStatus).toBeUndefined();
+    const run = db.getWorkflowRun(id);
+    expect(run).not.toBeNull();
+    expect((run as unknown as Record<string, unknown>).nodeStatuses).toBeUndefined();
+  });
+});
+
+describe("recordSkippedPhase — skips land in the executions ledger", () => {
+  it("writes a finished, non-successful skip row that shouldRunPhase re-evaluates", () => {
+    const skill = "build:merge";
+    const triggerId = "owner/repo#88";
+    db.recordSkippedPhase(skill, triggerId, "wf-skip-1", "repo");
+
+    // Not "done" (success != 1) and not "running" (finished_at set) — so a
+    // resume re-evaluates the node (it'll simply be re-skipped if still gated).
+    expect(db.shouldRunPhase(skill, triggerId, "wf-skip-1")).toBe("run");
+  });
+});
+
 describe("getWorkflowRunByTrigger", () => {
   it("returns the active run for a trigger", () => {
     const id = randomUUID();

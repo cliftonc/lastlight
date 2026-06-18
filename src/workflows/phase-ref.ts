@@ -5,8 +5,8 @@
  * A workflow phase named in the YAML (e.g. `reviewer`) keeps that bare name for
  * its initial run. When a reviewer loop fixes-and-rechecks, or a generic loop
  * iterates, the runner mints a derived label. `PhaseRef.format()` is the ONLY
- * place those derived strings are constructed, and `phaseIndexInDefinition`
- * resolves them back to the declared phase.
+ * place those derived strings are constructed, and `PhaseRef.parse()` resolves
+ * them back to their base phase + kind.
  *
  * Scheme (post-#93):
  *
@@ -19,8 +19,6 @@
  * legacy bare-numeric re-review form (`reviewer_2`) is dropped entirely — it is
  * neither produced nor recognized.
  */
-
-import type { AgentWorkflowDefinition } from "./schema.js";
 
 export type PhaseKind = "phase" | "fix" | "recheck" | "iter";
 
@@ -79,42 +77,4 @@ export class PhaseRef {
     if (m) return new PhaseRef(m[1], "iter", Number(m[2]));
     return new PhaseRef(label, "phase");
   }
-}
-
-/**
- * Resolve a recorded phase name to its index in `definition.phases`.
- *
- * Definition-aware and **exact-match-first**: a phase literally named like a
- * generated label (e.g. a YAML phase actually called `reviewer_fix_1`) wins
- * over suffix-stripping. Only when no exact match exists do we strip a
- * generated suffix and resolve to the base phase.
- *
- * Returns -1 when the name doesn't match any phase — unknown/untracked labels
- * (`waiting_approval`, user `set_phase` values like `complete`) and the dropped
- * legacy `reviewer_2` form all land here.
- */
-export function phaseIndexInDefinition(
-  definition: AgentWorkflowDefinition,
-  name: string,
-): number {
-  const exact = definition.phases.findIndex((p) => p.name === name);
-  if (exact >= 0) return exact;
-
-  const ref = PhaseRef.parse(name);
-  if (ref.kind === "phase") return -1;
-  return definition.phases.findIndex((p) => p.name === ref.base);
-}
-
-/**
- * Given the phase the runner last completed, return the name of the phase the
- * runner should run next. Returns `null` when there is no next phase (i.e. the
- * workflow is done).
- */
-export function nextPhaseAfter(
-  definition: AgentWorkflowDefinition,
-  completedPhase: string,
-): string | null {
-  const idx = phaseIndexInDefinition(definition, completedPhase);
-  if (idx < 0 || idx >= definition.phases.length - 1) return null;
-  return definition.phases[idx + 1].name;
 }
