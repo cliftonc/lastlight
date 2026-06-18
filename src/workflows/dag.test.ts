@@ -59,6 +59,31 @@ describe("buildDag", () => {
   });
 });
 
+describe("buildDag — chain synthesis", () => {
+  it("synthesizes a previous-phase chain when no phase declares depends_on", () => {
+    const phases = [makePhase("A"), makePhase("B"), makePhase("C")];
+    const dag = buildDag(phases, { chainIfNoDeps: true });
+    expect(dag[0].depends_on).toEqual([]);
+    expect(dag[1].depends_on).toEqual(["A"]);
+    expect(dag[2].depends_on).toEqual(["B"]);
+    expect(dag.every((n) => n.trigger_rule === "all_success")).toBe(true);
+  });
+
+  it("leaves declared edges untouched when any phase declares depends_on", () => {
+    const phases = [makePhase("A"), makePhase("B"), makePhase("C", ["A"])];
+    const dag = buildDag(phases, { chainIfNoDeps: true });
+    expect(dag[0].depends_on).toEqual([]);
+    expect(dag[1].depends_on).toEqual([]); // B keeps its (absent) edge — no synthesis
+    expect(dag[2].depends_on).toEqual(["A"]);
+  });
+
+  it("does not synthesize a chain by default (chainIfNoDeps off)", () => {
+    const phases = [makePhase("A"), makePhase("B"), makePhase("C")];
+    const dag = buildDag(phases);
+    expect(dag.every((n) => n.depends_on.length === 0)).toBe(true);
+  });
+});
+
 describe("evaluateTriggerRule", () => {
   it("all_success: true when all deps succeeded", () => {
     expect(evaluateTriggerRule("all_success", ["succeeded", "succeeded"])).toBe(true);

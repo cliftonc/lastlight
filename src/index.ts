@@ -944,28 +944,10 @@ async function main() {
         socratic: { ...prevSocratic, qa: qaList },
       });
 
-      // Set currentPhase to the phase BEFORE the loop owner so the
-      // runner's nextPhaseAfter lands back on the loop phase for the
-      // next iteration. Walk the workflow definition to find it.
-      try {
-        const { getWorkflow } = await import("./workflows/loader.js");
-        const def = getWorkflow(run.workflowName);
-        // Find the phase that owns this gate (pattern: socratic_iter_N)
-        const gateParts = pending.gate.match(/^(.+)_iter_\d+$/);
-        const owningPhaseName = gateParts ? gateParts[1] : null;
-        if (owningPhaseName) {
-          const ownIdx = def.phases.findIndex((p) => p.name === owningPhaseName);
-          const priorPhase = ownIdx > 0 ? def.phases[ownIdx - 1].name : owningPhaseName;
-          db.updateWorkflowPhase(workflowRunId, priorPhase, {
-            phase: priorPhase,
-            timestamp: new Date().toISOString(),
-            success: true,
-            summary: `Resumed after reply on gate: ${pending.gate}`,
-          });
-        }
-      } catch (err) {
-        console.warn(`[event] explore-reply: could not resolve owning phase:`, err);
-      }
+      // Resume is ledger-driven: the runner re-runs from the top, completed
+      // phases skip via shouldRunPhase, and the generic-loop node picks up
+      // from `scratch.iteration` (persisted when it paused). No currentPhase
+      // manipulation is needed.
       db.resumeWorkflowRun(workflowRunId);
 
       // Re-dispatch. Use channelId/threadId from the current event context
