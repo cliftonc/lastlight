@@ -247,9 +247,14 @@ callback wired in `src/index.ts`. It updates `workflow_approvals`,
 flips the run back to `running`, and re-enters `runSimpleWorkflow`. The
 runner re-runs from the top and the `executions` ledger (`shouldRunPhase`)
 skips already-completed phases, so the re-entry picks up exactly where it
-paused. For an **approve** gate the gated phase is already `done` so the
-runner proceeds past it; for a **reply** gate the generic-loop node resumes
-from `scratch.iteration`. No `currentPhase`-reset scaffolding is involved.
+paused. For a standalone **approve** gate the gated phase is already `done` so
+the runner proceeds past it; for a **reply** gate the generic-loop node resumes
+from `scratch.iteration`. A **reviewer-loop** gate (`loop.approval_gate`) is
+mid-loop, so it persists `scratch["rloop:<phase>"].pausedAtCycle` before
+pausing and persists each review's output: on resume the loop re-derives the
+prior review's verdict from that output (a dedup-`done` review is **not**
+assumed APPROVED) and runs the fix cycle for the approved gate rather than
+re-pausing. No `currentPhase`-reset scaffolding is involved.
 
 ## taskId scoping
 

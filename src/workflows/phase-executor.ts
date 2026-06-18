@@ -582,9 +582,20 @@ export class PhaseExecutor {
     const loop = phase.loop!;
     const phaseName = phase.name;
     const MAX_CYCLES = loop.max_cycles;
+    const { db, workflowId, triggerId, scratch } = this.run;
+    const wf = this.run.definition.name;
     const results: PhaseResult[] = [];
     let approved = false;
     let fixCycles = 0;
+
+    // Loop resume state. When the loop pauses at `loop.approval_gate` after a
+    // REQUEST_CHANGES verdict, we persist the cycle we paused at so that on
+    // resume we can tell "approved — continue with the fix cycle" apart from
+    // "review approved → done". Without this, a dedup-`done` review on resume
+    // would be misread as APPROVED and skip the required fix. (#94 follow-up)
+    const loopKey = `rloop:${phaseName}`;
+    const slot = (scratch[loopKey] as Record<string, unknown> | undefined) ?? {};
+    const pausedAtCycle = typeof slot.pausedAtCycle === "number" ? slot.pausedAtCycle : undefined;
 
     while (!approved && fixCycles <= MAX_CYCLES) {
       const reviewLabel =
@@ -611,47 +622,65 @@ export class PhaseExecutor {
       const { model, variant } = this.resolveModelVariant(phase.model, phase.variant, phaseName);
       const rr = await this.runPhaseCall(reviewLabel, reviewPrompt, phase, model, variant);
 
+      // Derive this review's verdict. A dedup-`done` review (resume) is NOT
+      // assumed approved — re-parse the verdict from its persisted output.
+      let verdict: string | undefined;
+      const reviewRan = !rr.skipped;
       if (rr.skipped) {
         if (rr.reason === "running") {
           await this.reporter.message(phase.messages?.on_skipped_done);
           return { results, status: "failed", aborted: true };
         }
-        approved = true;
+        const prevOutput = db?.getPhaseOutput(`${wf}:${reviewLabel}`, triggerId, workflowId) ?? "";
+        verdict = parseReviewerVerdict(prevOutput).verdict;
         results.push({ phase: reviewLabel, success: true, output: "Already completed" });
-        break;
+      } else {
+        results.push({ phase: reviewLabel, ...pickResult(rr.result) });
+        await this.reporter.onEnd(reviewLabel, results[results.length - 1]);
+        const reviewerOutput = (rr.result.output || "").trim();
+        const parsed = parseReviewerVerdict(reviewerOutput);
+        verdict = parsed.verdict;
+        if (parsed.viaFallback) {
+          console.warn(
+            `[runner] Reviewer output missing VERDICT: marker — using fallback detection (isApproved=${verdict === "APPROVED"})`,
+          );
+        }
+        // Persist the review output so a resumed run can re-derive this verdict.
+        const execId = "executionId" in rr ? rr.executionId : undefined;
+        if (execId && db) db.recordOutputText(execId, reviewerOutput);
       }
 
-      results.push({ phase: reviewLabel, ...pickResult(rr.result) });
-      await this.reporter.onEnd(reviewLabel, results[results.length - 1]);
-
-      const reviewerOutput = (rr.result.output || "").trim();
-      const { verdict, viaFallback } = parseReviewerVerdict(reviewerOutput);
       const isApproved = verdict === "APPROVED";
-      if (viaFallback) {
-        console.warn(
-          `[runner] Reviewer output missing VERDICT: marker — using fallback detection (isApproved=${isApproved})`,
-        );
-      }
 
       if (isApproved) {
         approved = true;
-        this.reporter.persistPhase(reviewLabel, "APPROVED");
+        if (reviewRan) this.reporter.persistPhase(reviewLabel, "APPROVED");
         await this.reporter.step(reviewLabel, "done", loop.messages?.on_approved, { cycle: fixCycles + 1 });
       } else if (fixCycles < MAX_CYCLES) {
         fixCycles++;
-        this.reporter.persistPhase(reviewLabel, "REQUEST_CHANGES");
+        if (reviewRan) this.reporter.persistPhase(reviewLabel, "REQUEST_CHANGES");
 
-        // Approval gate before the fix loop.
-        if (this.resolver.gateEnabled(loop.approval_gate) && this.run.db && this.run.workflowId) {
-          await this.pauseForApproval(
-            reviewLabel,
-            loop.approval_gate!,
-            `Reviewer requested changes (cycle ${fixCycles}/${MAX_CYCLES}) on phase ${phaseName}.`,
-            "approve",
-            loop.messages?.on_pause_for_approval,
-            { cycle: fixCycles, maxCycles: MAX_CYCLES, gateKey: loop.approval_gate },
-          );
-          return { results, status: "succeeded", paused: true };
+        // Approval gate before the fix loop. Pause only on a *fresh* gate hit:
+        // not when the fix for this cycle has already run (gate was approved in
+        // a prior entry), and not when we're resuming right after approving
+        // exactly this cycle's gate.
+        if (this.resolver.gateEnabled(loop.approval_gate) && db && workflowId) {
+          const fixLabel = PhaseRef.fix(phaseName, fixCycles).format();
+          const fixAlreadyDone = db.shouldRunPhase(`${wf}:${fixLabel}`, triggerId, workflowId) === "done";
+          const resumingThisGate = pausedAtCycle === fixCycles;
+          if (!fixAlreadyDone && !resumingThisGate) {
+            scratch[loopKey] = { ...slot, pausedAtCycle: fixCycles };
+            db.updateWorkflowRunScratch(workflowId, { [loopKey]: scratch[loopKey] });
+            await this.pauseForApproval(
+              reviewLabel,
+              loop.approval_gate!,
+              `Reviewer requested changes (cycle ${fixCycles}/${MAX_CYCLES}) on phase ${phaseName}.`,
+              "approve",
+              loop.messages?.on_pause_for_approval,
+              { cycle: fixCycles, maxCycles: MAX_CYCLES, gateKey: loop.approval_gate },
+            );
+            return { results, status: "succeeded", paused: true };
+          }
         }
 
         await this.reporter.step(reviewLabel, "done", loop.messages?.on_request_changes, {

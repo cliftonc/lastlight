@@ -97,7 +97,7 @@ function makeResolver(overrides: Partial<PhaseResolver> = {}): PhaseResolver {
   };
 }
 
-function makeRun(definition: AgentWorkflowDefinition, db?: StateDb): PhaseRunContext {
+function makeRun(definition: AgentWorkflowDefinition, db?: StateDb, scratch: Record<string, unknown> = {}): PhaseRunContext {
   return {
     definition,
     ctx: { ...BASE_CTX },
@@ -105,7 +105,7 @@ function makeRun(definition: AgentWorkflowDefinition, db?: StateDb): PhaseRunCon
     taskId: "widget-42",
     triggerId: "acme/widget#42",
     githubAccess: { owner: "acme", repo: "widget", profile: "read", allowMcpAppAuth: false } as never,
-    scratch: {},
+    scratch,
     db,
     workflowId: db ? "wf-1" : undefined,
   };
@@ -123,6 +123,7 @@ function makeMockDb(): StateDb {
     recordOutputText: vi.fn(),
     recordSessionId: vi.fn(),
     getExecutionOutput: vi.fn(() => null),
+    getPhaseOutput: vi.fn(() => null),
     markStaleAsFailed: vi.fn(),
     markLatestAsFailed: vi.fn(),
     updateWorkflowPhase: vi.fn(),
@@ -381,6 +382,58 @@ describe("PhaseExecutor — reviewer loop", () => {
     expect(db.createApproval).toHaveBeenCalled();
     // Only the first review ran — no fix agent call yet.
     expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("on resume past an approved loop gate, runs the fix cycle instead of treating the deduped review as approved", async () => {
+    const loopDef: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "full",
+      phases: [
+        makePhase({
+          name: "reviewer",
+          prompt: "prompts/reviewer.md",
+          output_var: "review",
+          loop: {
+            max_cycles: 2,
+            approval_gate: "post_reviewer",
+            on_request_changes: { fix_prompt: "prompts/fix.md", re_review_prompt: "prompts/re.md" },
+          },
+        }),
+      ],
+    };
+    const db = makeMockDb();
+    // Resume state: the initial review already ran and requested changes; the
+    // fix for cycle 1 has NOT run yet; we paused at cycle 1's gate.
+    vi.mocked(db.shouldRunPhase).mockImplementation((skill: string) =>
+      skill === "full:reviewer" ? "done" : "run",
+    );
+    vi.mocked(db.getPhaseOutput).mockImplementation((skill: string) =>
+      skill === "full:reviewer" ? "VERDICT: REQUEST_CHANGES\nfix the bug" : null,
+    );
+    // fix succeeds, then the re-review approves.
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("fixed"))
+      .mockResolvedValueOnce(makeSuccessResult("VERDICT: APPROVED"));
+
+    const exec = new PhaseExecutor(
+      makeRun(loopDef, db, { "rloop:reviewer": { pausedAtCycle: 1 } }),
+      makeReporter(),
+      makeResolver({ gateEnabled: (g?: string) => g === "post_reviewer" }),
+    );
+
+    const outcome = await exec.execute(node("reviewer"), {});
+
+    // Must NOT pause again, and must NOT report approved=true with 0 cycles.
+    expect(outcome.paused).toBeFalsy();
+    expect(db.createApproval).not.toHaveBeenCalled();
+    expect(outcome.outputVars).toEqual({ review: { approved: true, cycles: 1 } });
+    // The fix + re-review ran (2 agent calls); the initial review was deduped.
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
+    expect(outcome.results.map((r: PhaseResult) => r.phase)).toEqual([
+      "reviewer",
+      "reviewer_fix_1",
+      "reviewer_recheck_1",
+    ]);
   });
 });
 

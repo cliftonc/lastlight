@@ -333,6 +333,25 @@ export class StateDb {
     return row?.output_text ?? null;
   }
 
+  /**
+   * Most recent finished execution's `output_text` for a phase (`skill`), or
+   * null. Used by the reviewer loop on resume to re-derive a completed review's
+   * verdict from its persisted output (a dedup-`done` review must not be
+   * assumed APPROVED — it may have requested changes).
+   */
+  getPhaseOutput(skill: string, triggerId: string, workflowRunId?: string): string | null {
+    const [scopeClause, scopeParam] = workflowRunId
+      ? ["workflow_run_id = ?", workflowRunId]
+      : ["trigger_id = ?", triggerId];
+    const row = this.db.prepare(`
+      SELECT output_text FROM executions
+      WHERE skill = ? AND ${scopeClause} AND output_text IS NOT NULL
+      ORDER BY finished_at DESC
+      LIMIT 1
+    `).get(skill, scopeParam) as { output_text: string | null } | undefined;
+    return row?.output_text ?? null;
+  }
+
   recordFinish(
     id: string,
     result: {
