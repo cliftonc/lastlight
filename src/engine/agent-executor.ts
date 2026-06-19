@@ -17,7 +17,8 @@ import {
   type ExtensionStatusMap,
   type GitSandboxAccess,
 } from "./profiles.js";
-import { AgenticShim, projectSlugForCwd, truncateForLog, safeStringify } from "./event-shim.js";
+import { AgenticShim, truncateForLog, safeStringify } from "./event-shim.js";
+import { projectSlugForCwd } from "../session-log.js";
 import type { SandboxBackend } from "../config.js";
 import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST, mergeAllowlist } from "../sandbox/egress-allowlist.js";
 import { getDockerSandboxOtelEnv, getOtelEnvForSandbox, recordError, recordExecutionMetrics, safeSpanAttributes, withSpan } from "../telemetry/index.js";

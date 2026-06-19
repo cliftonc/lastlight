@@ -4,6 +4,7 @@ import type { ExecutorConfig } from "./profiles.js";
 import { wrapUntrusted } from "./screen.js";
 import { ChatRunner, type ChatRunnerTurnResult } from "./chat-runner.js";
 import { AgenticShim } from "./event-shim.js";
+import { CHAT_PROJECT_SLUG } from "../session-log.js";
 import type { EmitterRecord } from "agentic-pi";
 import { getRuntimeConfig } from "../config.js";
 import { recordError, recordExecutionMetrics, telemetryIncludesContent, withSpan } from "../telemetry/index.js";
@@ -93,7 +94,7 @@ export interface ChatResult {
 
 export interface HandleChatMessageDeps {
   chatRunner: ChatRunner;
-  /** Where to write the dashboard-shim jsonl (`<dir>/projects/-app/<id>.jsonl`). */
+  /** Where to write dashboard-shim jsonl; SessionLog resolves the chat project slug. */
   sessionsHomeDir: string;
 }
 
@@ -224,7 +225,7 @@ async function writeChatShim(opts: {
 }): Promise<void> {
   const shim = new AgenticShim({
     homeDir: opts.sessionsHomeDir,
-    projectSlug: "-app", // ChatSessionReader hardcodes this slug
+    projectSlug: CHAT_PROJECT_SLUG, // Chat project slug is centralized in SessionLog
     model: opts.model,
     initialPrompt: opts.prompt,
   });
@@ -300,7 +301,7 @@ async function writeChatFailureShim(opts: {
 }): Promise<string | undefined> {
   const shim = new AgenticShim({
     homeDir: opts.sessionsHomeDir,
-    projectSlug: "-app",
+    projectSlug: CHAT_PROJECT_SLUG,
     initialPrompt: opts.prompt,
   });
   const safe = opts.messagingSessionId.replace(/[^A-Za-z0-9_-]/g, "_");

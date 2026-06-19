@@ -4,7 +4,7 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { streamSSE } from "hono/streaming";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { Slack, GitHub } from "arctic";
-import { unwrapLine, type SessionSource, type SessionMeta } from "./sessions.js";
+import type { SessionSource, SessionMeta } from "./sessions.js";
 import type { StateDb, WorkflowRun } from "../state/db.js";
 import { tailJsonl } from "./tail.js";
 import { listRunningContainers, killContainer, getContainerStats } from "./docker.js";
@@ -232,7 +232,7 @@ function mountSessionRoutes(app: Hono, sessions: SessionSource, prefix: string):
         filePath,
         (lines) => {
           for (const { msg } of lines) {
-            const unwrapped = unwrapLine(msg as Record<string, unknown>);
+            const unwrapped = sessions.normalizeRawLine(msg as Record<string, unknown>);
             for (const m of unwrapped) {
               msgIndex++;
               stream.writeSSE({ event: "message", data: JSON.stringify({ id: msgIndex, ...m }) });

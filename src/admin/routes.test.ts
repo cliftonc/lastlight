@@ -56,6 +56,7 @@ const mockSessions = {
   exists: vi.fn(() => false),
   read: vi.fn(async () => []),
   getFilePath: vi.fn(() => null),
+  normalizeRawLine: vi.fn((raw: Record<string, unknown>) => [raw]),
 } as unknown as SessionReader;
 
 function makeConfig(overrides: Partial<AdminConfig> = {}): AdminConfig {

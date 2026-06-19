@@ -4,6 +4,7 @@ import type { StateDb } from "../state/db.js";
 import { SessionReader } from "./sessions.js";
 import { ChatSessionReader } from "./chat-session-reader.js";
 import { createAdminRoutes, type AdminConfig } from "./routes.js";
+import { SessionLog } from "../session-log.js";
 
 export { type AdminConfig } from "./routes.js";
 
@@ -12,11 +13,12 @@ export { type AdminConfig } from "./routes.js";
  * This mounts directly so paths like /admin/assets/* resolve correctly.
  */
 export function mountAdmin(app: Hono, db: StateDb, config: AdminConfig): void {
-  const sessions = new SessionReader(config.sessionsDir, "sandbox");
+  const sessionLog = new SessionLog(config.sessionsDir);
+  const sessions = new SessionReader(sessionLog, "sandbox");
   // Chat is DB-backed: list comes from `executions` grouped by trigger_id
   // (the Slack thread), and message reads target the single jsonl owned by
   // that thread's agent_session_id rather than scanning every file in -app.
-  const chatSessions = new ChatSessionReader(db, config.sessionsDir);
+  const chatSessions = new ChatSessionReader(db, sessionLog);
   const apiRoutes = createAdminRoutes(db, sessions, chatSessions, config);
 
   // API at /admin/api/*

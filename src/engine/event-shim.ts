@@ -1,6 +1,5 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { EmitterRecord } from "agentic-pi";
+import { SessionLog } from "../session-log.js";
 
 /**
  * Translates agentic-pi's JSONL event stream into Claude-SDK-style envelope
@@ -57,7 +56,8 @@ export interface ShimResultEnvelope {
 
 export class AgenticShim {
   private opts: AgenticShimOptions;
-  private filePath: string | null = null;
+  private sessionLog: SessionLog;
+  private sessionId: string | null = null;
   private writeChain: Promise<void> = Promise.resolve();
   private initialWritten = false;
   /**
@@ -69,10 +69,11 @@ export class AgenticShim {
 
   constructor(opts: AgenticShimOptions) {
     this.opts = opts;
+    this.sessionLog = new SessionLog(opts.homeDir);
   }
 
   get isInitialized(): boolean {
-    return this.filePath !== null;
+    return this.sessionId !== null;
   }
 
   /** Feed one parsed agentic-pi event. */
@@ -88,13 +89,13 @@ export class AgenticShim {
     // The `session` header is the first record and carries the id without
     // a `sessionId` field. Subsequent records all have `sessionId`.
     if (record.type === "session" && typeof record.id === "string") {
-      this.openFile(record.id);
+      this.openSession(record.id);
       return;
     }
 
     if (!sessionId) return;
-    if (!this.filePath) this.openFile(sessionId);
-    if (!this.filePath) return;
+    if (!this.sessionId) this.openSession(sessionId);
+    if (!this.sessionId) return;
 
     const ts = isoTimestamp(record.timestamp);
 
@@ -119,17 +120,16 @@ export class AgenticShim {
    * `result` line. Same shape as the legacy opencode-shim.
    */
   finalize(result: ShimResultEnvelope): void {
-    if (!this.filePath) return;
+    if (!this.sessionId) return;
     const ts = new Date().toISOString();
     const lines: object[] = [];
     if (result.apiErrorMessage) {
-      const sessionId = path.basename(this.filePath, ".jsonl");
       lines.push({
         type: "assistant",
         isApiErrorMessage: true,
         error: result.apiErrorMessage,
         timestamp: ts,
-        sessionId,
+        sessionId: this.sessionId,
       });
     }
     lines.push({
@@ -159,18 +159,13 @@ export class AgenticShim {
     fallbackSessionId: string,
     errorMessage?: string,
   ): Promise<string | null> {
-    if (!this.filePath) {
-      const safeId = path.basename(fallbackSessionId);
-      if (!/^[A-Za-z0-9_-]+$/.test(safeId)) {
+    if (!this.sessionId) {
+      this.openSession(fallbackSessionId);
+      const safeId = this.sessionId;
+      if (!safeId) {
         await this.flush();
         return null;
       }
-      this.filePath = path.join(
-        this.opts.homeDir,
-        "projects",
-        this.opts.projectSlug,
-        `${safeId}.jsonl`,
-      );
 
       const ts = new Date().toISOString();
       const bootstrap: object[] = [];
@@ -201,22 +196,17 @@ export class AgenticShim {
 
     this.finalize(result);
     await this.flush();
-    return path.basename(this.filePath, ".jsonl");
+    return this.sessionId;
   }
 
   async flush(): Promise<void> {
     await this.writeChain;
   }
 
-  private openFile(sessionId: string): void {
-    const safeId = path.basename(sessionId);
-    if (!/^[A-Za-z0-9_-]+$/.test(safeId)) return;
-    this.filePath = path.join(
-      this.opts.homeDir,
-      "projects",
-      this.opts.projectSlug,
-      `${safeId}.jsonl`,
-    );
+  private openSession(sessionId: string): void {
+    const safeId = this.sessionLog.normalizeSessionId(sessionId);
+    if (!safeId) return;
+    this.sessionId = safeId;
   }
 
   private translate(
@@ -383,12 +373,13 @@ export class AgenticShim {
   }
 
   private appendLines(lines: object[]): void {
-    const data = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
     this.writeChain = this.writeChain
       .then(async () => {
-        if (!this.filePath) return;
-        await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-        await fs.appendFile(this.filePath, data);
+        if (!this.sessionId) return;
+        await this.sessionLog.appendEnvelopeLines(
+          { projectSlug: this.opts.projectSlug, sessionId: this.sessionId },
+          lines,
+        );
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -464,13 +455,4 @@ export function truncateForLog(
   if (s.length <= maxBytes) return s;
   const dropped = s.length - maxBytes;
   return `${s.slice(0, maxBytes)}\n…[truncated ${dropped} chars]`;
-}
-
-/**
- * Filesystem cwd → project-dir slug (matches the SDK convention). The
- * absolute path with `/` replaced by `-`. `/app` → `-app`,
- * `/home/agent/workspace` → `-home-agent-workspace`.
- */
-export function projectSlugForCwd(cwd: string): string {
-  return cwd.replace(/\//g, "-");
 }

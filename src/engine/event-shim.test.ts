@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { AgenticShim, projectSlugForCwd } from "./event-shim.js";
+import { SessionLog, projectSlugForCwd } from "../session-log.js";
+import { AgenticShim } from "./event-shim.js";
 
 const tmpDirs: string[] = [];
 
@@ -16,13 +17,15 @@ async function makeShim(initialPrompt = "do the thing") {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "shim-test-"));
   tmpDirs.push(homeDir);
   const cwd = "/home/agent/workspace";
+  const projectSlug = projectSlugForCwd(cwd);
   const shim = new AgenticShim({
     homeDir,
-    projectSlug: projectSlugForCwd(cwd),
+    projectSlug,
     model: "openai/gpt-5.5",
     initialPrompt,
   });
-  const filePath = path.join(homeDir, "projects", projectSlugForCwd(cwd), "sess1.jsonl");
+  const filePath = new SessionLog(homeDir).pathForProject(projectSlug, "sess1", { requireExists: false });
+  if (!filePath) throw new Error("expected valid session path");
   return { shim, filePath };
 }
 
