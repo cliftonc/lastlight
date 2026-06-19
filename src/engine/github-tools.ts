@@ -10,17 +10,10 @@
  * loop calls when the model emits a tool_call.
  */
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
-import { Octokit } from "octokit";
-import { createAppAuth } from "@octokit/auth-app";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
+import { githubAppClient, type GitHubAppClientConfig } from "./github-app-client.js";
 
-export interface ChatGitHubAuth {
-  appId: string;
-  privateKeyPath: string;
-  installationId: string;
-}
+export interface ChatGitHubAuth extends GitHubAppClientConfig {}
 
 export interface ChatGitHubToolset {
   tools: Tool[];
@@ -48,20 +41,8 @@ function tool<P extends TSchema>(
   };
 }
 
-function makeOctokit(auth: ChatGitHubAuth): Octokit {
-  const privateKey = readFileSync(resolve(auth.privateKeyPath), "utf-8");
-  return new Octokit({
-    authStrategy: createAppAuth,
-    auth: {
-      appId: auth.appId,
-      privateKey,
-      installationId: auth.installationId,
-    },
-  });
-}
-
 export function buildChatGitHubTools(auth: ChatGitHubAuth): ChatGitHubToolset {
-  const octokit = makeOctokit(auth);
+  const octokit = githubAppClient(auth);
 
   const entries: ToolEntry[] = [
     tool(
