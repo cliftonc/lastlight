@@ -1,7 +1,5 @@
-import { Octokit } from "octokit";
-import { readFileSync } from "fs";
-import { resolve } from "path";
-import { createAppAuth } from "@octokit/auth-app";
+import type { Octokit } from "octokit";
+import { githubAppClient, type GitHubAppClientConfig } from "./github-app-client.js";
 
 /**
  * GitHub client for the harness — uses GitHub App auth.
@@ -10,17 +8,8 @@ import { createAppAuth } from "@octokit/auth-app";
 export class GitHubClient {
   private octokit: Octokit;
 
-  constructor(config: { appId: string; privateKeyPath: string; installationId: string }) {
-    const privateKey = readFileSync(resolve(config.privateKeyPath), "utf-8");
-
-    this.octokit = new Octokit({
-      authStrategy: createAppAuth,
-      auth: {
-        appId: config.appId,
-        privateKey,
-        installationId: config.installationId,
-      },
-    });
+  constructor(config: GitHubAppClientConfig) {
+    this.octokit = githubAppClient(config);
   }
 
   /**
