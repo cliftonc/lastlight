@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parse as parseYaml } from "yaml";
 import { normalizeAllowlistHost } from "./sandbox/egress-allowlist.js";
+import { resolveConfigLayers } from "./config-resolve.js";
 
 /**
  * Load .env file into process.env (simple, no dependency).
@@ -73,6 +74,13 @@ export interface PublicConfigBundle {
   default: Record<string, unknown>;
   overlay: Record<string, unknown> | null;
   merged: Record<string, unknown>;
+  /**
+   * Provenance tree mirroring `merged`: object nodes stay nested, each leaf is
+   * the layer that supplied the effective value ("default" | "overlay" | "env").
+   * The Default/Overlay/Merged dashboard view is derived from this rather than
+   * hand-maintained (issue #99).
+   */
+  sources: Record<string, unknown>;
 }
 
 export interface LastLightConfig {
@@ -164,18 +172,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function deepMerge(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...base };
-  for (const [key, value] of Object.entries(overlay)) {
-    if (isPlainObject(value) && isPlainObject(out[key])) {
-      out[key] = deepMerge(out[key] as Record<string, unknown>, value);
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
 function clonePublic(obj: Record<string, unknown> | null): Record<string, unknown> | null {
   return obj ? JSON.parse(JSON.stringify(obj)) as Record<string, unknown> : null;
 }
@@ -237,18 +233,57 @@ export function loadConfig(): LastLightConfig {
     overlayRaw = readYamlFile(join(overlayDir, "config.yaml"), false);
   }
 
-  const mergedRaw = overlayRaw ? deepMerge(defaultRaw, overlayRaw) : { ...defaultRaw };
+  // Build the env layer once: a partial config tree in the same shape as the
+  // YAML layers. This is the single place that maps env vars onto config paths
+  // (LASTLIGHT_MODELS → models.*, legacy OPENCODE_* aliases, …). Once built,
+  // one uniform precedence pass (env > overlay > default) produces the merged
+  // tree and its provenance — no field re-parses an env var after the merge.
+  const envLayer = buildEnvConfigLayer(process.env);
+  const { value: mergedRaw, sources: mergedSources } = resolveConfigLayers({
+    default: defaultRaw,
+    overlay: overlayRaw,
+    env: envLayer,
+  });
   const fileCfg = normalizeFileConfig(mergedRaw);
 
   const stateDir = resolve(stringEnv("STATE_DIR", "./data"));
-  const model = process.env.LASTLIGHT_MODEL || process.env.OPENCODE_MODEL || fileCfg.models.default;
-  const models = parseModelConfig({ ...fileCfg.models, default: model });
-  const variants = parseVariantConfig({ ...fileCfg.variants });
-  const sandbox = parseSandbox(fileCfg.sandbox.backend);
-  const otel = parseOtelConfig(fileCfg.otel);
+  const models = fileCfg.models;
+  const model = models.default;
+  const variants = fileCfg.variants;
+  const sandbox = fileCfg.sandbox.backend;
+  const maxTurns = fileCfg.sandbox.maxTurns;
+
+  // Two documented exceptions to plain key-by-key precedence, preserved for
+  // backward compatibility (and kept out of the generic env layer so the file
+  // layers survive):
+  //  - approval: APPROVAL_GATES replaces the file map wholesale (not a merge).
+  //  - otel.collectorHosts: env hosts are unioned with file hosts (not replaced),
+  //    so an OTEL endpoint env var adds to, rather than drops, overlay hosts.
   const approval = process.env.APPROVAL_GATES !== undefined
     ? parseApprovalGates()
     : fileCfg.approval;
+  const envCollectorHosts = [
+    ...parseCollectorHosts(process.env.LASTLIGHT_OTEL_COLLECTOR_HOSTS, "LASTLIGHT_OTEL_COLLECTOR_HOSTS"),
+    ...parseOtelCollectorHostsFromEnv(process.env),
+  ];
+  const otel: OtelConfig = {
+    ...fileCfg.otel,
+    collectorHosts: Array.from(new Set([...fileCfg.otel.collectorHosts, ...envCollectorHosts])),
+  };
+
+  // Derive the merged public surface from the single resolution, folding the
+  // two exceptions above back in so it reflects effective values. The
+  // provenance tree is patched to attribute env-driven exceptions to env.
+  const mergedPublic: Record<string, unknown> = { ...mergedRaw, approval, otel };
+  if (process.env.APPROVAL_GATES !== undefined) {
+    (mergedSources as Record<string, unknown>).approval = "env";
+  }
+  if (envCollectorHosts.length) {
+    const otelSources = isPlainObject(mergedSources.otel)
+      ? (mergedSources.otel as Record<string, unknown>)
+      : ((mergedSources as Record<string, unknown>).otel = {});
+    otelSources.collectorHosts = "env";
+  }
 
   const githubApp = process.env.GITHUB_APP_ID
     ? {
@@ -267,20 +302,6 @@ export function loadConfig(): LastLightConfig {
       }
     : undefined;
 
-  const effectivePublic = deepMerge(mergedRaw, {
-    models,
-    variants,
-    sandbox: { backend: sandbox, maxTurns: parseInt(process.env.MAX_TURNS || String(fileCfg.sandbox.maxTurns), 10) },
-    approval,
-    managedRepos: fileCfg.managedRepos,
-    routes: fileCfg.routes,
-    disabled: fileCfg.disabled,
-    otel,
-    bootstrap: { label: process.env.BOOTSTRAP_LABEL || fileCfg.bootstrapLabel },
-    explore: { defaultRepo: process.env.EXPLORE_DEFAULT_REPO || fileCfg.exploreDefaultRepo || null },
-    review: { postsCheck: parseBoolWithDefault(process.env.REVIEW_POSTS_CHECK, fileCfg.reviewPostsCheck) },
-  });
-
   const config: LastLightConfig = {
     port: parseInt(process.env.WEBHOOK_PORT || process.env.PORT || "8644", 10),
     webhookSecret: process.env.WEBHOOK_SECRET || "",
@@ -294,7 +315,7 @@ export function loadConfig(): LastLightConfig {
     model,
     models,
     variants,
-    maxTurns: parseInt(process.env.MAX_TURNS || String(fileCfg.sandbox.maxTurns), 10),
+    maxTurns,
     sandbox,
     managedRepos: fileCfg.managedRepos,
     routes: fileCfg.routes,
@@ -303,15 +324,16 @@ export function loadConfig(): LastLightConfig {
     publicConfig: {
       default: redactPublic(clonePublic(defaultRaw)!),
       overlay: redactPublic(clonePublic(overlayRaw)),
-      merged: redactPublic(effectivePublic),
+      merged: redactPublic(clonePublic(mergedPublic)!),
+      sources: redactPublic(clonePublic(mergedSources)!),
     },
     githubApp,
     slack,
     approval,
-    bootstrapLabel: process.env.BOOTSTRAP_LABEL || fileCfg.bootstrapLabel,
-    exploreDefaultRepo: process.env.EXPLORE_DEFAULT_REPO || fileCfg.exploreDefaultRepo,
+    bootstrapLabel: fileCfg.bootstrapLabel,
+    exploreDefaultRepo: fileCfg.exploreDefaultRepo,
     publicUrl: resolvePublicUrl(),
-    reviewPostsCheck: parseBoolWithDefault(process.env.REVIEW_POSTS_CHECK, fileCfg.reviewPostsCheck),
+    reviewPostsCheck: fileCfg.reviewPostsCheck,
   };
   setRuntimeConfig(config);
   return config;
@@ -450,23 +472,90 @@ function sandboxBackend(raw: unknown, path: string): SandboxBackend {
   throw new Error(`${path} must be one of gondolin, docker, none`);
 }
 
-function parseSandbox(fallback: SandboxBackend): SandboxBackend {
-  const raw = (process.env.LASTLIGHT_SANDBOX || "").trim().toLowerCase();
-  if (raw === "gondolin" || raw === "docker" || raw === "none") return raw;
-  if (raw) {
-    console.warn(`[config] Unknown LASTLIGHT_SANDBOX value "${raw}" — falling back to ${fallback}`);
-  }
-  return fallback;
-}
-
 function parseBool(raw: string | undefined): boolean {
   if (!raw) return false;
   const v = raw.trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-function parseBoolWithDefault(raw: string | undefined, fallback: boolean): boolean {
-  return raw === undefined || raw === "" ? fallback : parseBool(raw);
+/**
+ * Materialize all env-var config overrides into one partial tree shaped like
+ * the YAML layers, so the precedence resolver can apply them uniformly. This is
+ * the single home for env→path knowledge (legacy OPENCODE_* aliases included).
+ * `otel.collectorHosts` (union) and `approval` (wholesale replace) are handled
+ * separately in loadConfig because their merge semantics differ from the
+ * resolver's key-by-key precedence.
+ */
+function buildEnvConfigLayer(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const layer: Record<string, unknown> = {};
+
+  // models: scalar default first, then the JSON map applied on top — so an
+  // explicit `default` key in LASTLIGHT_MODELS wins over LASTLIGHT_MODEL, with
+  // no post-merge re-parse.
+  const models: Record<string, string> = {};
+  const modelDefault = env.LASTLIGHT_MODEL || env.OPENCODE_MODEL;
+  if (modelDefault) models.default = modelDefault;
+  applyJsonStringMap(models, env.LASTLIGHT_MODELS || env.OPENCODE_MODELS, "LASTLIGHT_MODELS");
+  if (Object.keys(models).length) layer.models = models;
+
+  // variants: catch-all default, then per-task JSON map (non-empty values only).
+  const variants: Record<string, string> = {};
+  const variantDefault = (env.LASTLIGHT_THINKING || env.OPENCODE_VARIANT || "").trim();
+  if (variantDefault) variants.default = variantDefault;
+  applyJsonStringMap(variants, env.LASTLIGHT_THINKINGS || env.OPENCODE_VARIANTS, "LASTLIGHT_THINKINGS", true);
+  if (Object.keys(variants).length) layer.variants = variants;
+
+  const sandbox: Record<string, unknown> = {};
+  const backend = (env.LASTLIGHT_SANDBOX || "").trim().toLowerCase();
+  if (backend === "gondolin" || backend === "docker" || backend === "none") {
+    sandbox.backend = backend;
+  } else if (backend) {
+    console.warn(`[config] Unknown LASTLIGHT_SANDBOX value "${backend}" — using the file/default backend`);
+  }
+  if (env.MAX_TURNS) sandbox.maxTurns = parseInt(env.MAX_TURNS, 10);
+  if (Object.keys(sandbox).length) layer.sandbox = sandbox;
+
+  const otel: Record<string, unknown> = {};
+  setBoolEnv(otel, "enabled", env.LASTLIGHT_OTEL_ENABLED);
+  const serviceName = env.LASTLIGHT_OTEL_SERVICE_NAME?.trim() || env.OTEL_SERVICE_NAME?.trim();
+  if (serviceName) otel.serviceName = serviceName;
+  setBoolEnv(otel, "includeContent", env.LASTLIGHT_OTEL_INCLUDE_CONTENT);
+  setBoolEnv(otel, "forwardToSandbox", env.LASTLIGHT_OTEL_FORWARD_TO_SANDBOX);
+  setBoolEnv(otel, "strict", env.LASTLIGHT_OTEL_STRICT);
+  if (Object.keys(otel).length) layer.otel = otel;
+
+  if (env.BOOTSTRAP_LABEL) layer.bootstrap = { label: env.BOOTSTRAP_LABEL };
+  if (env.EXPLORE_DEFAULT_REPO) layer.explore = { defaultRepo: env.EXPLORE_DEFAULT_REPO };
+  if (env.REVIEW_POSTS_CHECK !== undefined && env.REVIEW_POSTS_CHECK !== "") {
+    layer.review = { postsCheck: parseBool(env.REVIEW_POSTS_CHECK) };
+  }
+
+  return layer;
+}
+
+/** Set a boolean key only when the env var is present and non-empty. */
+function setBoolEnv(target: Record<string, unknown>, key: string, raw: string | undefined): void {
+  if (raw !== undefined && raw !== "") target[key] = parseBool(raw);
+}
+
+/** Merge a JSON object env var's string entries into a target map. */
+function applyJsonStringMap(
+  target: Record<string, string>,
+  raw: string | undefined,
+  label: string,
+  requireNonEmpty = false,
+): void {
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "string" && (!requireNonEmpty || value.length > 0)) target[key] = value;
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[config] Invalid ${label} JSON: ${err.message}`);
+  }
 }
 
 function normalizeOtelFileConfig(raw: Record<string, unknown>): OtelConfig {
@@ -477,25 +566,6 @@ function normalizeOtelFileConfig(raw: Record<string, unknown>): OtelConfig {
     forwardToSandbox: raw.forwardToSandbox === false ? false : true,
     strict: raw.strict === true,
     collectorHosts: parseCollectorHosts(raw.collectorHosts, "otel.collectorHosts"),
-  };
-}
-
-function parseOtelConfig(file: OtelConfig): OtelConfig {
-  const collectorHosts = [
-    ...file.collectorHosts,
-    ...parseCollectorHosts(process.env.LASTLIGHT_OTEL_COLLECTOR_HOSTS, "LASTLIGHT_OTEL_COLLECTOR_HOSTS"),
-    ...parseOtelCollectorHostsFromEnv(process.env),
-  ];
-  return {
-    enabled: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_ENABLED, file.enabled),
-    serviceName: process.env.LASTLIGHT_OTEL_SERVICE_NAME?.trim()
-      || process.env.OTEL_SERVICE_NAME?.trim()
-      || file.serviceName
-      || "lastlight",
-    includeContent: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_INCLUDE_CONTENT, file.includeContent),
-    forwardToSandbox: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_FORWARD_TO_SANDBOX, file.forwardToSandbox),
-    strict: parseBoolWithDefault(process.env.LASTLIGHT_OTEL_STRICT, file.strict),
-    collectorHosts: Array.from(new Set(collectorHosts)),
   };
 }
 
@@ -537,24 +607,6 @@ function parseApprovalGates(): Record<string, boolean> {
   return map;
 }
 
-function parseModelConfig(base?: ModelConfig): ModelConfig {
-  const config: ModelConfig = base ? { ...base } : { default: process.env.LASTLIGHT_MODEL || process.env.OPENCODE_MODEL || DEFAULT_MODEL };
-  const modelsEnv = process.env.LASTLIGHT_MODELS || process.env.OPENCODE_MODELS;
-  if (modelsEnv) {
-    try {
-      const parsed = JSON.parse(modelsEnv);
-      if (typeof parsed === "object" && parsed !== null) {
-        for (const [key, value] of Object.entries(parsed)) {
-          if (typeof value === "string") config[key] = value;
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[config] Invalid LASTLIGHT_MODELS JSON: ${err.message}`);
-    }
-  }
-  return config;
-}
-
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Required environment variable not set: ${name}`);
@@ -563,26 +615,6 @@ function requireEnv(name: string): string {
 
 export function resolveModel(models: ModelConfig, taskType: string): string {
   return models[taskType] || models.default;
-}
-
-function parseVariantConfig(base?: VariantConfig): VariantConfig {
-  const config: VariantConfig = base ? { ...base } : {};
-  const defaultVariant = (process.env.LASTLIGHT_THINKING || process.env.OPENCODE_VARIANT || "").trim();
-  if (defaultVariant) config.default = defaultVariant;
-  const raw = process.env.LASTLIGHT_THINKINGS || process.env.OPENCODE_VARIANTS;
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === "object" && parsed !== null) {
-        for (const [key, value] of Object.entries(parsed)) {
-          if (typeof value === "string" && value.length > 0) config[key] = value;
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[config] Invalid LASTLIGHT_THINKINGS JSON: ${err.message}`);
-    }
-  }
-  return config;
 }
 
 export function resolveVariant(variants: VariantConfig, taskType: string): string | undefined {

@@ -59,6 +59,8 @@ export interface ConfigBundle {
   default: Record<string, unknown>;
   overlay: Record<string, unknown> | null;
   merged: Record<string, unknown>;
+  /** Provenance tree mirroring `merged`; leaves are "default" | "overlay" | "env". */
+  sources: Record<string, unknown>;
 }
 
 export interface WorkflowRun {

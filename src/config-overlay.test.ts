@@ -76,6 +76,37 @@ describe("loadConfig overlay", () => {
     expect(JSON.stringify(cfg.publicConfig)).not.toContain("authorization=Bearer secret");
   });
 
+  it("unions overlay otel.collectorHosts with env hosts and tags provenance as env", () => {
+    const overlay = tmp();
+    writeFileSync(
+      join(overlay, "config.yaml"),
+      `managedRepos:\n  - acme/repo\notel:\n  collectorHosts:\n    - overlay.example.com\n`,
+    );
+    vi.stubEnv("LASTLIGHT_OVERLAY_DIR", overlay);
+    vi.stubEnv("LASTLIGHT_OTEL_COLLECTOR_HOSTS", "env.example.com");
+    const cfg = loadConfig();
+    // Env hosts add to (do not replace) the overlay hosts — a dropped overlay
+    // host would silently break sandbox egress for real deployments.
+    expect(cfg.otel.collectorHosts.sort()).toEqual(["env.example.com", "overlay.example.com"]);
+    const sources = cfg.publicConfig.sources as Record<string, any>;
+    expect(sources.otel.collectorHosts).toBe("env");
+  });
+
+  it("APPROVAL_GATES replaces overlay approval wholesale and is tagged env", () => {
+    const overlay = tmp();
+    writeFileSync(
+      join(overlay, "config.yaml"),
+      `managedRepos:\n  - acme/repo\napproval:\n  post_architect: true\n`,
+    );
+    vi.stubEnv("LASTLIGHT_OVERLAY_DIR", overlay);
+    vi.stubEnv("APPROVAL_GATES", "post_reviewer");
+    const cfg = loadConfig();
+    // Env replaces the file map — post_architect from the overlay is gone.
+    expect(cfg.approval).toEqual({ post_reviewer: true });
+    const sources = cfg.publicConfig.sources as Record<string, any>;
+    expect(sources.approval).toBe("env");
+  });
+
   it("redacts secret-looking keys an operator mistakenly put in config.yaml", () => {
     const overlay = tmp();
     writeFileSync(

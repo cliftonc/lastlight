@@ -238,6 +238,46 @@ describe('loadConfig — otel', () => {
   });
 });
 
+describe('loadConfig — provenance and the LASTLIGHT_MODELS/LASTLIGHT_MODEL interaction', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+    vi.stubEnv('LASTLIGHT_MODEL', '');
+    vi.stubEnv('LASTLIGHT_MODELS', '');
+    vi.stubEnv('OPENCODE_MODEL', '');
+    vi.stubEnv('OPENCODE_MODELS', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('resolves models.default once: LASTLIGHT_MODELS.default wins and config.model agrees with it', () => {
+    vi.stubEnv('LASTLIGHT_MODEL', 'openai/env-default');
+    vi.stubEnv('LASTLIGHT_MODELS', JSON.stringify({ default: 'openai/models-default', architect: 'openai/arch' }));
+    const config = loadConfig();
+    // The explicit per-task map's `default` key is the single source of truth...
+    expect(config.models.default).toBe('openai/models-default');
+    // ...and the top-level `model` is derived from it, not re-resolved from LASTLIGHT_MODEL.
+    expect(config.model).toBe(config.models.default);
+    expect(config.models.architect).toBe('openai/arch');
+  });
+
+  it('uses LASTLIGHT_MODEL for models.default when LASTLIGHT_MODELS has no default key', () => {
+    vi.stubEnv('LASTLIGHT_MODEL', 'openai/env-default');
+    vi.stubEnv('LASTLIGHT_MODELS', JSON.stringify({ architect: 'openai/arch' }));
+    const config = loadConfig();
+    expect(config.models.default).toBe('openai/env-default');
+    expect(config.model).toBe('openai/env-default');
+  });
+
+  it('exposes a sources tree where env-supplied values are tagged env and untouched defaults are tagged default', () => {
+    vi.stubEnv('LASTLIGHT_MODEL', 'openai/env-default');
+    const config = loadConfig();
+    const sources = config.publicConfig.sources as Record<string, any>;
+    expect(sources.models.default).toBe('env');
+    // routes come entirely from the packaged default.yaml
+    expect(sources.routes.github.issue_opened).toBe('default');
+  });
+});
+
 describe('loadConfig — structure', () => {
   beforeEach(() => {
     vi.stubEnv('GITHUB_APP_ID', '');
