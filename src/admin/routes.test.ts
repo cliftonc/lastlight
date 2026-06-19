@@ -672,7 +672,7 @@ describe("GET /sessions — content filter + liveness", () => {
 describe("POST /approvals/:id/respond", () => {
   // Build a db whose approval/run sub-stores record the lifecycle mutations
   // the approval route can issue, so a test can assert which ones fired.
-  function makeApprovalDb(over: { approval?: any; run?: any } = {}) {
+  function makeApprovalDb(over: { approval?: any; run?: any; respondChanges?: number } = {}) {
     const calls = {
       respond: [] as any[],
       resolveGateAndResume: [] as any[],
@@ -680,12 +680,14 @@ describe("POST /approvals/:id/respond", () => {
     };
     const approval = "approval" in over ? over.approval : { id: "appr-1", status: "pending", workflowRunId: "run-1" };
     const run = "run" in over ? over.run : { id: "run-1", workflowName: "build", triggerId: "o/r#3", issueNumber: 3 };
+    // respond() returns the compare-and-set row count; default 1 (won the CAS).
+    const respondChanges = over.respondChanges ?? 1;
     const db = {
       ...((mockDb as unknown) as Record<string, unknown>),
       approvals: {
         ...((mockDb as unknown as { approvals: Record<string, unknown> }).approvals),
         getById: vi.fn(() => approval),
-        respond: vi.fn((...args: any[]) => { calls.respond.push(args); }),
+        respond: vi.fn((...args: any[]) => { calls.respond.push(args); return respondChanges; }),
       },
       runs: {
         ...((mockDb as unknown as { runs: Record<string, unknown> }).runs),
@@ -743,6 +745,18 @@ describe("POST /approvals/:id/respond", () => {
     const res = await respond(db, "appr-1", { decision: "approved" }); // no resumeWorkflow
     expect(res.status).toBe(200);
     expect(calls.respond).toEqual([["appr-1", "approved", "admin", undefined]]);
+    expect(calls.resolveGateAndResume).toEqual([]);
+  });
+
+  it("409s and does NOT resume when the approval CAS loses a race", async () => {
+    // The status check above is a TOCTOU read; if a concurrent responder wins,
+    // respond() changes 0 rows. The loser must 409 and never hand the run to
+    // resumeWorkflow for a second dispatch.
+    const { db, calls } = makeApprovalDb({ respondChanges: 0 });
+    const resumeWorkflow = vi.fn(async () => {});
+    const res = await respond(db, "appr-1", { decision: "approved" }, { resumeWorkflow });
+    expect(res.status).toBe(409);
+    expect(resumeWorkflow).not.toHaveBeenCalled();
     expect(calls.resolveGateAndResume).toEqual([]);
   });
 
