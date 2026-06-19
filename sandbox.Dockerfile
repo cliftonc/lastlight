@@ -62,8 +62,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root agent user
-RUN useradd -m -s /bin/bash agent
+# Create non-root agent user, UID/GID pinned to 10001 to MATCH the harness
+# `lastlight` user (see Dockerfile: `useradd -u 10001 lastlight`). The
+# entrypoint chowns the bind-mounted workspace to `agent`; per-PR workspaces
+# are persistent and reused across runs (issue #107), so the harness re-stages
+# AGENTS.md + skills into them on the next run. If `agent` lands on the default
+# uid (1001) those files become unwritable by the harness (10001) on reuse —
+# EACCES, and the review silently runs with no skill/AGENTS.md. Sharing the uid
+# keeps the reused workspace mutually writable by both the agent (in-container)
+# and the harness (host). Also self-heals dirs left at 1001 by older images:
+# the entrypoint's `chown -R agent:agent` re-owns them to 10001 on next reuse.
+RUN groupadd -g 10001 agent && useradd -m -s /bin/bash -u 10001 -g 10001 agent
 
 # Install agentic-pi globally so the harness can `docker exec ...
 # agentic-pi run ...` against this container. The version + integrity
