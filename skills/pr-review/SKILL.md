@@ -34,9 +34,10 @@ ls -la         # do you see <repo>/.git/ in the listing?
   ```
 
 **Only the source is pre-cloned — dependencies are NOT installed** (no
-`node_modules` etc.). A diff-only read doesn't need them. But if the PR's
-correctness depends on it building or tests passing, install first and verify —
-see "Verify by building" in step 2.
+`node_modules` etc.). This is expected. For any code PR you must install them
+yourself and verify by building/testing — a missing `node_modules` is never a
+reason to skip verification. See "Verify by building" in step 2 (only pure
+docs/style PRs skip the build).
 
 ### Target selection
 
@@ -99,26 +100,38 @@ step 0 — don't re-fetch them.
 - Check callers of modified functions for regression risk
 - Check if tests cover actual risk areas, not just happy paths
 
-#### Verify by building
+#### Verify by building — install deps, don't bail
 
-When the PR's correctness depends on it compiling, type-checking, or tests
-passing — build config, type/export changes, packaging, non-trivial logic — do
-NOT just reason statically. Build and run, then report real results.
+For any PR that touches code (anything but pure docs/style/config-comment
+changes), you are expected to **build it and run the relevant tests**, then
+report real results. Static reasoning alone is not a review of correctness.
 
-Dependencies are not pre-installed, so install them first. Detect the package
-manager from the lockfile and use the frozen/CI variant:
+**`node_modules` is ALWAYS absent when you arrive — that is by design, NOT a
+reason to skip verification.** The single most common failure here is checking
+`test -d node_modules`, seeing it's missing, and writing "I couldn't run the
+tests because dependencies aren't installed." That is wrong: installing them is
+*your job*, and it's the first thing to do. So **install first, then test.**
+
+Install now — detect the package manager from the lockfile and use the
+frozen/CI variant:
 - `package-lock.json` → `npm ci`
 - `pnpm-lock.yaml` → `corepack pnpm install --frozen-lockfile`
 - `yarn.lock` → `corepack yarn install --frozen-lockfile`
 
-Then run the project's own build/test commands (check `package.json` scripts /
-CI config) and cite the actual output in your findings. The sandbox egress
-allowlist permits the public package registries, so install will work.
+(The sandbox has Node via `fnm` + `corepack`; the egress allowlist permits the
+public package registries, so install works. For a monorepo, install at the
+root, then run the changed package's tests.)
 
-Skip this for pure style/docs PRs — installing just to nitpick formatting is
-wasted effort. If you genuinely can't verify (e.g. install fails), say so
-explicitly and scope your review to what you *could* check — don't imply you
-verified something you didn't.
+Then run the project's own build/test commands (check `package.json` scripts /
+CI config) and cite the actual output in your findings.
+
+The ONLY acceptable "I couldn't verify" is when the **install or build command
+itself fails** — in that case quote the exact command and error, and scope your
+review to what you *could* check. Never imply you verified something you didn't,
+and never use "deps aren't installed" as the reason — you install them.
+
+The one genuine exception: pure style/docs PRs, where installing just to nitpick
+formatting is wasted effort. Skip the build there and say so.
 
 ### 3. Categorize findings
 
