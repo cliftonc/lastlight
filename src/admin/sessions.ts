@@ -1,22 +1,10 @@
-import fs from "node:fs";
-import path from "node:path";
-import readline from "node:readline";
+import {
+  SessionLog,
+  type JsonlMessage,
+  type SessionLogScope,
+} from "../session-log.js";
 
-/**
- * Normalized message shape returned by the reader.
- * Claude Code CLI format is unwrapped into this.
- */
-export interface JsonlMessage {
-  role: string;
-  content?: unknown;
-  tool_calls?: unknown;
-  tool_name?: string;
-  tool_call_id?: string;
-  timestamp?: string;
-  reasoning?: unknown;
-  finish_reason?: string;
-  [k: string]: unknown;
-}
+export type { JsonlMessage } from "../session-log.js";
 
 export interface SessionMeta {
   id: string;
@@ -60,148 +48,6 @@ function detectSessionType(firstUserMessage: string): string {
 }
 
 /**
- * Unwrap a Claude Code CLI envelope line into a normalized JsonlMessage.
- *
- * Claude Code format: { type: "user"|"assistant"|"tool_use"|"tool_result"|...,
- *   message: { role, content, ... } | "<json string>", timestamp, uuid, sessionId, ... }
- *
- * Hermes/Agent SDK format: { role: "user"|"assistant"|"tool"|"session_meta", content, ... }
- */
-/**
- * Unwrap a Claude Code CLI envelope line into normalized JsonlMessage(s).
- * Returns an array because one line can contain multiple tool_results.
- */
-export function unwrapLine(raw: Record<string, unknown>): JsonlMessage[] {
-  // Already in role-based format (Hermes / Agent SDK --print output)
-  if (typeof raw.role === "string") {
-    return [raw as JsonlMessage];
-  }
-
-  const type = raw.type as string | undefined;
-  if (!type) return [];
-
-  // Skip internal types
-  if (type === "queue-operation" || type === "summary" || type === "login") return [];
-  if (type === "last-prompt" || type === "attachment") return [];
-
-  const timestamp = raw.timestamp as string | undefined;
-
-  // Parse the message field — can be a JSON string or an object
-  let msg: Record<string, unknown> = {};
-  if (raw.message != null) {
-    if (typeof raw.message === "string") {
-      try {
-        msg = JSON.parse(raw.message) as Record<string, unknown>;
-      } catch {
-        msg = { content: raw.message };
-      }
-    } else if (typeof raw.message === "object") {
-      msg = raw.message as Record<string, unknown>;
-    }
-  }
-
-  if (type === "user") {
-    const content = msg.content ?? raw.content;
-    // User messages with tool_result blocks → emit each as a separate tool message
-    if (Array.isArray(content)) {
-      const hasToolResults = content.some(
-        (b) => (b as Record<string, unknown>).type === "tool_result",
-      );
-      if (hasToolResults) {
-        return content
-          .filter((b) => (b as Record<string, unknown>).type === "tool_result")
-          .map((b) => {
-            const block = b as Record<string, unknown>;
-            return {
-              role: "tool",
-              content: block.content,
-              tool_call_id: block.tool_use_id as string,
-              timestamp,
-            };
-          });
-      }
-    }
-    return [{ role: "user", content, timestamp }];
-  }
-
-  if (type === "assistant") {
-    if (raw.isApiErrorMessage || raw.error) {
-      return [{ role: "system", content: String(raw.error ?? "API error"), timestamp }];
-    }
-
-    const content = msg.content;
-    const model = msg.model as string | undefined;
-    const stopReason = msg.stop_reason as string | undefined;
-
-    let textContent: string | undefined;
-    let toolCalls: unknown[] | undefined;
-    let reasoning: unknown;
-
-    if (Array.isArray(content)) {
-      const textBlocks: string[] = [];
-      const tools: unknown[] = [];
-      for (const block of content) {
-        const b = block as Record<string, unknown>;
-        if (b.type === "text" && typeof b.text === "string") {
-          textBlocks.push(b.text);
-        } else if (b.type === "tool_use") {
-          tools.push({
-            id: b.id,
-            function: { name: b.name, arguments: b.input },
-          });
-        } else if (b.type === "thinking" || b.type === "reasoning") {
-          reasoning = b.thinking ?? b.text;
-        }
-      }
-      if (textBlocks.length) textContent = textBlocks.join("\n");
-      if (tools.length) toolCalls = tools;
-    } else if (typeof content === "string") {
-      textContent = content;
-    }
-
-    // Skip lines that only have thinking (no text, no tools) — they're noise
-    if (!textContent && !toolCalls && reasoning) return [];
-
-    // Skip completely empty assistant messages
-    if (!textContent && !toolCalls) return [];
-
-    return [{
-      role: "assistant",
-      content: textContent,
-      tool_calls: toolCalls,
-      reasoning,
-      finish_reason: stopReason,
-      model,
-      timestamp,
-    }];
-  }
-
-  if (type === "tool_result") {
-    const content = msg.content ?? raw.content;
-    const toolUseId = (msg.tool_use_id as string) ?? (raw.tool_use_id as string);
-    return [{
-      role: "tool",
-      content,
-      tool_call_id: toolUseId,
-      timestamp,
-    }];
-  }
-
-  if (type === "tool_use") {
-    return [{
-      role: "assistant",
-      tool_calls: [{
-        id: msg.id ?? raw.uuid,
-        function: { name: msg.name, arguments: msg.input },
-      }],
-      timestamp,
-    }];
-  }
-
-  return [];
-}
-
-/**
  * Which on-disk slice of `<sessionsDir>/projects` a SessionReader exposes.
  *
  * - `sandbox`: every project dir EXCEPT `-app`. These are workflow runs that
@@ -212,7 +58,7 @@ export function unwrapLine(raw: Record<string, unknown>): JsonlMessage[] {
  *   and threads. Surfaced separately so the chat stream doesn't pollute the
  *   workflow session list.
  */
-export type SessionReaderScope = "sandbox" | "chat";
+export type SessionReaderScope = SessionLogScope;
 
 /**
  * Interface implemented by every dashboard session source. Both the
@@ -227,44 +73,26 @@ export interface SessionSource {
   getSessionMeta(sessionId: string): Promise<SessionMeta | null>;
   read(sessionId: string): Promise<Array<{ index: number; msg: JsonlMessage }>>;
   getFilePath(sessionId: string): string | null;
+  normalizeRawLine(raw: Record<string, unknown>): JsonlMessage[];
 }
 
 export class SessionReader implements SessionSource {
-  private sessionsHomeDir: string;
-  private scope: SessionReaderScope;
+  private sessionLog: SessionLog;
+  private scope: SessionLogScope;
   private metaCache = new Map<string, { meta: SessionMeta; cachedAt: number }>();
   private static CACHE_TTL_MS = 10_000; // 10s cache for session metadata
 
-  constructor(sessionsHomeDir: string, scope: SessionReaderScope = "sandbox") {
-    this.sessionsHomeDir = sessionsHomeDir;
+  constructor(sessionsHomeDir: string, scope?: SessionReaderScope);
+  constructor(sessionLog: SessionLog, scope?: SessionReaderScope);
+  constructor(sessionsHomeDirOrLog: string | SessionLog, scope: SessionReaderScope = "sandbox") {
+    this.sessionLog = typeof sessionsHomeDirOrLog === "string"
+      ? new SessionLog(sessionsHomeDirOrLog)
+      : sessionsHomeDirOrLog;
     this.scope = scope;
   }
 
-  /** Find the project directories this reader is scoped to. See SessionReaderScope. */
-  private projectDirs(): string[] {
-    const projectsDir = path.join(this.sessionsHomeDir, "projects");
-    try {
-      return fs
-        .readdirSync(projectsDir)
-        .filter((name) => (this.scope === "chat" ? name === "-app" : name !== "-app"))
-        .map((d) => path.join(projectsDir, d))
-        .filter((p) => fs.statSync(p).isDirectory());
-    } catch {
-      return [];
-    }
-  }
-
-  /** Resolve session ID to its file path (search across project dirs) */
-  private pathFor(sessionId: string): string | null {
-    for (const dir of this.projectDirs()) {
-      const candidate = path.join(dir, `${sessionId}.jsonl`);
-      if (fs.existsSync(candidate)) return candidate;
-    }
-    return null;
-  }
-
   exists(sessionId: string): boolean {
-    return this.pathFor(sessionId) !== null;
+    return this.sessionLog.findSession(this.scope, sessionId) !== null;
   }
 
   /** Return all session IDs across all project directories, sorted
@@ -284,28 +112,7 @@ export class SessionReader implements SessionSource {
    *  by parsed `started_at`. Mirrors the DB-backed chat reader, which
    *  already returns threads newest-first. */
   listSessionIds(): string[] {
-    const entries: Array<{ id: string; mtimeMs: number }> = [];
-    for (const dir of this.projectDirs()) {
-      try {
-        for (const f of fs.readdirSync(dir)) {
-          if (!f.endsWith(".jsonl")) continue;
-          const id = f.slice(0, -6);
-          // Skip agent sub-sessions — they'll be loaded via parent
-          if (id.startsWith("agent-")) continue;
-          let mtimeMs = 0;
-          try {
-            mtimeMs = fs.statSync(path.join(dir, f)).mtimeMs;
-          } catch {
-            // unreadable file — keep it (mtime 0 sorts it last) rather than drop
-          }
-          entries.push({ id, mtimeMs });
-        }
-      } catch {
-        // skip unreadable dirs
-      }
-    }
-    entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    return entries.map((e) => e.id);
+    return this.sessionLog.listSessions(this.scope).map((e) => e.id);
   }
 
   async getSessionMeta(sessionId: string): Promise<SessionMeta | null> {
@@ -322,24 +129,10 @@ export class SessionReader implements SessionSource {
   }
 
   private async _readSessionMeta(sessionId: string): Promise<SessionMeta | null> {
-    const file = this.pathFor(sessionId);
-    if (!file) return null;
+    const entry = this.sessionLog.findSession(this.scope, sessionId);
+    if (!entry) return null;
 
-    // Collect all files to scan: main session + agent sub-sessions
-    const filesToScan = [file];
-    const dir = path.dirname(file);
-
-    // Check for agent files in same directory (old layout)
-    // and in subagents/ subdirectory (new layout)
-    const agentDirs = [dir, path.join(dir, sessionId, "subagents")];
-    for (const agentDir of agentDirs) {
-      try {
-        for (const f of fs.readdirSync(agentDir)) {
-          if (!f.startsWith("agent-") || !f.endsWith(".jsonl")) continue;
-          filesToScan.push(path.join(agentDir, f));
-        }
-      } catch { /* dir doesn't exist */ }
-    }
+    const filesToScan = this.sessionLog.relatedFilesForSession(this.scope, sessionId, { includeAgents: true });
 
     let source = "agent";
     let model: string | null = null;
@@ -353,18 +146,8 @@ export class SessionReader implements SessionSource {
     const agentIds: string[] = [];
 
     for (const scanFile of filesToScan) {
-      const stream = fs.createReadStream(scanFile, { encoding: "utf8" });
-      const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let raw: Record<string, unknown>;
-        try {
-          raw = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-
+      const records = await this.sessionLog.readNormalizedFile(scanFile);
+      for (const { raw, msg } of records) {
         // Track agent sub-sessions
         const agentId = raw.agentId as string | undefined;
         if (agentId && !agentIds.includes(agentId)) {
@@ -374,61 +157,56 @@ export class SessionReader implements SessionSource {
         // Extract source from userType field
         if (raw.userType === "external") source = "agent";
 
-        const msgs = unwrapLine(raw);
-        if (!msgs.length) continue;
+        // Extract model from first assistant message
+        if (msg.role === "assistant" && msg.model && !model) {
+          model = msg.model as string;
+        }
 
-        for (const msg of msgs) {
-          // Extract model from first assistant message
-          if (msg.role === "assistant" && msg.model && !model) {
-            model = msg.model as string;
-          }
-
-          // Handle session_meta (Hermes format)
-          if (msg.role === "session_meta") {
-            source = (msg.platform as string) ?? (msg.source as string) ?? source;
-            model = (msg.model as string) ?? model;
-            if (msg.timestamp) {
-              startedAt = new Date(msg.timestamp as string).getTime() / 1000;
-            }
-            continue;
-          }
-
+        // Handle session_meta (Hermes format)
+        if (msg.role === "session_meta") {
+          source = (msg.platform as string) ?? (msg.source as string) ?? source;
+          model = (msg.model as string) ?? model;
           if (msg.timestamp) {
-            const ts = new Date(msg.timestamp as string).getTime() / 1000;
-            if (!Number.isNaN(ts)) {
-              // True min/max across the main session AND every agent sub-
-              // session file. The previous "first / last seen" logic broke
-              // when multiple files were scanned in non-chronological
-              // readdir order — `lastMessageAt` ended up being the final
-              // timestamp of whichever file was scanned last, which could
-              // easily be older than the real most recent message.
-              if (startedAt === null || ts < startedAt) startedAt = ts;
-              if (lastMessageAt === null || ts > lastMessageAt) lastMessageAt = ts;
-            }
+            startedAt = new Date(msg.timestamp as string).getTime() / 1000;
           }
+          continue;
+        }
 
-          if (msg.role === "user" || msg.role === "assistant" || msg.role === "tool") {
-            messageCount++;
-            conversationMessageCount++;
+        if (msg.timestamp) {
+          const ts = new Date(msg.timestamp as string).getTime() / 1000;
+          if (!Number.isNaN(ts)) {
+            // True min/max across the main session AND every agent sub-
+            // session file. The previous "first / last seen" logic broke
+            // when multiple files were scanned in non-chronological
+            // readdir order — `lastMessageAt` ended up being the final
+            // timestamp of whichever file was scanned last, which could
+            // easily be older than the real most recent message.
+            if (startedAt === null || ts < startedAt) startedAt = ts;
+            if (lastMessageAt === null || ts > lastMessageAt) lastMessageAt = ts;
           }
-          // Capture first user message for type detection
-          if (msg.role === "user" && firstUserMessage === null && msg.content) {
-            firstUserMessage = typeof msg.content === "string"
-              ? msg.content
-              : Array.isArray(msg.content)
-                ? (msg.content as Array<Record<string, unknown>>)
-                    .filter((b) => b.type === "text")
-                    .map((b) => b.text as string)
-                    .join(" ")
-                : JSON.stringify(msg.content);
+        }
+
+        if (msg.role === "user" || msg.role === "assistant" || msg.role === "tool") {
+          messageCount++;
+          conversationMessageCount++;
+        }
+        // Capture first user message for type detection
+        if (msg.role === "user" && firstUserMessage === null && msg.content) {
+          firstUserMessage = typeof msg.content === "string"
+            ? msg.content
+            : Array.isArray(msg.content)
+              ? (msg.content as Array<Record<string, unknown>>)
+                  .filter((b) => b.type === "text")
+                  .map((b) => b.text as string)
+                  .join(" ")
+              : JSON.stringify(msg.content);
+        }
+        if (msg.role === "assistant") {
+          if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+            toolCallCount += msg.tool_calls.length;
           }
-          if (msg.role === "assistant") {
-            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-              toolCallCount += msg.tool_calls.length;
-            }
-            if (typeof msg.content === "string" && msg.content) {
-              lastAssistantContent = msg.content;
-            }
+          if (typeof msg.content === "string" && msg.content) {
+            lastAssistantContent = msg.content;
           }
         }
       }
@@ -440,11 +218,7 @@ export class SessionReader implements SessionSource {
       // made a zero-byte/timestamp-less session masquerade as freshly active:
       // it sorted to the top of the list and tripped the 5-minute liveness
       // check, surfacing dead runs as live sessions.
-      try {
-        startedAt = fs.statSync(file).mtimeMs / 1000;
-      } catch {
-        startedAt = Date.now() / 1000;
-      }
+      startedAt = entry.mtimeMs > 0 ? entry.mtimeMs / 1000 : Date.now() / 1000;
     }
 
     const sessionType = detectSessionType(firstUserMessage ?? "");
@@ -470,56 +244,18 @@ export class SessionReader implements SessionSource {
    * belong to this session, interleaved by timestamp.
    */
   async read(sessionId: string): Promise<Array<{ index: number; msg: JsonlMessage }>> {
-    const file = this.pathFor(sessionId);
-    if (!file) return [];
-
-    const dir = path.dirname(file);
-    const allMessages: Array<{ timestamp: string; msg: JsonlMessage }> = [];
-
-    // Read main session file
-    await this.readFile(file, allMessages);
-
-    // Find and read agent sub-sessions
-    const agentDirs = [dir, path.join(dir, sessionId, "subagents")];
-    for (const agentDir of agentDirs) {
-      try {
-        for (const f of fs.readdirSync(agentDir)) {
-          if (!f.startsWith("agent-") || !f.endsWith(".jsonl")) continue;
-          await this.readFile(path.join(agentDir, f), allMessages);
-        }
-      } catch { /* dir doesn't exist */ }
-    }
-
-    // Sort by timestamp and assign indices
-    allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    return allMessages.map((m, i) => ({ index: i, msg: m.msg }));
-  }
-
-  private async readFile(
-    file: string,
-    out: Array<{ timestamp: string; msg: JsonlMessage }>,
-  ): Promise<void> {
-    const stream = fs.createReadStream(file, { encoding: "utf8" });
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      try {
-        const raw = JSON.parse(line) as Record<string, unknown>;
-        const msgs = unwrapLine(raw);
-        for (const msg of msgs) {
-          if (msg.role === "system" && !msg.content) continue;
-          const timestamp = msg.timestamp ?? (raw.timestamp as string) ?? "";
-          out.push({ timestamp: timestamp as string, msg });
-        }
-      } catch {
-        // skip malformed
-      }
-    }
+    return this.sessionLog.readNormalizedSession(this.scope, sessionId, {
+      includeAgents: true,
+      skipEmptySystem: true,
+    });
   }
 
   /** Get the file path for a session (needed by the tailer) */
   getFilePath(sessionId: string): string | null {
-    return this.pathFor(sessionId);
+    return this.sessionLog.findSession(this.scope, sessionId)?.filePath ?? null;
+  }
+
+  normalizeRawLine(raw: Record<string, unknown>): JsonlMessage[] {
+    return this.sessionLog.normalizeLine(raw);
   }
 }

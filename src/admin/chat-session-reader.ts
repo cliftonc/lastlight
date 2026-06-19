@@ -1,30 +1,36 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as readline from "node:readline";
 import type { StateDb } from "../state/db.js";
-import type { SessionSource, SessionMeta, JsonlMessage } from "./sessions.js";
-import { unwrapLine } from "./sessions.js";
+import {
+  CHAT_PROJECT_SLUG,
+  SessionLog,
+  type JsonlMessage,
+} from "../session-log.js";
+import type { SessionSource, SessionMeta } from "./sessions.js";
 
 /**
  * DB-backed chat-session reader. Drop-in replacement for SessionReader on
  * the chat path: same public surface (`mountSessionRoutes` works against it
  * unchanged), but listing comes from the executions table grouped by Slack
  * thread, and message reads target the single jsonl file owned by that
- * thread's pi-ai session id — no scanning of unrelated `agent-*.jsonl`
- * sidechain files under `<sessionsDir>/projects/-app/`.
+ * thread's pi-ai session id. SessionLog owns the on-disk CHAT_PROJECT_SLUG
+ * path resolution, so this reader does not scan unrelated `agent-*.jsonl`
+ * sidechain files from other in-process Agent SDK runs.
  *
  * Conceptual mapping:
  * - SessionMeta.id      ← messaging_session.id (= Slack thread / executions.trigger_id)
- * - jsonl on disk       ← <sessionsDir>/projects/-app/<agent_session_id>.jsonl
- *                         (resolved via messaging_sessions.agent_session_id)
+ * - jsonl on disk       ← SessionLog CHAT_PROJECT_SLUG file for
+ *                         messaging_sessions.agent_session_id
  */
 export class ChatSessionReader implements SessionSource {
   private db: StateDb;
-  private sessionsHomeDir: string;
+  private sessionLog: SessionLog;
 
-  constructor(db: StateDb, sessionsHomeDir: string) {
+  constructor(db: StateDb, sessionsHomeDir: string);
+  constructor(db: StateDb, sessionLog: SessionLog);
+  constructor(db: StateDb, sessionsHomeDirOrLog: string | SessionLog) {
     this.db = db;
-    this.sessionsHomeDir = sessionsHomeDir;
+    this.sessionLog = typeof sessionsHomeDirOrLog === "string"
+      ? new SessionLog(sessionsHomeDirOrLog)
+      : sessionsHomeDirOrLog;
   }
 
   /** All chat thread ids (= Slack threads) that have at least one chat execution. */
@@ -61,9 +67,12 @@ export class ChatSessionReader implements SessionSource {
   }
 
   async read(id: string): Promise<Array<{ index: number; msg: JsonlMessage }>> {
-    const file = this.getFilePath(id);
-    if (!file) return [];
-    return this.readSingleFile(file);
+    const thread = this.db.executions.getChatThread(id);
+    if (!thread?.agentSessionId) return [];
+    return this.sessionLog.readNormalizedSession("chat", thread.agentSessionId, {
+      includeAgents: false,
+      skipEmptySystem: true,
+    });
   }
 
   /**
@@ -75,41 +84,12 @@ export class ChatSessionReader implements SessionSource {
   getFilePath(id: string): string | null {
     const thread = this.db.executions.getChatThread(id);
     if (!thread || !thread.agentSessionId) return null;
-    const file = path.join(
-      this.sessionsHomeDir,
-      "projects",
-      "-app",
-      `${thread.agentSessionId}.jsonl`,
-    );
-    if (!fs.existsSync(file)) return null;
-    return file;
+    return this.sessionLog.pathForProject(CHAT_PROJECT_SLUG, thread.agentSessionId, {
+      requireExists: true,
+    });
   }
 
-  /**
-   * Read one specific jsonl file end-to-end. Crucially, we DO NOT walk
-   * sibling `agent-*.jsonl` files like SessionReader does — those are
-   * unrelated sidechain spawns from other in-process Agent SDK runs and
-   * would pollute the conversation view.
-   */
-  private async readSingleFile(file: string): Promise<Array<{ index: number; msg: JsonlMessage }>> {
-    const out: Array<{ timestamp: string; msg: JsonlMessage }> = [];
-    const stream = fs.createReadStream(file, { encoding: "utf8" });
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      try {
-        const raw = JSON.parse(line) as Record<string, unknown>;
-        const msgs = unwrapLine(raw);
-        for (const msg of msgs) {
-          if (msg.role === "system" && !msg.content) continue;
-          const timestamp = (msg.timestamp as string) ?? (raw.timestamp as string) ?? "";
-          out.push({ timestamp, msg });
-        }
-      } catch {
-        // skip malformed line
-      }
-    }
-    out.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    return out.map((m, i) => ({ index: i, msg: m.msg }));
+  normalizeRawLine(raw: Record<string, unknown>): JsonlMessage[] {
+    return this.sessionLog.normalizeLine(raw);
   }
 }
