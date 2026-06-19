@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { api, type ConfigBundle } from "../api";
 
-type Pane = "default" | "overlay" | "merged";
+type Pane = "default" | "overlay" | "merged" | "sources";
+
+const PANE_LABELS: Record<Pane, string> = {
+  default: "Default",
+  overlay: "Overlay",
+  merged: "Merged",
+  sources: "Sources",
+};
 
 function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -28,16 +35,17 @@ export function ConfigPage() {
         <h2 className="text-sm font-semibold text-base-content">Configuration</h2>
         <p className="text-xs text-base-content/60 mt-1">
           Read-only startup config. Secrets are omitted; changes require a harness restart.
+          The Sources pane shows each value's provenance (default / overlay / env).
         </p>
       </div>
       <div className="flex gap-1 border-b border-base-300 bg-base-200/60 px-4 py-2">
-        {(["default", "overlay", "merged"] as const).map((id) => (
+        {(["default", "overlay", "merged", "sources"] as const).map((id) => (
           <button
             key={id}
             onClick={() => setPane(id)}
             className={`px-3 py-1.5 rounded text-xs font-medium ${pane === id ? "bg-primary text-primary-content" : "hover:bg-base-300 text-base-content/70"}`}
           >
-            {id === "default" ? "Default" : id === "overlay" ? "Overlay" : "Merged"}
+            {PANE_LABELS[id]}
           </button>
         ))}
       </div>

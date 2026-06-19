@@ -284,7 +284,7 @@ export function createAdminRoutes(
   // Auth middleware
   app.use("/*", authMiddleware(config.adminPassword, config.adminSecret));
 
-  app.get("/config", (c) => c.json(config.publicConfig || { default: {}, overlay: null, merged: {} }));
+  app.get("/config", (c) => c.json(config.publicConfig || { default: {}, overlay: null, merged: {}, sources: {} }));
 
   // Auth endpoints
   app.get("/auth-required", (c) => {
