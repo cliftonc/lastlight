@@ -14,7 +14,7 @@ out to the [Sandbox](/spec/09-sandbox) for each agent session, persists
 state to SQLite, and handles every gate and loop the YAML can declare.
 
 Every behaviour in Last Light — build, triage, review, explore, health,
-security — is a YAML file consumed by this engine.
+security, answer — is a YAML file consumed by this engine.
 
 ## Public contract
 
