@@ -47,12 +47,12 @@ no `guardrails:` prefix — judge it from the issue's intent.
 Otherwise (the issue is normal feature/bug work, not about adding tooling):
 
 IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests completely broken):
-- Use the MCP tool create_issue to create a guardrails issue in the repo with:
+- Use the MCP tool github_create_issue to create a guardrails issue in the repo with:
   - title prefixed exactly with "guardrails:" (e.g. "guardrails: no test framework configured")
   - labels including {{bootstrapLabel}} so subsequent build attempts on this issue
     can detect that the task IS to set up guardrails (the orchestrator will then
     skip the BLOCKED gate and let the executor install the missing tooling).
-- Use add_issue_comment on issue #{{issueNumber}} to link the guardrails issue
+- Use github_add_issue_comment on issue #{{issueNumber}} to link the guardrails issue
 - OUTPUT must include: BLOCKED
 
 IF ALL CRITICAL GUARDRAILS ARE PRESENT (tests work, even if linting/types are missing):

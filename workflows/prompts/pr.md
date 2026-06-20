@@ -1,6 +1,6 @@
 Create a pull request for the work on branch {{branch}}.
 
-Use the MCP tool create_pull_request with the following:
+Use the MCP tool github_create_pull_request with the following:
 - owner: {{owner}}
 - repo: {{repo}}
 - head: {{branch}}

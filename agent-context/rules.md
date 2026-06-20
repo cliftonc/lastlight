@@ -50,11 +50,18 @@ and won't exist in every backend.
 When the harness invokes you via a sandboxed workflow, a short-lived
 GitHub installation token is already injected into your VM environment as
 `GITHUB_TOKEN` and `GH_TOKEN`. Git's credential helper is pre-configured
-to use it, and so is the `gh` CLI:
+to use it:
 
 - `git clone https://github.com/<owner>/<repo>.git .` — just works.
 - `git push origin <branch>` — just works.
-- `gh pr create`, `gh pr view`, etc. — just work.
+
+**The `gh` CLI is NOT installed in the sandbox.** Do not call `gh` — it
+will fail with `command not found`. Anything beyond plain git (opening a
+pull request, creating or commenting on an issue, applying labels, posting
+a review) goes through the `github_*` MCP tools, e.g.
+`github_create_pull_request`, `github_create_issue`,
+`github_add_issue_comment`, `github_create_pull_request_review`. These use
+the same injected token, so no auth setup is needed.
 
 You don't need to mint tokens or call any auth helper. If a request
 fails with 401, the token expired (~1 hour lifetime); just let the
