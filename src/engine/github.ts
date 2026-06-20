@@ -1,6 +1,17 @@
 import type { Octokit } from "octokit";
 import { githubAppClient, type GitHubAppClientConfig } from "./github-app-client.js";
 
+/** GitHub reaction emoji values accepted by the reactions API. */
+export type ReactionContent =
+  | "+1"
+  | "-1"
+  | "laugh"
+  | "confused"
+  | "heart"
+  | "hooray"
+  | "rocket"
+  | "eyes";
+
 /**
  * GitHub client for the harness — uses GitHub App auth.
  * Used by the orchestrator to post comments, not by agent sessions.
@@ -55,9 +66,47 @@ export class GitHubClient {
     owner: string,
     repo: string,
     commentId: number,
-    content: "rocket" | "+1" | "eyes" | "hooray" = "rocket",
+    content: ReactionContent = "rocket",
   ): Promise<void> {
     await this.octokit.rest.reactions.createForIssueComment({
+      owner,
+      repo,
+      comment_id: commentId,
+      content,
+    });
+  }
+
+  /**
+   * Add an emoji reaction to an issue or PR itself (not a comment) — used to
+   * ack events that aren't comments, e.g. a freshly opened issue/PR. PRs are
+   * issues for the reactions API, so this works for both.
+   */
+  async reactToIssue(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    content: ReactionContent = "eyes",
+  ): Promise<void> {
+    await this.octokit.rest.reactions.createForIssue({
+      owner,
+      repo,
+      issue_number: issueNumber,
+      content,
+    });
+  }
+
+  /**
+   * Add an emoji reaction to a pull-request review comment (inline diff
+   * comment). Distinct endpoint from issue comments — review comments live on
+   * the pulls API.
+   */
+  async reactToReviewComment(
+    owner: string,
+    repo: string,
+    commentId: number,
+    content: ReactionContent = "eyes",
+  ): Promise<void> {
+    await this.octokit.rest.reactions.createForPullRequestReviewComment({
       owner,
       repo,
       comment_id: commentId,

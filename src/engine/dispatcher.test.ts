@@ -478,6 +478,59 @@ describe('dispatch — build dispatch', () => {
   });
 });
 
+describe('dispatch — 👀 ack on github events', () => {
+  // A generic handler route so the ack runs independent of any specific branch.
+  const triageRoute = (): Route => ({
+    action: 'handler',
+    handler: 'issue-triage',
+    context: { _routeKey: 'github.issue_comment', repo: 'cliftonc/lastlight', issueNumber: 7, sender: 'octocat' },
+  });
+
+  function ackGithub() {
+    return {
+      reactToComment: vi.fn().mockResolvedValue(undefined),
+      reactToReviewComment: vi.fn().mockResolvedValue(undefined),
+      reactToIssue: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it('reacts 👀 on the comment for a classified issue comment', async () => {
+    const envelope = makeEnvelope({ type: 'comment.created', issueNumber: 7, raw: { comment: { id: 999 } } });
+    const github = ackGithub();
+    await dispatch(envelope, makeDeps(triageRoute(), { github: github as any }));
+    expect(github.reactToComment).toHaveBeenCalledWith('cliftonc', 'lastlight', 999, 'eyes');
+  });
+
+  it('reacts 👀 on the review comment for a pr review comment', async () => {
+    const envelope = makeEnvelope({ type: 'pr_review_comment.created', prNumber: 5, raw: { comment: { id: 42 } } });
+    const github = ackGithub();
+    await dispatch(envelope, makeDeps(triageRoute(), { github: github as any }));
+    expect(github.reactToReviewComment).toHaveBeenCalledWith('cliftonc', 'lastlight', 42, 'eyes');
+  });
+
+  it('reacts 👀 on the issue itself for a freshly opened issue', async () => {
+    const envelope = makeEnvelope({ type: 'issue.opened', issueNumber: 7, raw: {} });
+    const github = ackGithub();
+    await dispatch(envelope, makeDeps(triageRoute(), { github: github as any }));
+    expect(github.reactToIssue).toHaveBeenCalledWith('cliftonc', 'lastlight', 7, 'eyes');
+  });
+
+  it('does not react on non-github (message) events', async () => {
+    const envelope = makeEnvelope({ type: 'message', source: 'slack' });
+    const github = ackGithub();
+    await dispatch(envelope, makeDeps(triageRoute(), { github: github as any }));
+    expect(github.reactToComment).not.toHaveBeenCalled();
+    expect(github.reactToIssue).not.toHaveBeenCalled();
+  });
+
+  it('stays silent (no throw) when there is no comment id', async () => {
+    const envelope = makeEnvelope({ type: 'comment.created', issueNumber: 7, raw: {} });
+    const github = ackGithub();
+    await dispatch(envelope, makeDeps(triageRoute(), { github: github as any }));
+    expect(github.reactToComment).not.toHaveBeenCalled();
+  });
+});
+
 describe('dispatch — pr-fix dispatch', () => {
   const prFixRoute = (ctx: Record<string, unknown> = {}): Route => ({
     action: 'handler',

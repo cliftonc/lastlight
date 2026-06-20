@@ -78,6 +78,14 @@ export async function dispatch(
   const { handler, context } = route;
   const routeKey = typeof context._routeKey === "string" ? context._routeKey : undefined;
 
+  // Instant ack: the moment we've classified a GitHub event as something we'll
+  // act on, react 👀 on the triggering comment/issue so the user sees feedback
+  // before any (slower) workflow output lands. Covers every github-based path —
+  // issue/PR comments, review comments, opened issues/PRs — and every explore
+  // socratic reply (each arrives here as its own comment.created → explore-reply).
+  // Fire-and-forget; the build path additionally reacts 🚀 when it starts.
+  ackGithubEvent(envelope, deps.github);
+
   // Chat messages: handle in-process (no sandbox, low latency).
   if (handler === "chat") {
     return handleChat(envelope, context, deps);
@@ -151,6 +159,47 @@ export async function dispatch(
 
   // Webhook-triggered workflows (the remaining default path).
   return handleWebhookDispatch(envelope, handler, routeKey, workflowContext, deps);
+}
+
+/**
+ * React 👀 on the GitHub subject that triggered this event, as an immediate
+ * "I've seen it and I'm acting on it" ack. Picks the right reactions endpoint
+ * by event type: issue/PR comments and explore replies → the comment; PR review
+ * comments → the review comment; freshly opened/reopened issues & PRs → the
+ * issue/PR itself. Non-GitHub events (Slack) and events with no clear subject
+ * (e.g. pr.synchronize) are skipped. Fire-and-forget — a failed reaction never
+ * blocks dispatch.
+ */
+function ackGithubEvent(envelope: EventEnvelope, github: GitHubClient | null): void {
+  if (!github || envelope.source !== "github" || !envelope.repo) return;
+  const [owner, repo] = envelope.repo.split("/");
+  if (!owner || !repo) return;
+  const raw = envelope.raw as { comment?: { id?: number } } | undefined;
+  const commentId = raw?.comment?.id;
+
+  const fail = (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[event] Could not react 👀 to ${envelope.type}: ${msg}`);
+  };
+
+  switch (envelope.type) {
+    case "comment.created":
+      if (commentId) github.reactToComment(owner, repo, commentId, "eyes").catch(fail);
+      break;
+    case "pr_review_comment.created":
+      if (commentId) github.reactToReviewComment(owner, repo, commentId, "eyes").catch(fail);
+      break;
+    case "issue.opened":
+    case "issue.reopened":
+    case "pr.opened":
+    case "pr.reopened":
+      if (envelope.issueNumber) github.reactToIssue(owner, repo, envelope.issueNumber, "eyes").catch(fail);
+      break;
+    default:
+      // pr.synchronize, pr.merged, pr_review.submitted, etc. — no single
+      // user-authored subject to ack, so stay quiet.
+      break;
+  }
 }
 
 /**
