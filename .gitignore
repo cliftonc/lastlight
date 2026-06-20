@@ -86,6 +86,7 @@ state.db*
 pairing/
 hooks/
 !dashboard/src/hooks/
+!.claude/hooks/
 bin/
 checkpoints/
 whatsapp/
