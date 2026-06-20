@@ -368,8 +368,8 @@ export class PhaseExecutor {
     const phaseType = phase.type ?? "agent";
     if (phaseType === "context") return this.runContext(phase);
 
-    if (!phase.prompt && !phase.skill) {
-      console.warn(`[runner] Phase "${phase.name}" has type=agent but neither prompt: nor skill: — skipping`);
+    if (!phase.prompt && phaseSkillNames(phase).length === 0) {
+      console.warn(`[runner] Phase "${phase.name}" has type=agent but neither prompt: nor skills: — skipping`);
       return { results: [], status: "succeeded" };
     }
 

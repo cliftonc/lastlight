@@ -223,6 +223,25 @@ describe("PhaseExecutor — standard agent phase", () => {
     expect(doneStep?.extraCtx?.phaseOutputs).toMatchObject({ answerResult: "the full answer text" });
   });
 
+  it("runs a skills-only phase (plural `skills:`, no prompt) instead of skipping it", async () => {
+    // Regression: the type=agent guard checked only the singular `phase.skill`
+    // sugar, so a phase declaring `skills: [...]` with no `prompt:` (exactly
+    // pr-review.yaml) was skipped — the run completed with zero executions.
+    const skillsDef: AgentWorkflowDefinition = {
+      kind: "review",
+      name: "pr-review",
+      phases: [makePhase({ name: "review", skills: ["pr-review", "building", "code-review"] })],
+    };
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult("reviewed"));
+    const exec = new PhaseExecutor(makeRun(skillsDef), makeReporter(), makeResolver());
+
+    const outcome = await exec.execute(node("review"), {});
+
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
+    expect(outcome.status).toBe("succeeded");
+    expect(outcome.results).toEqual([{ phase: "review", success: true, output: "reviewed", error: undefined }]);
+  });
+
   it("returns status=failed and fails the workflow when the agent fails", async () => {
     mockExecuteAgent.mockResolvedValue(makeFailResult("kaboom"));
     const reporter = makeReporter();
