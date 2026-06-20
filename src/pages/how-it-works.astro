@@ -55,40 +55,45 @@ const description = "Inside Last Light: EventEnvelope, the YAML workflow engine,
 
 		<div class="code-block">
 			<div class="code-header"><a href="https://github.com/cliftonc/lastlight/blob/main/workflows/build.yaml" target="_blank" rel="noopener" style="color: var(--text-muted);">workflows/build.yaml</a> (excerpt)</div>
-			<pre><code>name: build
-profile: repo-write
+			<pre><code>kind: build
+name: build
+description: Architect -> Executor -> Reviewer build cycle
 
 phases:
+  - name: phase_0
+    type: context
   - name: guardrails
-    skill: assure-guardrails
+    prompt: prompts/guardrails.md
   - name: architect
     prompt: prompts/architect.md
     approval_gate: post_architect
   - name: executor
     prompt: prompts/executor.md
-    needs: [architect]
+    skill: building
   - name: reviewer
     prompt: prompts/reviewer.md
-    needs: [executor]
+    skills: [code-review, building]
     loop:
-      fix_prompt: prompts/fix.md
       max_cycles: 2
+      on_request_changes:
+        fix_prompt: prompts/fix.md
+        re_review_prompt: prompts/re-reviewer.md
   - name: pr
-    skill: github-pr</code></pre>
+    prompt: prompts/pr.md</code></pre>
 		</div>
 
 		<div class="principles-grid" style="margin-top: 1.5rem;">
 			<div class="principle-card">
 				<div class="principle-header"><h3>Phase types</h3></div>
-				<p>A phase is either <strong>context</strong> (a no-op checkpoint for the dashboard), <strong>agent</strong> (runs an agentic-pi session with a <code>prompt:</code> or <code>skill:</code>), or <strong>loop</strong> (an agent phase that iterates on reviewer feedback up to <code>max_cycles</code> times, each fix tracked as <code>reviewer_fix_1</code>, <code>reviewer_fix_2</code>…).</p>
+				<p>A phase is either <strong>context</strong> (a no-op checkpoint for the dashboard), <strong>agent</strong> (runs an agentic-pi session with a <code>prompt:</code> and/or one or more <code>skills:</code>), or <strong>loop</strong> (an agent phase that iterates on reviewer feedback up to <code>max_cycles</code> times, each cycle tracked as a <code>reviewer_fix_1</code> / <code>reviewer_recheck_1</code> pair…).</p>
 			</div>
 			<div class="principle-card">
 				<div class="principle-header"><h3>Permission profiles</h3></div>
-				<p>Each workflow declares a <strong>profile</strong>: <code>read</code>, <code>issues-write</code>, <code>review-write</code>, or <code>repo-write</code>. The harness mints a downscoped GitHub App installation token with exactly those scopes and passes it into the sandbox. A triage run literally cannot push code, even if a compromised prompt tried to.</p>
+				<p>The harness maps each workflow by name to one of four <strong>profiles</strong> — <code>read</code>, <code>issues-write</code>, <code>review-write</code>, or <code>repo-write</code> — then mints a downscoped GitHub App installation token with exactly those scopes and passes it into the sandbox. A triage run literally cannot push code, even if a compromised prompt tried to.</p>
 			</div>
 			<div class="principle-card">
 				<div class="principle-header"><h3>Approval gates</h3></div>
-				<p>A phase can declare <code>approval_gate: post_architect</code>. When that gate is enabled (via the <code>APPROVAL_GATES</code> env var) the runner persists the paused state, writes a row to <code>workflow_approvals</code>, and waits for a decision via GitHub comment (<code>@last-light approve</code>), a Slack slash command (<code>/approve</code>), or the dashboard. Resume picks up exactly where it stopped.</p>
+				<p>A phase can declare an <code>approval_gate</code> — the build cycle ships with <code>post_architect</code> (before any code is written) and <code>post_reviewer</code> (before a reviewer-requested fix loop). When a gate is enabled (via the <code>APPROVAL_GATES</code> env var) the runner persists the paused state, writes a row to <code>workflow_approvals</code>, and waits for a decision via GitHub comment (<code>@last-light approve</code>), a Slack slash command (<code>/approve</code>), or the dashboard. Resume is ledger-driven — it re-runs from the top and skips already-completed phases, picking up exactly where it paused.</p>
 			</div>
 			<div class="principle-card">
 				<div class="principle-header"><h3>Two execution modes</h3></div>
@@ -100,7 +105,7 @@ phases:
 	<!-- The Three Roles -->
 	<section class="content-section">
 		<h2>The three roles</h2>
-		<p class="section-intro">Every significant piece of work flows through three specialised agents, each with strict boundaries on what they can and cannot do. Each role is defined in a <a href="https://github.com/cliftonc/lastlight/tree/main/skills/software-development" target="_blank" rel="noopener">skill file</a>.</p>
+		<p class="section-intro">Every significant piece of work flows through three specialised agents, each with strict boundaries on what they can and cannot do. Each role is a <a href="https://github.com/cliftonc/lastlight/tree/main/workflows/prompts" target="_blank" rel="noopener">prompt template</a> (<code>architect.md</code>, <code>executor.md</code>, <code>reviewer.md</code>) a build phase renders, paired with the skills it needs.</p>
 
 		<div class="roles-grid">
 			<div class="role-card role-architect">
@@ -265,7 +270,7 @@ phases:
 				<div>
 					<h4>Pre-context intake + guardrails</h4>
 					<p>Ensure a GitHub issue exists (create one if the request came from Slack or CLI). Clone the repo, read its <code>CLAUDE.md</code>/<code>AGENTS.md</code>, and assemble a context snapshot: what needs doing, what success looks like, what constraints exist, and what's unknown.</p>
-					<p>Then run the <a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/assure-guardrails/SKILL.md" target="_blank" rel="noopener">guardrails check</a>: verify the repo has a working test framework, linting, and type checking. If any are missing, the bot creates a separate issue for the gaps, links it to the original task, and fixes the foundations first. You can't do TDD without tests, and the Reviewer can't verify without a test suite to run.</p>
+					<p>Then run the <a href="https://github.com/cliftonc/lastlight/blob/main/workflows/prompts/guardrails.md" target="_blank" rel="noopener">guardrails check</a>: verify the repo has a working test framework, linting, and type checking. If any are missing, the bot creates a separate issue for the gaps, links it to the original task, and fixes the foundations first. You can't do TDD without tests, and the Reviewer can't verify without a test suite to run.</p>
 				</div>
 			</div>
 			<div class="loop-step">
@@ -360,6 +365,26 @@ phases:
 				</div>
 				<p>Summarises open issues by priority, stale items, PRs awaiting review, and recently closed work. Flags anything that needs attention and posts the result to Slack (<code>SLACK_DELIVERY_CHANNEL</code>).</p>
 				<p class="event-skill">Workflow: <a href="https://github.com/cliftonc/lastlight/blob/main/workflows/cron-health.yaml" target="_blank" rel="noopener"><code>cron-health.yaml</code></a></p>
+			</div>
+
+			<div class="event-card">
+				<div class="event-header">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+					<h3>Weekly security scan</h3>
+					<span class="event-trigger event-trigger-cron">cron / Mon 10am</span>
+				</div>
+				<p>A diff-scoped review of the SDLC concerns GitHub's scanners miss — CI/workflow hardening, auth changes, secret handling, supply-chain churn. Files one dated summary issue with a task-list of findings. Also on demand via <code>/security</code>. Runs with the <code>issues-write</code> profile.</p>
+				<p class="event-skill">Workflow: <a href="https://github.com/cliftonc/lastlight/blob/main/workflows/cron-security.yaml" target="_blank" rel="noopener"><code>cron-security.yaml</code></a> · <a href="https://github.com/cliftonc/lastlight/blob/main/workflows/security-review.yaml" target="_blank" rel="noopener"><code>security-review.yaml</code></a></p>
+			</div>
+
+			<div class="event-card">
+				<div class="event-header">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+					<h3>Question or idea</h3>
+					<span class="event-trigger">webhook</span>
+				</div>
+				<p>A newly-opened issue that asks for information rather than a code change gets a single sourced <strong>answer</strong> (repo docs + web search), labelled <code>question</code> and left open. A <code>/explore</code> request instead runs a Socratic idea-shaping loop — clarifying questions in a reply-gated loop, then a published spec. Both run with the <code>issues-write</code> profile.</p>
+				<p class="event-skill">Workflows: <a href="https://github.com/cliftonc/lastlight/blob/main/workflows/answer.yaml" target="_blank" rel="noopener"><code>answer.yaml</code></a> · <a href="https://github.com/cliftonc/lastlight/blob/main/workflows/explore.yaml" target="_blank" rel="noopener"><code>explore.yaml</code></a></p>
 			</div>
 
 			<div class="event-card">
@@ -521,25 +546,24 @@ reviewer-verdict.md    ← APPROVED or REQUEST_CHANGES, issues list, test result
 	<!-- Skills as plain text -->
 	<section class="content-section">
 		<h2>Skills are plain text</h2>
-		<p class="section-intro">Workflows invoke <strong>skills</strong> by name. A skill is a <code>SKILL.md</code> file under <code>skills/</code> — no framework APIs, no plugin system, just instructions the agent follows. Phases can either inline a prompt (<code>prompt: prompts/architect.md</code>) or delegate to a skill (<code>skill: assure-guardrails</code>). Change the file, change the behavior.</p>
+		<p class="section-intro">Workflows invoke <strong>skills</strong> by name. A skill is a <code>SKILL.md</code> file under <code>skills/</code> — no framework APIs, no plugin system, just instructions the agent follows. A phase can inline a prompt (<code>prompt: prompts/architect.md</code>), stage one or more skills (<code>skills: [code-review, building]</code>), or both. Change the file, change the behavior.</p>
 
 		<div class="code-block">
-			<div class="code-header"><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/architect/SKILL.md" target="_blank" rel="noopener" style="color: var(--text-muted);">skills/software-development/architect/SKILL.md</a></div>
+			<div class="code-header"><a href="https://github.com/cliftonc/lastlight/blob/main/skills/code-review/SKILL.md" target="_blank" rel="noopener" style="color: var(--text-muted);">skills/code-review/SKILL.md</a></div>
 			<pre><code>---
-name: architect
-description: >
-  Read-only deep analysis role. Diagnose problems, analyze
-  codebases, and recommend approaches with file:line evidence.
+name: code-review
+description: The shared rubric for reviewing a code change —
+  finding tiers (Critical/Important/Suggestions/Nits) and what
+  to check (correctness, security, edge cases, regression risk,
+  test coverage). Use when reviewing a PR or a branch diff.
 ---
 
-## Identity
-You are the Architect. You diagnose, analyze, and recommend
-with file-backed evidence. You are strictly read-only.
+# Code Review
 
-## Constraints
-- Never write or edit files
-- Never judge code you have not opened
-- Always cite file:line for every important claim
+The shared rubric for assessing a code change. Used both by a
+PR review and by the build cycle's branch-diff reviewer — the
+procedure differs (where the diff comes from, how the verdict
+is recorded), but the rubric below is the same.
 ...</code></pre>
 		</div>
 
@@ -549,51 +573,51 @@ with file-backed evidence. You are strictly read-only.
 				<span>Purpose</span>
 			</div>
 			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/architect/SKILL.md" target="_blank" rel="noopener"><code>architect</code></a></span>
-				<span>Read-only deep analysis with <code>file:line</code> evidence. Plans the approach before implementation.</span>
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/building/SKILL.md" target="_blank" rel="noopener"><code>building</code></a></span>
+				<span>Install deps and run the test/lint/typecheck gate in the sandbox — package-manager detection, install-first, and (when implementing) TDD discipline. The executor and fix loop run under it.</span>
 			</div>
 			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/assure-guardrails/SKILL.md" target="_blank" rel="noopener"><code>assure-guardrails</code></a></span>
-				<span>Pre-flight check for test framework, linting, and type checking. Blocks builds on repos without foundations.</span>
-			</div>
-			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/tree/main/workflows" target="_blank" rel="noopener"><code>workflows/*.yaml</code></a></span>
-				<span>The build cycle is no longer a monolithic coordinator skill. Each workflow (<code>build.yaml</code>, <code>issue-triage.yaml</code>, <code>pr-review.yaml</code>, <code>cron-health.yaml</code>…) declares its phases in YAML; the harness runner executes them and the skills table above is what individual phases invoke.</span>
-			</div>
-			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/subagent-driven-development/SKILL.md" target="_blank" rel="noopener"><code>subagent-driven-development</code></a></span>
-				<span>Dispatches fresh subagents per task with role-based prompts and two-stage review (spec then quality).</span>
-			</div>
-			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/requesting-code-review/SKILL.md" target="_blank" rel="noopener"><code>requesting-code-review</code></a></span>
-				<span>Pre-commit verification pipeline — static security scan, independent reviewer, auto-fix loop, Lore commits.</span>
-			</div>
-			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/test-driven-development/SKILL.md" target="_blank" rel="noopener"><code>test-driven-development</code></a></span>
-				<span>Enforces RED-GREEN-REFACTOR: write failing test first, implement, verify, commit.</span>
-			</div>
-			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/systematic-debugging/SKILL.md" target="_blank" rel="noopener"><code>systematic-debugging</code></a></span>
-				<span>4-phase root cause investigation — no fixes without understanding the problem first.</span>
-			</div>
-			<div class="skills-table-row">
-				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/software-development/plan/SKILL.md" target="_blank" rel="noopener"><code>plan</code></a></span>
-				<span>Read-only planning mode. Produces a markdown plan without executing any changes.</span>
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/code-review/SKILL.md" target="_blank" rel="noopener"><code>code-review</code></a></span>
+				<span>The shared review rubric — finding tiers (Critical / Important / Suggestions / Nits) and what to check. Used by both the PR review and the build cycle's branch-diff reviewer.</span>
 			</div>
 			<div class="skills-table-row">
 				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/pr-review/SKILL.md" target="_blank" rel="noopener"><code>pr-review</code></a></span>
-				<span>Structured PR review: critical > important > suggestions > nits. Deep analysis for complex PRs.</span>
+				<span>Review a PR and post one formal review — advance the existing discussion, verify by building, and give tiered feedback.</span>
+			</div>
+			<div class="skills-table-row">
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/pr-comment/SKILL.md" target="_blank" rel="noopener"><code>pr-comment</code></a></span>
+				<span>Answer a maintainer's question about an open PR with code-cited evidence — the PR-side counterpart to <code>issue-comment</code>.</span>
 			</div>
 			<div class="skills-table-row">
 				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/issue-triage/SKILL.md" target="_blank" rel="noopener"><code>issue-triage</code></a></span>
-				<span>Classifies, labels, deduplicates issues. Chases missing info, closes stale items.</span>
+				<span>Classify, label, deduplicate issues through the canonical state machine. Chase missing info, write agent briefs, manage stale items.</span>
+			</div>
+			<div class="skills-table-row">
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/issue-comment/SKILL.md" target="_blank" rel="noopener"><code>issue-comment</code></a></span>
+				<span>Handle a non-build maintainer comment — close, reopen, label, dedupe, or answer a brief question. Redirects anything needing code to <code>/build</code>.</span>
+			</div>
+			<div class="skills-table-row">
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/issue-answer/SKILL.md" target="_blank" rel="noopener"><code>issue-answer</code></a></span>
+				<span>Answer an information / explanation / comparison question directly — research repo docs and the web, post a sourced reply, never touch code.</span>
+			</div>
+			<div class="skills-table-row">
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/security-review/SKILL.md" target="_blank" rel="noopener"><code>security-review</code></a></span>
+				<span>Diff-scoped review of SDLC concerns scanners miss — CI hardening, auth changes, secret handling, supply-chain churn. Files one dated summary issue.</span>
+			</div>
+			<div class="skills-table-row">
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/security-feedback/SKILL.md" target="_blank" rel="noopener"><code>security-feedback</code></a></span>
+				<span>Process a maintainer's comment on a security scan issue — break findings into actionable issues or record accepted risks in <code>SECURITY.md</code>.</span>
 			</div>
 			<div class="skills-table-row">
 				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/repo-health/SKILL.md" target="_blank" rel="noopener"><code>repo-health</code></a></span>
-				<span>Weekly health report — open issues, stale items, PRs awaiting review, action items.</span>
+				<span>Health report — open-issue and PR backlog, unreviewed PRs, stale needs-info, failing CI, and the resulting action items.</span>
+			</div>
+			<div class="skills-table-row">
+				<span><a href="https://github.com/cliftonc/lastlight/blob/main/skills/chat/SKILL.md" target="_blank" rel="noopener"><code>chat</code></a></span>
+				<span>The in-process Slack/Discord assistant — answers questions about repos, PRs, and issues, and guides users to slash commands like <code>/build</code>, <code>/triage</code>, <code>/review</code>.</span>
 			</div>
 		</div>
-		<p class="section-note">All skill files live in the <a href="https://github.com/cliftonc/lastlight/tree/main/skills" target="_blank" rel="noopener"><code>skills/</code></a> directory. The agent personality is defined in <a href="https://github.com/cliftonc/lastlight/blob/main/agent-context/soul.md" target="_blank" rel="noopener"><code>agent-context/soul.md</code></a>.</p>
+		<p class="section-note">All skill files live in the <a href="https://github.com/cliftonc/lastlight/tree/main/skills" target="_blank" rel="noopener"><code>skills/</code></a> directory; the build cycle's role prompts (<code>architect</code>, <code>executor</code>, <code>reviewer</code>) live in <a href="https://github.com/cliftonc/lastlight/tree/main/workflows/prompts" target="_blank" rel="noopener"><code>workflows/prompts/</code></a>. The agent personality is defined in <a href="https://github.com/cliftonc/lastlight/blob/main/agent-context/soul.md" target="_blank" rel="noopener"><code>agent-context/soul.md</code></a>.</p>
 	</section>
 
 	<!-- Living Document -->
