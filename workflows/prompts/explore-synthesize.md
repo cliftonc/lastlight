@@ -57,6 +57,13 @@ patterns from the codebase. Break into subsections if useful.>
 |------|--------|
 | path/to/file | what changes |
 
+## Decisions made during exploration
+<Low-stakes decisions the agent resolved itself during the Q&A loop rather
+than asking — pull these from the `## Decisions made during exploration`
+section of the context doc. Format as `<decision> → <choice> (<why>)`. The
+maintainer can override any of these. Omit the heading only if there were
+none.>
+
 ## Acceptance criteria
 - <observable outcome 1>
 - <observable outcome 2>
