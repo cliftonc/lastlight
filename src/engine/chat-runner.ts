@@ -33,6 +33,85 @@ import { buildChatGitHubTools, type ChatGitHubAuth, type ChatGitHubToolset } fro
 const MAX_TOOL_ROUNDS = 8;
 
 /**
+ * Exponential backoff schedule (ms) for transient chat-model failures —
+ * rate limits (429) and provider hiccups (5xx / overloaded / transient
+ * network). pi-ai disables the provider SDK's own retries (`maxRetries: 0`),
+ * so without this a single 429 from the model would kill the whole turn.
+ * The sandbox path already retries via pi-coding-agent's auto-retry; the
+ * chat path drives pi-ai directly, so it needs its own.
+ */
+const CHAT_RETRY_BACKOFF_MS = [10_000, 30_000, 60_000];
+
+/**
+ * Match transient, retryable model errors. Deliberately conservative: auth /
+ * validation / context-overflow / other 4xx (anything but 429) are NOT
+ * retried — only rate limits, server errors, and transient network faults.
+ */
+export function isRetryableModelError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    /\b429\b/.test(m) ||
+    m.includes("rate limit") ||
+    m.includes("rate_limit") ||
+    m.includes("too many requests") ||
+    m.includes("overloaded") ||
+    /\b50[0234]\b/.test(m) || // 500 / 502 / 503 / 504
+    m.includes("service unavailable") ||
+    m.includes("timeout") ||
+    m.includes("etimedout") ||
+    m.includes("econnreset") ||
+    m.includes("fetch failed")
+  );
+}
+
+const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Call `complete`, retrying transient failures with exponential backoff.
+ * Handles both shapes pi-ai surfaces a failure as: a thrown error, and a
+ * returned AssistantMessage with `stopReason === "error"`. Non-retryable
+ * outcomes (and the final attempt) are returned/thrown unchanged so the
+ * caller's existing error handling still applies. Dependency-injected for
+ * testing (`delaysMs` / `sleepFn` / `onRetry`).
+ */
+export async function completeWithRetry(
+  complete: (m: Model<Api>, c: Context, o: SimpleStreamOptions) => Promise<AssistantMessage>,
+  model: Model<Api>,
+  context: Context,
+  opts: SimpleStreamOptions,
+  deps: {
+    delaysMs?: number[];
+    sleepFn?: (ms: number) => Promise<void>;
+    onRetry?: (info: { attempt: number; delayMs: number; reason: string }) => void;
+  } = {},
+): Promise<AssistantMessage> {
+  const delays = deps.delaysMs ?? CHAT_RETRY_BACKOFF_MS;
+  const doSleep = deps.sleepFn ?? sleepMs;
+  let attempt = 0;
+  for (;;) {
+    let assistant: AssistantMessage | undefined;
+    let errMsg: string;
+    let thrown: unknown;
+    try {
+      assistant = await complete(model, context, opts);
+      if (assistant.stopReason !== "error") return assistant;
+      errMsg = assistant.errorMessage ?? "error";
+    } catch (err) {
+      thrown = err;
+      errMsg = err instanceof Error ? err.message : String(err);
+    }
+    if (attempt >= delays.length || !isRetryableModelError(errMsg)) {
+      if (thrown !== undefined) throw thrown; // preserve the original error
+      return assistant as AssistantMessage; // non-retryable / exhausted errored assistant
+    }
+    const delayMs = delays[attempt];
+    deps.onRetry?.({ attempt: attempt + 1, delayMs, reason: errMsg });
+    await doSleep(delayMs);
+    attempt++;
+  }
+}
+
+/**
  * Optional extra toolset merged into the chat agent's tool list
  * alongside the github tools. Used to register the `read_skill` tool
  * that exposes the curated chat skill catalogue.
@@ -237,7 +316,13 @@ export class ChatRunner {
       modelTurns++;
       let assistant: AssistantMessage;
       try {
-        assistant = await completeSimple(model, context, opts);
+        assistant = await completeWithRetry(completeSimple, model, context, opts, {
+          onRetry: ({ attempt, delayMs, reason }) =>
+            console.warn(
+              `[chat] transient model error (retry ${attempt}/${CHAT_RETRY_BACKOFF_MS.length} ` +
+              `in ${delayMs / 1000}s): ${reason}`,
+            ),
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(msg);
