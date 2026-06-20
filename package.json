@@ -62,7 +62,7 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "@sinclair/typebox": "^0.34.49",
     "@slack/bolt": "^4.6.0",
-    "agentic-pi": "^0.2.6",
+    "agentic-pi": "^0.2.7",
     "arctic": "^3.7.0",
     "better-sqlite3": "^11.0.0",
     "chalk": "^5.6.2",
