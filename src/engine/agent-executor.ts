@@ -164,6 +164,7 @@ export async function executeAgent(
   if (process.env.OPENAI_API_KEY) ghEnv.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   if (process.env.ANTHROPIC_API_KEY) ghEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.OPENROUTER_API_KEY) ghEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  if (process.env.FIREWORKS_API_KEY) ghEnv.FIREWORKS_API_KEY = process.env.FIREWORKS_API_KEY;
 
   // Web-search provider keys. Forwarded only when the workflow opted into
   // web search (scoped to explore today; see webSearchEnabledForWorkflow
