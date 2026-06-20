@@ -83,6 +83,18 @@ export function sanitizePiEvent(record: Record<string, unknown>, includeContent 
         if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[`extension.${key}`] = value;
       }
       break;
+    case "skills_status":
+      for (const key of ["status", "discovered", "noSkills"]) {
+        const value = record[key];
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[`skills.${key}`] = value;
+      }
+      if (Array.isArray(record.skills)) {
+        out["skills.names"] = record.skills
+          .map((s) => (s && typeof s === "object" && "name" in s ? String((s as { name?: unknown }).name) : ""))
+          .filter(Boolean)
+          .join(",");
+      }
+      break;
     case "usage_snapshot":
       for (const key of ["turns", "costUsd", "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"]) {
         const value = record[key];

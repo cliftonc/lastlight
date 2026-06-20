@@ -221,6 +221,8 @@ export class AgenticShim {
         return this.translateToolEnd(r, ts, sessionId);
       case "extension_status":
         return this.translateExtensionStatus(r, ts, sessionId);
+      case "skills_status":
+        return this.translateSkillsStatus(r, ts, sessionId);
       case "fatal_error":
         return this.translateFatal(r, ts, sessionId);
       default:
@@ -250,6 +252,33 @@ export class AgenticShim {
         ...(r.provider !== undefined ? { provider: r.provider } : {}),
         ...(r.toolCount !== undefined ? { toolCount: r.toolCount } : {}),
         ...(r.reason !== undefined ? { reason: r.reason } : {}),
+        timestamp: ts,
+        sessionId,
+      },
+    ];
+  }
+
+  /**
+   * Mirror agentic-pi's gated `skills_status` event as a `system` envelope in
+   * the session log — the skill-loading counterpart to
+   * {@link translateExtensionStatus}. Records which skills the agent had
+   * available. SessionReader ignores unknown envelope types, so render-safe.
+   */
+  private translateSkillsStatus(
+    r: EmitterRecord,
+    ts: string,
+    sessionId: string,
+  ): object[] {
+    if (typeof r.status !== "string") return [];
+    return [
+      {
+        type: "system",
+        subtype: "skills_status",
+        status: r.status,
+        ...(r.discovered !== undefined ? { discovered: r.discovered } : {}),
+        ...(Array.isArray(r.skills) ? { skills: r.skills } : {}),
+        ...(Array.isArray(r.mappedPaths) ? { mappedPaths: r.mappedPaths } : {}),
+        ...(r.noSkills !== undefined ? { noSkills: r.noSkills } : {}),
         timestamp: ts,
         sessionId,
       },

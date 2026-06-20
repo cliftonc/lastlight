@@ -97,6 +97,48 @@ export interface ExtensionStatus {
 export type ExtensionStatusMap = Record<string, ExtensionStatus>;
 
 /**
+ * One skill agentic-pi discovered for a run, flattened from the
+ * `skills_status` event's `skills[]`. Mirrors agentic-pi's `SkillSummary`.
+ */
+export interface SkillSummary {
+  /** Skill name (from SKILL.md frontmatter). */
+  name: string;
+  /** Absolute path to the skill's SKILL.md. */
+  source: string;
+  /**
+   * Whether the model can auto-invoke it. False when the skill set
+   * `disable-model-invocation: true` — present but not surfaced in the
+   * system prompt, so worth flagging in the dashboard.
+   */
+  modelInvocable: boolean;
+}
+
+/**
+ * Normalized status of agentic-pi's skill discovery for a single run — the
+ * skill-loading counterpart to {@link ExtensionStatus} (tool loading).
+ * agentic-pi (≥0.2.6) emits this as a single, gated `skills_status` event at
+ * run start: present only when skills were configured (`skillPaths`/`noSkills`)
+ * or at least one was discovered, absent on a default run with no skills.
+ * lastlight captures it so the dashboard's phase-detail panel can show which
+ * skills the agent had available.
+ */
+export interface SkillsStatus {
+  /**
+   * "default" (rely on auto-discovery), "configured" (explicit `skillPaths`
+   * resolved), or "disabled" (`noSkills` with no explicit paths).
+   */
+  status: string;
+  /** Number of skills the resource loader actually discovered. */
+  discovered: number;
+  /** The discovered skills, flattened. */
+  skills: SkillSummary[];
+  /** Operator-mapped skill paths that resolved (echoed for observability). */
+  mappedPaths: string[];
+  /** Whether agentic-pi's default skill discovery was disabled. */
+  noSkills: boolean;
+}
+
+/**
  * Result from an agent execution.
  */
 export interface ExecutionResult {
@@ -127,6 +169,13 @@ export interface ExecutionResult {
    * `executions.extension_status` column.
    */
   extensions?: ExtensionStatusMap;
+  /**
+   * Skill-loading status captured from agentic-pi's `skills_status` event.
+   * Surfaced alongside {@link extensions} in the dashboard's phase-detail
+   * panel and persisted to the `executions.skills_status` column. Undefined
+   * when the run reported no skills (the event is gated on the agentic-pi side).
+   */
+  skills?: SkillsStatus;
 }
 
 export type GitAccessProfile = "read" | "issues-write" | "review-write" | "repo-write";

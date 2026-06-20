@@ -147,6 +147,10 @@ export function migrate(db: Database.Database): void {
     // (file-search / github / web-search → {status, mode?, provider?,
     // toolCount?, reason?}). Surfaced in the dashboard phase-detail panel.
     "extension_status TEXT",
+    // JSON object of agentic-pi's skill-loading status for this execution
+    // ({status, discovered, skills[], mappedPaths, noSkills}). The skill-
+    // loading counterpart to extension_status; surfaced in the same panel.
+    "skills_status TEXT",
   ]) {
     try {
       db.exec(`ALTER TABLE executions ADD COLUMN ${col}`);

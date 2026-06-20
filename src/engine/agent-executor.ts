@@ -15,6 +15,7 @@ import {
   type ExecutorConfig,
   type ExecutionResult,
   type ExtensionStatusMap,
+  type SkillsStatus,
   type GitSandboxAccess,
 } from "./profiles.js";
 import { AgenticShim, truncateForLog, safeStringify } from "./event-shim.js";
@@ -429,7 +430,7 @@ async function executeInProcess(
   const better = acc.bestStats();
   if (better && (better.tokens?.total ?? 0) > 0) result.stats = better;
 
-  const finalResult = await finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions(), acc.toolError());
+  const finalResult = await finalizeFromRunResult(result, prompt, shim, startTime, acc.extensions(), acc.skills(), acc.toolError());
   recordExecutionMetrics("agent", {
     "sandbox.backend": ctx.backend,
     model,
@@ -608,7 +609,7 @@ async function executeDocker(
     };
   }
   await sbx.cleanup();
-  const finalResult = await finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions(), acc.toolError());
+  const finalResult = await finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions(), acc.skills(), acc.toolError());
   recordExecutionMetrics("agent", {
     "sandbox.backend": "docker",
     model,
@@ -666,6 +667,11 @@ export class RunResultAccumulator {
   // (minus type/extension) so build() can map them onto the RunResult.
   private ext: Record<string, Record<string, unknown>> = {};
 
+  // Skill-loading status. agentic-pi emits a single (gated) `skills_status`
+  // event at run start; we keep the raw payload (minus type) so skills()
+  // can normalize it onto the RunResult, mirroring `ext` above for tools.
+  private skillsRaw?: Record<string, unknown>;
+
   feed(r: Record<string, unknown>): void {
     switch (r.type) {
       case "session":
@@ -676,6 +682,11 @@ export class RunResultAccumulator {
           const { type: _t, extension: _e, ...rest } = r;
           this.ext[r.extension] = rest;
         }
+        break;
+      }
+      case "skills_status": {
+        const { type: _t, ...rest } = r;
+        this.skillsRaw = rest;
         break;
       }
       case "message_end": {
@@ -821,6 +832,35 @@ export class RunResultAccumulator {
   }
 
   /**
+   * Normalized skill-loading status from the gated `skills_status` event, or
+   * undefined if none was reported (agentic-pi suppresses it on a run that
+   * configured no skills and discovered none). The skill-loading counterpart
+   * to {@link extensions}.
+   */
+  skills(): SkillsStatus | undefined {
+    const s = this.skillsRaw;
+    if (!s || typeof s.status !== "string") return undefined;
+    const skills = Array.isArray(s.skills)
+      ? s.skills
+          .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+          .map((x) => ({
+            name: typeof x.name === "string" ? x.name : "",
+            source: typeof x.source === "string" ? x.source : "",
+            modelInvocable: x.modelInvocable === true,
+          }))
+      : [];
+    return {
+      status: s.status,
+      discovered: typeof s.discovered === "number" ? s.discovered : skills.length,
+      skills,
+      mappedPaths: Array.isArray(s.mappedPaths)
+        ? s.mappedPaths.filter((p): p is string => typeof p === "string")
+        : [],
+      noSkills: s.noSkills === true,
+    };
+  }
+
+  /**
    * The last tool result that came back with `isError: true`, including the
    * failure text — or undefined if no tool errored. This is what turns a
    * bare `error_tool` stop reason into a human-readable cause.
@@ -838,6 +878,7 @@ function finalizeFromRunResult(
   shim: AgenticShim,
   startTime: number,
   extensions?: ExtensionStatusMap,
+  skills?: SkillsStatus,
   toolError?: { tool?: string; message: string },
 ): ExecutionResult {
   const durationMs = Date.now() - startTime;
@@ -933,6 +974,7 @@ function finalizeFromRunResult(
     cacheCreationInputTokens: cacheWrite || undefined,
     stopReason,
     extensions,
+    skills,
   };
 }
 
