@@ -1,3 +1,4 @@
+import { useState } from "react";
 import clsx from "clsx";
 import type {
   WorkflowDefinition,
@@ -109,8 +110,16 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
     "badge-ghost": statusLabel === "pending",
   });
 
+  // Second tab groups "what got loaded" for this run — agentic-pi extensions
+  // (tool loading) and skills (skill loading). The count drives the tab badge.
+  const extensionCount = execution?.extensions ? Object.keys(execution.extensions).length : 0;
+  const skillCount = execution?.skills?.skills.length ?? 0;
+  const loadedCount = extensionCount + skillCount;
+
+  const [tab, setTab] = useState<"details" | "loaded">("details");
+
   return (
-    <div className="flex flex-col gap-4 p-3 text-xs">
+    <div className="flex flex-col gap-3 p-3 text-xs">
       <div>
         <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-1">
           Phase
@@ -126,64 +135,126 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
         )}
       </div>
 
-      {phaseDef && (
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Type">{phaseDef.type}</Field>
-          {phaseDef.hasLoop && <Field label="Loop">yes</Field>}
-          {phaseDef.approvalGate && (
-            <Field label="Approval Gate">{phaseDef.approvalGate}</Field>
+      {/* Tabs — Details (execution/usage/session) vs Loaded (extensions/skills) */}
+      <div className="flex gap-1 border-b border-base-300 -mx-3 px-3">
+        <TabButton active={tab === "details"} onClick={() => setTab("details")}>
+          Details
+        </TabButton>
+        <TabButton active={tab === "loaded"} onClick={() => setTab("loaded")}>
+          Loaded{loadedCount > 0 ? ` (${loadedCount})` : ""}
+        </TabButton>
+      </div>
+
+      {tab === "details" && (
+        <div className="flex flex-col gap-4">
+          {phaseDef && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Type">{phaseDef.type}</Field>
+              {phaseDef.hasLoop && <Field label="Loop">yes</Field>}
+              {phaseDef.approvalGate && (
+                <Field label="Approval Gate">{phaseDef.approvalGate}</Field>
+              )}
+            </div>
+          )}
+
+          {!phaseDef && (
+            <div className="text-2xs text-base-content/50 italic">
+              Dynamic phase (not declared in the workflow YAML — likely a loop iteration).
+            </div>
+          )}
+
+          {!execution && (
+            <div className="text-xs text-base-content/50 border border-base-300/40 bg-base-200/30 rounded px-3 py-2">
+              No execution recorded yet.
+            </div>
+          )}
+
+          {execution && (
+            <>
+              <div>
+                <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
+                  Execution
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Started">{fmtTime(execution.startedAt)}</Field>
+                  <Field label="Finished">{fmtTime(execution.finishedAt)}</Field>
+                  <Field label="Duration">{fmtDuration(execution.durationMs)}</Field>
+                  <Field label="API Time">{fmtDuration(execution.apiDurationMs)}</Field>
+                  <Field label="Turns">{execution.turns ?? "—"}</Field>
+                  <Field label="Stop Reason">{execution.stopReason ?? "—"}</Field>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
+                  Usage
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Cost">{fmtCost(execution.costUsd)}</Field>
+                  <Field label="Output Tokens">{fmtTokens(execution.outputTokens)}</Field>
+                  <Field label="Input Tokens">{fmtTokens(execution.inputTokens)}</Field>
+                  <Field label="Cache Read">{fmtTokens(execution.cacheReadInputTokens)}</Field>
+                  <Field label="Cache Create">{fmtTokens(execution.cacheCreationInputTokens)}</Field>
+                </div>
+              </div>
+
+              {execution.error && (
+                <div>
+                  <div className="text-2xs font-semibold uppercase tracking-wider text-error/80 mb-1">
+                    Error
+                  </div>
+                  <div className="text-2xs text-error/80 font-mono break-words border border-error/30 bg-error/5 rounded px-2 py-1">
+                    {execution.error}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-1">
+                  Session
+                </div>
+                {execution.sessionId ? (
+                  <div className="text-2xs font-mono text-base-content/70 break-all">
+                    {execution.sessionId}
+                  </div>
+                ) : (
+                  <div className="text-2xs text-base-content/50 italic">
+                    Session not captured for this run.
+                  </div>
+                )}
+              </div>
+
+              {totalExecutions > 1 && (
+                <div className="text-2xs text-base-content/40 italic">
+                  {totalExecutions} executions recorded for this phase — showing the most recent.
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {!phaseDef && (
-        <div className="text-2xs text-base-content/50 italic">
-          Dynamic phase (not declared in the workflow YAML — likely a loop iteration).
-        </div>
-      )}
-
-      {!execution && (
-        <div className="text-xs text-base-content/50 border border-base-300/40 bg-base-200/30 rounded px-3 py-2">
-          No execution recorded yet.
-        </div>
-      )}
-
-      {execution && (
-        <>
-          <div>
-            <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
-              Execution
+      {tab === "loaded" && (
+        <div className="flex flex-col gap-4">
+          {!execution && (
+            <div className="text-xs text-base-content/50 border border-base-300/40 bg-base-200/30 rounded px-3 py-2">
+              No execution recorded yet.
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Started">{fmtTime(execution.startedAt)}</Field>
-              <Field label="Finished">{fmtTime(execution.finishedAt)}</Field>
-              <Field label="Duration">{fmtDuration(execution.durationMs)}</Field>
-              <Field label="API Time">{fmtDuration(execution.apiDurationMs)}</Field>
-              <Field label="Turns">{execution.turns ?? "—"}</Field>
-              <Field label="Stop Reason">{execution.stopReason ?? "—"}</Field>
-            </div>
-          </div>
+          )}
 
-          <div>
-            <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
-              Usage
+          {execution && loadedCount === 0 && (
+            <div className="text-2xs text-base-content/40 italic">
+              No extensions or skills were loaded for this run.
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Cost">{fmtCost(execution.costUsd)}</Field>
-              <Field label="Output Tokens">{fmtTokens(execution.outputTokens)}</Field>
-              <Field label="Input Tokens">{fmtTokens(execution.inputTokens)}</Field>
-              <Field label="Cache Read">{fmtTokens(execution.cacheReadInputTokens)}</Field>
-              <Field label="Cache Create">{fmtTokens(execution.cacheCreationInputTokens)}</Field>
-            </div>
-          </div>
+          )}
 
-          {execution.extensions && Object.keys(execution.extensions).length > 0 && (
+          {extensionCount > 0 && (
             <div>
               <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">
                 Extensions
               </div>
               <div className="grid grid-cols-2 gap-3">
-                {Object.entries(execution.extensions).map(([name, v]) => (
+                {Object.entries(execution!.extensions!).map(([name, v]) => (
                   <Field key={name} label={name}>
                     {fmtExtension(v)}
                   </Field>
@@ -192,38 +263,65 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
             </div>
           )}
 
-          {execution.error && (
-            <div>
-              <div className="text-2xs font-semibold uppercase tracking-wider text-error/80 mb-1">
-                Error
-              </div>
-              <div className="text-2xs text-error/80 font-mono break-words border border-error/30 bg-error/5 rounded px-2 py-1">
-                {execution.error}
-              </div>
-            </div>
-          )}
+          {execution?.skills && <SkillsSection skills={execution.skills} />}
+        </div>
+      )}
+    </div>
+  );
+}
 
-          <div>
-            <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-1">
-              Session
-            </div>
-            {execution.sessionId ? (
-              <div className="text-2xs font-mono text-base-content/70 break-all">
-                {execution.sessionId}
-              </div>
-            ) : (
-              <div className="text-2xs text-base-content/50 italic">
-                Session not captured for this run.
-              </div>
-            )}
-          </div>
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        "px-2 py-1 text-2xs font-mono border-b-2 -mb-px transition-colors",
+        active
+          ? "border-primary text-primary"
+          : "border-transparent text-base-content/60 hover:text-base-content",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
 
-          {totalExecutions > 1 && (
-            <div className="text-2xs text-base-content/40 italic">
-              {totalExecutions} executions recorded for this phase — showing the most recent.
-            </div>
-          )}
-        </>
+/** Skill-loading detail — the counterpart to the Extensions grid. */
+function SkillsSection({
+  skills,
+}: {
+  skills: NonNullable<WorkflowRunExecution["skills"]>;
+}) {
+  const summary = [
+    skills.status,
+    `${skills.discovered} discovered`,
+    ...(skills.noSkills ? ["default discovery off"] : []),
+  ].join(" · ");
+  return (
+    <div>
+      <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-1">
+        Skills
+      </div>
+      <div className="text-2xs text-base-content/50 font-mono mb-1.5">{summary}</div>
+      {skills.skills.length > 0 ? (
+        <ul className="flex flex-col gap-1">
+          {skills.skills.map((s) => (
+            <li key={s.source} className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-base-content/80 break-all">{s.name}</span>
+              {!s.modelInvocable && <span className="badge badge-ghost badge-xs">manual</span>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-2xs text-base-content/40 italic">No skills discovered.</div>
       )}
     </div>
   );

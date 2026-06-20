@@ -319,6 +319,7 @@ export async function runPhase(
           apiDurationMs: result.apiDurationMs,
           stopReason: result.stopReason,
           extensionStatus: result.extensions ? JSON.stringify(result.extensions) : undefined,
+          skillsStatus: result.skills ? JSON.stringify(result.skills) : undefined,
         });
         span?.setAttributes({ success: result.success, stop_reason: result.stopReason ?? "unknown" });
         recordExecutionMetrics("phase", { ...attrs, success: result.success, stop_reason: result.stopReason, durationMs: result.durationMs, costUsd: result.costUsd, inputTokens: result.inputTokens, outputTokens: result.outputTokens });

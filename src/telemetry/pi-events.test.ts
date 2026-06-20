@@ -48,6 +48,17 @@ describe("PI event telemetry sanitization", () => {
       "extension.status": "configured",
       "extension.toolCount": 3,
     });
+    expect(sanitizePiEvent({
+      type: "skills_status",
+      status: "configured",
+      discovered: 2,
+      noSkills: false,
+      skills: [{ name: "pr-review" }, { name: "issue-triage" }],
+    })).toMatchObject({
+      "skills.status": "configured",
+      "skills.discovered": 2,
+      "skills.names": "pr-review,issue-triage",
+    });
     expect(sanitizePiEvent({ type: "usage_snapshot", turns: 2, costUsd: 0.2 })).toMatchObject({
       "usage.turns": 2,
       "usage.costUsd": 0.2,

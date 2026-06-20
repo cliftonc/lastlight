@@ -165,6 +165,42 @@ describe("RunResultAccumulator extension status", () => {
   });
 });
 
+describe("RunResultAccumulator skills status", () => {
+  it("captures and normalizes the skills_status event", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "session", id: "abc" });
+    acc.feed({
+      type: "skills_status",
+      status: "configured",
+      discovered: 2,
+      skills: [
+        { name: "pr-review", source: "/skills/pr-review/SKILL.md", modelInvocable: true },
+        { name: "issue-triage", source: "/skills/issue-triage/SKILL.md", modelInvocable: false },
+      ],
+      mappedPaths: ["/skills"],
+      noSkills: false,
+    });
+
+    expect(acc.skills()).toEqual({
+      status: "configured",
+      discovered: 2,
+      skills: [
+        { name: "pr-review", source: "/skills/pr-review/SKILL.md", modelInvocable: true },
+        { name: "issue-triage", source: "/skills/issue-triage/SKILL.md", modelInvocable: false },
+      ],
+      mappedPaths: ["/skills"],
+      noSkills: false,
+    });
+  });
+
+  it("returns undefined when no skills_status event was seen", () => {
+    const acc = new RunResultAccumulator();
+    acc.feed({ type: "session", id: "abc" });
+    acc.feed(assistantMessageEnd({ input: 10, output: 5, cost: 0.001 }));
+    expect(acc.skills()).toBeUndefined();
+  });
+});
+
 describe("RunResultAccumulator tool errors", () => {
   it("captures the failing tool name and error text", () => {
     const acc = new RunResultAccumulator();

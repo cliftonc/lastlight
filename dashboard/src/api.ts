@@ -212,6 +212,18 @@ export interface WorkflowRunExecution {
     string,
     { status: string; mode?: string; provider?: string; toolCount?: number; reason?: string }
   >;
+  /**
+   * agentic-pi skill-loading status for this phase — the skill-loading
+   * counterpart to {@link extensions}. Present only when the run reported
+   * skills (agentic-pi gates the underlying `skills_status` event).
+   */
+  skills?: {
+    status: string;
+    discovered: number;
+    skills: { name: string; source: string; modelInvocable: boolean }[];
+    mappedPaths: string[];
+    noSkills: boolean;
+  };
 }
 
 export interface ContainerInfo {

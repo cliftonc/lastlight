@@ -39,6 +39,12 @@ export interface ExecutionRecord {
    */
   extensionStatus?: string;
   /**
+   * JSON-serialized {@link SkillsStatus} — agentic-pi's skill-loading status
+   * for this execution (which skills were discovered/available). Null when
+   * the run reported no skills.
+   */
+  skillsStatus?: string;
+  /**
    * Workflow run that owns this execution. Scopes dedup: a fresh re-trigger
    * creates a new workflow_run_id, so `shouldRunPhase` won't find matching
    * rows from the prior run and will correctly run the phase again.
@@ -139,6 +145,8 @@ export class ExecutionStore {
       stopReason?: string;
       /** JSON-serialized ExtensionStatusMap (extensions active this run). */
       extensionStatus?: string;
+      /** JSON-serialized SkillsStatus (skills available this run). */
+      skillsStatus?: string;
     },
   ): void {
     this.db.prepare(`
@@ -156,7 +164,8 @@ export class ExecutionStore {
           output_tokens = COALESCE(?, output_tokens),
           api_duration_ms = COALESCE(?, api_duration_ms),
           stop_reason = COALESCE(?, stop_reason),
-          extension_status = COALESCE(?, extension_status)
+          extension_status = COALESCE(?, extension_status),
+          skills_status = COALESCE(?, skills_status)
       WHERE id = ?
     `).run(
       new Date().toISOString(),
@@ -173,6 +182,7 @@ export class ExecutionStore {
       result.apiDurationMs ?? null,
       result.stopReason ?? null,
       result.extensionStatus ?? null,
+      result.skillsStatus ?? null,
       id,
     );
   }
@@ -494,6 +504,7 @@ export class ExecutionStore {
         api_duration_ms AS apiDurationMs,
         stop_reason     AS stopReason,
         extension_status AS extensionStatus,
+        skills_status   AS skillsStatus,
         workflow_run_id AS workflowRunId
       FROM executions
       WHERE (workflow_run_id = ? OR (workflow_run_id IS NULL AND trigger_id = ?))
@@ -523,6 +534,7 @@ export class ExecutionStore {
       apiDurationMs: (r.apiDurationMs as number | null) ?? undefined,
       stopReason: (r.stopReason as string | null) ?? undefined,
       extensionStatus: (r.extensionStatus as string | null) ?? undefined,
+      skillsStatus: (r.skillsStatus as string | null) ?? undefined,
       workflowRunId: (r.workflowRunId as string | null) ?? undefined,
     }));
   }
