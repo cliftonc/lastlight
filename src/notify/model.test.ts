@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setStep, upsertBefore, stepsFromPhases } from "./model.js";
+import { setStep, upsertBefore, stepsFromPhases, buildProgressModel, runDashboardUrl } from "./model.js";
 import type { ProgressStep } from "./types.js";
 import type { AgentWorkflowDefinition } from "../workflows/schema.js";
 
@@ -79,5 +79,51 @@ describe("stepsFromPhases", () => {
     const out = stepsFromPhases(def, new Set(["guardrails"]));
     expect(out.find((s) => s.key === "guardrails")?.status).toBe("done");
     expect(out.find((s) => s.key === "architect")?.status).toBe("pending");
+  });
+});
+
+describe("runDashboardUrl", () => {
+  it("builds an encoded run deep link and trims a trailing slash", () => {
+    expect(runDashboardUrl("https://ll.example.com/", "run 1", "build")).toBe(
+      "https://ll.example.com/admin/?run=run%201&tab=runs&wf=build",
+    );
+  });
+
+  it("returns undefined when no public URL is configured", () => {
+    expect(runDashboardUrl(undefined, "r1", "build")).toBeUndefined();
+  });
+});
+
+describe("buildProgressModel", () => {
+  const def = {
+    kind: "build",
+    name: "build",
+    phases: [{ name: "guardrails", label: "Guardrails", type: "agent" }],
+  } as unknown as AgentWorkflowDefinition;
+
+  it("adds a live-run meta line when runUrl is set, after the branch link", () => {
+    const model = buildProgressModel(def, {
+      workflowName: "build",
+      number: 936,
+      owner: "o",
+      repo: "r",
+      branch: "lastlight/936",
+      runUrl: "https://ll.example.com/admin/?run=abc&tab=runs&wf=build",
+    });
+    expect(model.meta).toEqual([
+      "Branch: [`lastlight/936`](https://github.com/o/r/tree/lastlight/936)",
+      "Live run: [watch on the dashboard](https://ll.example.com/admin/?run=abc&tab=runs&wf=build)",
+    ]);
+  });
+
+  it("omits the live-run line when runUrl is absent", () => {
+    const model = buildProgressModel(def, {
+      workflowName: "build",
+      number: 936,
+      owner: "o",
+      repo: "r",
+      branch: "lastlight/936",
+    });
+    expect(model.meta?.some((m) => m.startsWith("Live run:"))).toBe(false);
   });
 });

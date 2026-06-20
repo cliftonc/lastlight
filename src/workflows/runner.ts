@@ -54,6 +54,12 @@ export interface RunnerCallbacks {
    * to post the "Starting <skill>" reply with a deep link to the run.
    */
   onRunStart?: (runId: string) => Promise<void>;
+  /**
+   * Public base URL of the admin dashboard (`config.publicUrl`). When set, the
+   * progress checklist embeds a live-run deep link in its meta. Undefined when
+   * no public URL is configured (the link is simply omitted).
+   */
+  publicUrl?: string;
 }
 
 export interface WorkflowResult {

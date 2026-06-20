@@ -50,6 +50,27 @@ export interface ProgressModelInput {
   branch?: string;
   /** Phases already finished (resume re-seeding) — seeded as `done`. */
   completed?: ReadonlySet<string>;
+  /**
+   * Deep link to the live run on the admin dashboard. Rendered as a meta line
+   * so the GitHub comment (and Slack message) carries a "watch it run" link.
+   * Built with {@link runDashboardUrl}; omitted when no public URL is configured.
+   */
+  runUrl?: string;
+}
+
+/**
+ * Admin-dashboard deep link for a single workflow run. Shared by the notifier
+ * (the in-place checklist's meta line) and the Slack dispatch ack so the two
+ * never drift. Returns `undefined` when `publicUrl` is unset.
+ */
+export function runDashboardUrl(
+  publicUrl: string | undefined,
+  runId: string,
+  workflowName: string,
+): string | undefined {
+  if (!publicUrl) return undefined;
+  const base = publicUrl.replace(/\/+$/, "");
+  return `${base}/admin/?run=${encodeURIComponent(runId)}&tab=runs&wf=${encodeURIComponent(workflowName)}`;
 }
 
 /**
@@ -67,6 +88,9 @@ export function buildProgressModel(
     meta.push(
       `Branch: [\`${input.branch}\`](https://github.com/${input.owner}/${input.repo}/tree/${input.branch})`,
     );
+  }
+  if (input.runUrl) {
+    meta.push(`Live run: [watch on the dashboard](${input.runUrl})`);
   }
   return {
     title: `${input.workflowName} for ${titleScope}`,

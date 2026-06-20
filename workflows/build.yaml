@@ -32,7 +32,7 @@ phases:
       contains_READY:
         action: continue
     messages:
-      on_success: "READY — foundational tooling verified"
+      on_success: "READY — foundational tooling verified — [guardrails-report.md]({{branchUrl guardrails-report.md}})"
       on_blocked: |
         **Guardrails check: BLOCKED** — missing foundational tooling.
 
@@ -89,10 +89,10 @@ phases:
       messages:
         on_cycle_start: "independent verification (cycle {{cycle}})…"
         on_approved: "Approved — [reviewer-verdict.md]({{branchUrl reviewer-verdict.md}})"
-        on_request_changes: "**Review: REQUEST_CHANGES** — fixing issues (cycle {{cycle}}/{{maxCycles}})..."
+        on_request_changes: "**Review: REQUEST_CHANGES** — [reviewer-verdict.md]({{branchUrl reviewer-verdict.md}}) — fixing issues (cycle {{cycle}}/{{maxCycles}})..."
         on_fix_start: "**Starting fix loop** (cycle {{cycle}}/{{maxCycles}}) — addressing reviewer feedback..."
         on_fix_failed: "Fix cycle {{cycle}} failed. Proceeding to PR with known issues."
-        on_max_cycles: "**Review: REQUEST_CHANGES** after {{maxCycles}} fix cycles. Proceeding with remaining issues noted."
+        on_max_cycles: "**Review: REQUEST_CHANGES** after {{maxCycles}} fix cycles — see [reviewer-verdict.md]({{branchUrl reviewer-verdict.md}}). Proceeding with remaining issues noted."
         on_pause_for_approval: |
           **Review: REQUEST_CHANGES** — approval required before fix loop.
 

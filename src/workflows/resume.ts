@@ -9,6 +9,7 @@ import {
   ProgressNotifier,
   GitHubTransport,
   buildProgressModel,
+  runDashboardUrl,
   type NotifierState,
 } from "../notify/index.js";
 
@@ -22,6 +23,8 @@ export interface ResumeOptions {
   bootstrapLabel?: string;
   /** Post a message to a Slack channel/thread. Used to resume Slack-originated workflows. */
   slackPoster?: (channelId: string, threadId: string, msg: string) => Promise<void>;
+  /** Public base URL of the admin dashboard — for the checklist's live-run link. */
+  publicUrl?: string;
 }
 
 /**
@@ -269,6 +272,7 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
           repo,
           branch,
           completed,
+          runUrl: runDashboardUrl(opts.publicUrl, run.id, run.workflowName),
         }),
       );
       callbacks = { ...callbacks, reporter: notifier };

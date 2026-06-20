@@ -462,6 +462,7 @@ async function main() {
 
     const callbacks: RunnerCallbacks = {
       reporter: reporterProxy,
+      publicUrl: config.publicUrl,
       postComment: slackPost
         ?? (github && issueNumber
           ? async (msg) => {
@@ -791,6 +792,7 @@ async function main() {
     variants: config.variants,
     approvalConfig: config.approval,
     bootstrapLabel: config.bootstrapLabel,
+    publicUrl: config.publicUrl,
     slackPoster: slackConnector
       ? (channelId, threadId, msg) => slackConnector!.sendMessage(channelId, threadId, msg).then(() => {})
       : undefined,

@@ -13,7 +13,7 @@ import { PhaseRef } from "./phase-ref.js";
 import type { TemplateContext } from "./templates.js";
 import { slugify } from "./templates.js";
 import { wrapUntrusted } from "../engine/screen.js";
-import { buildProgressModel } from "../notify/model.js";
+import { buildProgressModel, runDashboardUrl } from "../notify/model.js";
 
 /**
  * Lightweight invocation request for any agent workflow. The runner handles
@@ -247,6 +247,7 @@ export async function runSimpleWorkflow(
       repo,
       branch,
       completed,
+      runUrl: runDashboardUrl(callbacks.publicUrl, workflowId, workflowName),
     });
     await callbacks.reporter.start(model).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);

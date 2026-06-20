@@ -5,6 +5,7 @@ import type { StateDb } from "../state/db.js";
 import type { GitHubClient } from "./github.js";
 import type { ChatResult } from "./chat.js";
 import { routeEvent, type Route, type RouterDeps } from "./router.js";
+import { runDashboardUrl } from "../notify/model.js";
 
 /**
  * Hand a workflow to the runner. Matches `dispatchWorkflow` in index.ts — the
@@ -169,9 +170,7 @@ async function handleMessageDispatch(
     // `workflows` is the definition browser and ignores ?run=, so the deep link
     // must target `runs`. Shared by every messaging-dispatched workflow
     // (build / explore / triage / answer / …).
-    const link = deps.publicUrl
-      ? `${deps.publicUrl}/admin/?run=${encodeURIComponent(runId)}&tab=runs&wf=${encodeURIComponent(handler)}`
-      : undefined;
+    const link = runDashboardUrl(deps.publicUrl, runId, handler);
     const body = link
       ? `Starting *${handler}*... I'll report back when it's done.\n<${link}|Live progress>`
       : `Starting *${handler}*... I'll report back when it's done.`;
