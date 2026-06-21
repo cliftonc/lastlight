@@ -19,6 +19,7 @@
  */
 import http from "node:http";
 import crypto from "node:crypto";
+import readline from "node:readline";
 import { spawn } from "node:child_process";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
@@ -30,10 +31,11 @@ import {
   DEFAULT_URL,
 } from "./cli-config.js";
 import { table, age, colorStatus, checkmark, followSSE } from "./cli-format.js";
+import { renderTimeline, renderMessage, renderRaw } from "./cli-timeline.js";
 
 // ── arg parsing ────────────────────────────────────────────────────────────
 
-const BOOLEAN_FLAGS = new Set(["json", "follow", "f", "no-browser", "password", "help", "h"]);
+const BOOLEAN_FLAGS = new Set(["json", "follow", "f", "no-browser", "password", "help", "h", "full"]);
 
 interface ParsedArgs {
   positionals: string[];
@@ -163,6 +165,9 @@ ${chalk.bold("Auth")}
   lastlight logout                   Forget the saved instance + token
   lastlight status                   Show instance, token validity, server health
 
+${chalk.bold("Chat")}
+  lastlight chat [message]              Chat with the bot (REPL if no message)
+
 ${chalk.bold("Trigger")}
   lastlight <github-url|owner/repo#N>   Triage that issue (default — cheap)
   lastlight build <ref>                 Run the FULL build cycle (architect→PR)
@@ -175,7 +180,7 @@ ${chalk.bold("Debug")} (read the running instance instead of SSH)
   lastlight workflow list [--status s] [--workflow name] [--limit n]
   lastlight workflow log <id> [--follow]
   lastlight session list [--limit n]
-  lastlight session log <id> [--follow] [--since n]
+  lastlight session log <id> [--follow] [--since n] [--full]   (--full = raw, unformatted dump)
   lastlight logs search "<text>" [--scope errors|messages|all] [--limit n]
   lastlight server list                          (the lastlight-* containers)
   lastlight server logs [service|container] [--tail n] [--since 10m] [--follow]
@@ -420,22 +425,12 @@ async function followSession(id: string): Promise<void> {
   const t = target();
   await followSSE(`${t.url}/admin/api/sessions/${id}/stream`, t.token, (data) => {
     try {
-      const msg = JSON.parse(data);
-      printMessage(msg);
+      const lines = renderMessage(JSON.parse(data));
+      if (lines.length) console.log(lines.join("\n"));
     } catch {
       console.log(data);
     }
   });
-}
-
-function printMessage(msg: any): void {
-  const role = msg.role ?? msg.type ?? "?";
-  const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "");
-  const tag = role === "assistant" ? chalk.cyan("assistant")
-    : role === "user" ? chalk.green("user")
-    : role === "tool" ? chalk.magenta(`tool${msg.tool_name ? ":" + msg.tool_name : ""}`)
-    : chalk.dim(role);
-  console.log(`${tag} ${content.slice(0, 2000)}`);
 }
 
 /** Interactive picker over the recent sessions (used when `log` has no id). */
@@ -485,7 +480,12 @@ async function cmdSession(): Promise<void> {
     const since = num(flags.since, -1);
     const data = await apiGet(`/admin/api/sessions/${id}/messages?since=${since}`);
     if (JSON_OUT && !flags.follow) return out("", data);
-    if (!JSON_OUT) for (const m of data.messages as any[]) printMessage(m);
+    if (!JSON_OUT) {
+      const lines = flags.full === true
+        ? renderRaw(data.messages as any[])
+        : renderTimeline(data.messages as any[]);
+      if (lines.length) console.log(lines.join("\n"));
+    }
     if (flags.follow) {
       console.log(chalk.dim(`\nFollowing ${id} … (Ctrl-C to stop)\n`));
       await followSession(id);
@@ -686,6 +686,47 @@ async function cmdServer(): Promise<void> {
   die("Usage: lastlight server list|logs [service|container] [--tail n] [--since dur] [--follow]");
 }
 
+// ── chat ──────────────────────────────────────────────────────────────────────
+
+async function sendChat(message: string, thread: string, user: string): Promise<void> {
+  const data = await apiPost(`/api/chat`, { message, thread, user });
+  if (JSON_OUT) return out("", data);
+  console.log(`${chalk.cyan("assistant")} ${data.text ?? ""}`);
+  if (data.turns || data.costUsd) {
+    const cost = data.costUsd ? `, $${Number(data.costUsd).toFixed(4)}` : "";
+    console.log(chalk.dim(`  (${data.turns ?? "?"} turns${cost})`));
+  }
+}
+
+async function cmdChat(): Promise<void> {
+  const user = typeof flags.user === "string" ? flags.user : "cli";
+  const thread = crypto.randomUUID();
+  const oneShot = positionals.slice(1).join(" ").trim();
+  if (oneShot) {
+    await sendChat(oneShot, thread, user);
+    return;
+  }
+  // Interactive REPL — one stable thread for the whole session.
+  const t = target();
+  console.log(chalk.dim(`Chatting with ${t.url}  ·  thread ${thread.slice(0, 8)}  ·  type 'exit' to quit`));
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string) => new Promise<string>((res) => rl.question(q, res));
+  try {
+    for (;;) {
+      const line = (await ask(chalk.green("› "))).trim();
+      if (!line) continue;
+      if (line === "exit" || line === "quit") break;
+      try {
+        await sendChat(line, thread, user);
+      } catch (e) {
+        console.error(chalk.red((e as Error).message));
+      }
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 // ── trigger commands (unchanged contract) ─────────────────────────────────────
 
 function parseGitHubRef(input: string) {
@@ -785,6 +826,7 @@ async function main() {
     case "approvals": return cmdApprovals();
     case "server": return cmdServer();
     case "stats": return cmdStats();
+    case "chat": return cmdChat();
     case "build": return cmdBuild();
     case "triage":
     case "review":

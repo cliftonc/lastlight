@@ -710,6 +710,46 @@ async function main() {
     return c.json({ accepted: true, owner, repo, issueNumber }, 202);
   });
 
+  // One chat turn over HTTP — the same in-process chat skill Slack uses, so
+  // `lastlight chat` works without a messaging platform. Synchronous: runs the
+  // turn and returns the assistant reply. A stable `thread` id resumes the
+  // conversation across turns (mapped to a cli-platform messaging session).
+  githubConnector?.honoApp.post("/api/chat", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const message = typeof body.message === "string" ? body.message : "";
+    if (!message.trim()) return c.json({ error: "Missing 'message'" }, 400);
+    const user = typeof body.user === "string" && body.user ? body.user : "cli";
+    const threadId = typeof body.thread === "string" && body.thread ? body.thread : null;
+
+    const session = sessionManager.getOrCreateSession({
+      platform: "cli",
+      channelId: user,
+      threadId,
+      userId: user,
+    });
+
+    const result = await handleChatMessage(
+      message,
+      session.id,
+      user,
+      sessionManager,
+      { chatRunner, sessionsHomeDir: config.sessionsDir },
+      { model: resolveModel(config.models, "chat"), maxTurns: 10 },
+    );
+
+    return c.json({
+      text: result.text,
+      thread: threadId ?? session.id,
+      sessionId: session.id,
+      agentSessionId: result.agentSessionId,
+      success: result.success,
+      turns: result.turns,
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+      error: result.error,
+    });
+  });
+
   // Handle events from any connector
   // Handle events from any connector. The dispatcher turns each EventEnvelope
   // into a workflow dispatch (or in-process handler run) through one testable
