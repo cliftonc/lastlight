@@ -582,6 +582,69 @@ export function createAdminRoutes(
     return c.json({ executions });
   });
 
+  // Free-text log search — the backbone of remote debugging via the CLI
+  // (`lastlight logs search`). Two scopes:
+  //   - errors   (default): substring match over the executions ledger
+  //                         (error / skill / repo) — fast, indexed-ish.
+  //   - messages: grep the most-recent session transcripts for matching
+  //               conversation content, returning a snippet. Bounded by
+  //               `maxSessions` so a deep history can't make this unbounded.
+  //   - all:      both, errors first.
+  app.get("/log-search", async (c) => {
+    const q = (c.req.query("q") ?? "").trim();
+    if (!q) return c.json({ error: "missing 'q' query parameter" }, 400);
+    const scope = (c.req.query("scope") ?? "errors") as "errors" | "messages" | "all";
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+
+    const results: Array<Record<string, unknown>> = [];
+
+    if (scope === "errors" || scope === "all") {
+      for (const r of db.executions.searchErrors(q, limit)) {
+        results.push({
+          source: "error",
+          executionId: r.id,
+          sessionId: r.sessionId,
+          workflowRunId: r.workflowRunId,
+          skill: r.skill,
+          repo: r.repo,
+          startedAt: r.startedAt,
+          success: r.success,
+          snippet: r.error ?? r.skill,
+        });
+      }
+    }
+
+    if (scope === "messages" || scope === "all") {
+      const needle = q.toLowerCase();
+      const maxSessions = 200; // newest-first cap on transcripts scanned
+      const ids = sessions.listSessionIds().slice(0, maxSessions);
+      outer: for (const id of ids) {
+        let msgs: Array<{ index: number; msg: Record<string, unknown> }>;
+        try {
+          msgs = (await sessions.read(id)) as Array<{ index: number; msg: Record<string, unknown> }>;
+        } catch {
+          continue;
+        }
+        for (const { index, msg } of msgs) {
+          const text = JSON.stringify(msg.content ?? "");
+          const at = text.toLowerCase().indexOf(needle);
+          if (at === -1) continue;
+          const start = Math.max(0, at - 60);
+          results.push({
+            source: "message",
+            sessionId: id,
+            messageIndex: index,
+            role: msg.role,
+            snippet: text.slice(start, at + needle.length + 120),
+          });
+          if (results.length >= limit) break outer;
+        }
+      }
+    }
+
+    return c.json({ results: results.slice(0, limit) });
+  });
+
   // Workflow runs — paginated, optional filters by date, workflow name, and
   // status. Returns `total` so the dashboard can drive a "load more" pager.
   // `status=active` is shorthand for ('running','paused') — used by the

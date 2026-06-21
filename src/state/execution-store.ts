@@ -472,6 +472,60 @@ export class ExecutionStore {
   }
 
   /**
+   * Free-text search across the `executions` ledger — matches `error`, `skill`,
+   * or `repo` against a substring (case-insensitive via SQLite's LIKE). Used by
+   * the `/admin/api/log-search` endpoint and the `lastlight logs search` CLI to
+   * find failing/relevant phases without SSHing to the box. Parameterized; the
+   * pattern is escaped so user input can't smuggle LIKE wildcards.
+   */
+  searchErrors(query: string, limit = 50): Array<{
+    id: string;
+    skill: string;
+    repo?: string;
+    error?: string;
+    success?: boolean;
+    startedAt: string;
+    finishedAt?: string;
+    sessionId?: string;
+    workflowRunId?: string;
+    triggerId: string;
+  }> {
+    const escaped = query.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    const pattern = `%${escaped}%`;
+    const rows = this.db.prepare(`
+      SELECT
+        id,
+        skill,
+        repo,
+        error,
+        success,
+        started_at      AS startedAt,
+        finished_at     AS finishedAt,
+        session_id      AS sessionId,
+        workflow_run_id AS workflowRunId,
+        trigger_id      AS triggerId
+      FROM executions
+      WHERE error LIKE ? ESCAPE '\\'
+         OR skill LIKE ? ESCAPE '\\'
+         OR repo  LIKE ? ESCAPE '\\'
+      ORDER BY started_at DESC
+      LIMIT ?
+    `).all(pattern, pattern, pattern, limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r.id as string,
+      skill: r.skill as string,
+      repo: (r.repo as string | null) ?? undefined,
+      error: (r.error as string | null) ?? undefined,
+      success: r.success === null || r.success === undefined ? undefined : Boolean(r.success),
+      startedAt: r.startedAt as string,
+      finishedAt: (r.finishedAt as string | null) ?? undefined,
+      sessionId: (r.sessionId as string | null) ?? undefined,
+      workflowRunId: (r.workflowRunId as string | null) ?? undefined,
+      triggerId: r.triggerId as string,
+    }));
+  }
+
+  /**
    * Get every execution recorded for a workflow run, with camelCase fields
    * ready for the dashboard. Ordered by start time ascending so phases
    * display in the order they ran. Scopes to a specific `workflow_run_id`

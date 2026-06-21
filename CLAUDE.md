@@ -345,13 +345,29 @@ npm start                # compiled JS
 npx vitest run           # full server suite
 cd dashboard && npx tsc -b  # dashboard typecheck
 
-# CLI — thin client that POSTs to a running server
-npm run cli -- <github-url>            # default: triage the issue (cheap)
-npm run cli -- owner/repo#N            # shorthand
-npm run cli -- build owner/repo#N      # explicit full build cycle
-npm run cli -- triage owner/repo       # repo-wide scan
-npm run cli -- review owner/repo       # repo-wide PR scan
-npm run cli -- health owner/repo       # weekly health report
+# CLI — `lastlight` (bin → dist/cli.js; `npm run cli -- <args>` in dev)
+# A thin client for a running instance: it POSTs triggers and reads the
+# instance's admin API over HTTP. Target + token resolve from --url/--token →
+# LASTLIGHT_URL/LASTLIGHT_TOKEN env → ~/.lastlight/config.json (written by
+# `login`) → http://localhost:8644.
+lastlight login [url]                  # browser-handoff auth, save token (~/.lastlight)
+lastlight login <url> --password       # headless fallback (POST /admin/api/login)
+lastlight logout                       # clear ~/.lastlight/config.json
+lastlight status                       # instance URL, server health, token validity
+# Triggers (POST /api/run, /api/build):
+lastlight <github-url>                 # default: triage the issue (cheap)
+lastlight owner/repo#N                 # shorthand
+lastlight build owner/repo#N           # explicit full build cycle
+lastlight triage|review owner/repo[#N] # repo-wide scan or single issue/PR
+lastlight health|security owner/repo   # repo-level report
+# Debug (read the admin API instead of SSH; all accept --json):
+lastlight workflow list [--status s] [--workflow name] [--limit n]
+lastlight workflow log <id> [--follow]
+lastlight session list|log <id> [--follow]
+lastlight logs search "<text>" [--scope errors|messages|all]
+lastlight approvals list|approve <id>|reject <id> [--reason "..."]
+lastlight stats [--daily n | --hourly n]
+lastlight setup                        # first-run setup wizard
 
 # Local dev with Docker sandbox isolation
 ./scripts/dev-local.sh                 # builds opencode.json + secrets

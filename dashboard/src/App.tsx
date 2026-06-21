@@ -5,6 +5,7 @@ import { SessionList } from "./components/SessionList";
 import { SessionFilters } from "./components/SessionFilters";
 import { MessageFeed, type MessageOrder } from "./components/MessageFeed";
 import { Login } from "./components/Login";
+import { CliAuthorize } from "./components/CliAuthorize";
 import { useSessionStream } from "./hooks/useSessionStream";
 import { WorkflowList } from "./components/WorkflowList";
 import { WorkflowDefinitions } from "./components/WorkflowDefinitions";
@@ -361,11 +362,43 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+// ── CLI login handoff ────────────────────────────────────────────────────────
+// `lastlight login` opens this dashboard with a loopback `cli_callback` so we
+// can hand a token back to the local CLI once the user authenticates. We only
+// ever redirect to loopback hosts (127.0.0.1 / localhost / [::1]) so the
+// dashboard can't be abused as an open token-exfiltration redirector.
+const CLI_LOGIN_KEY = "cli_login";
+interface CliLogin { callback: string; state: string; }
+
+function isLoopbackCallback(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return false;
+    const h = u.hostname;
+    return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+function readCliLogin(): CliLogin | null {
+  try {
+    const raw = sessionStorage.getItem(CLI_LOGIN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CliLogin;
+    if (parsed.callback && parsed.state && isLoopbackCallback(parsed.callback)) return parsed;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [slackOAuth, setSlackOAuth] = useState(false);
   const [githubOAuth, setGithubOAuth] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [cliLogin, setCliLogin] = useState<CliLogin | null>(() => readCliLogin());
 
   useEffect(() => {
     let cancelled = false;
@@ -377,6 +410,20 @@ export default function App() {
         const params = new URLSearchParams(window.location.search);
         const urlToken = params.get("token");
         const urlError = params.get("error");
+        // CLI login handoff: stash a loopback callback so it survives the
+        // OAuth round-trip (which returns to /admin/?token=…, dropping query
+        // params we don't persist). Rejected unless the callback is loopback.
+        const cliCallback = params.get("cli_callback");
+        const cliState = params.get("cli_state");
+        let strippedCli = false;
+        if (cliCallback && cliState && isLoopbackCallback(cliCallback)) {
+          const entry: CliLogin = { callback: cliCallback, state: cliState };
+          sessionStorage.setItem(CLI_LOGIN_KEY, JSON.stringify(entry));
+          if (!cancelled) setCliLogin(entry);
+          params.delete("cli_callback");
+          params.delete("cli_state");
+          strippedCli = true;
+        }
         if (urlToken) {
           auth.setToken(urlToken);
           params.delete("token");
@@ -385,7 +432,7 @@ export default function App() {
           setLoginError(urlError);
           params.delete("error");
         }
-        if (urlToken || urlError) {
+        if (urlToken || urlError || strippedCli) {
           const newSearch = params.toString();
           const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : "") + window.location.hash;
           window.history.replaceState(null, "", newUrl);
@@ -444,6 +491,18 @@ export default function App() {
         slackOAuth={slackOAuth}
         githubOAuth={githubOAuth}
         initialErrorCode={loginError}
+      />
+    );
+  }
+  if (cliLogin) {
+    return (
+      <CliAuthorize
+        callback={cliLogin.callback}
+        state={cliLogin.state}
+        onCancel={() => {
+          sessionStorage.removeItem(CLI_LOGIN_KEY);
+          setCliLogin(null);
+        }}
       />
     );
   }
