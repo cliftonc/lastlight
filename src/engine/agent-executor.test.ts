@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, lstatSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, lstatSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { RunResultAccumulator, stageSkillBundle } from "./agent-executor.js";
+import { RunResultAccumulator, stageSkillBundle, excludeFromGit } from "./agent-executor.js";
 
 /**
  * A pi assistant `message_end` event carrying per-message usage. Mirrors the
@@ -358,6 +358,52 @@ describe("stageSkillBundle", () => {
       expect(staged).toHaveLength(1);
       expect(lstatSync(staged![0]).isSymbolicLink()).toBe(true);
       expect(existsSync(join(staged![0], "SKILL.md"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("excludeFromGit", () => {
+  it("adds the entry to .git/info/exclude (idempotently)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gitexclude-"));
+    try {
+      const repo = join(tmp, "repo");
+      mkdirSync(join(repo, ".git", "info"), { recursive: true });
+
+      excludeFromGit(repo, ".lastlight-skills");
+      excludeFromGit(repo, ".lastlight-skills"); // second call must not duplicate
+
+      const body = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+      expect(body.match(/\/\.lastlight-skills\//g)).toHaveLength(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves existing exclude content", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gitexclude-"));
+    try {
+      const repo = join(tmp, "repo");
+      mkdirSync(join(repo, ".git", "info"), { recursive: true });
+      writeFileSync(join(repo, ".git", "info", "exclude"), "# git ls-files --others\n*.tmp\n");
+
+      excludeFromGit(repo, ".lastlight-skills");
+
+      const body = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+      expect(body).toContain("*.tmp");
+      expect(body).toContain("/.lastlight-skills/");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("is a no-op when the dir is not a git checkout (workspace root)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "gitexclude-"));
+    try {
+      // No .git here — must not throw and must not create anything.
+      expect(() => excludeFromGit(tmp, ".lastlight-skills")).not.toThrow();
+      expect(existsSync(join(tmp, ".git"))).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

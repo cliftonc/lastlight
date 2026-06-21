@@ -105,11 +105,11 @@ string":
    - Else if `skills:`/`skill:` set — emit a short auto-generated
      nudge: `Use the **<primary>** skill … Other skills available: …` followed by the workflow context as `key: value` lines.
    - Otherwise — error.
-8. `executeAgent()` runs with cwd = the **workspace root** and stages the
-   resolved skill paths into a per-phase bundle at
-   `<workspaceRoot>/.lastlight-skills/<phase>/<name>/` (symlink in
-   gondolin/none, recursive copy in docker) — a sibling of any pre-cloned
-   `<repo>/` subdir, never in its git tree — then maps it to the agent via
+8. `executeAgent()` runs with cwd = the pre-cloned repo (workspace root if
+   not pre-cloned) and stages the resolved skill paths into a per-phase
+   bundle at `<workspaceRoot>/.lastlight-skills/<phase>/<name>/` (symlink in
+   gondolin/none, recursive copy in docker) — a sibling of the `<repo>/`
+   subdir, never in its git tree — then maps it to the agent via absolute
    `--skill` (docker) / `skillPaths` (in-process). It writes `AGENTS.md`,
    then invokes the [Sandbox](/spec/09-sandbox) with the rendered prompt.
    The agent's `read` tool pulls SKILL.md content on demand —

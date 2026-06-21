@@ -63,11 +63,12 @@ export interface ExecutorConfig {
   /**
    * Absolute host paths to skill directories (each containing SKILL.md
    * plus optional scripts/, references/, assets/). Staged into a per-phase
-   * bundle at `<workspaceRoot>/.lastlight-skills/<phaseName>/<basename>/`
-   * before the agent runs — gondolin/none via symlink, docker via copy —
-   * and passed to pi explicitly (`--skill` in docker, `skillPaths`
-   * in-process). The bundle is a sibling of any checked-out repo (never in
-   * its git tree) and keyed per phase so parallel phases stay isolated.
+   * bundle at `.lastlight-skills/<phaseName>/<basename>/` before the agent
+   * runs — gondolin/none via symlink, docker via copy — and passed to pi
+   * explicitly (`--skill` in docker, `skillPaths` in-process). cwd stays the
+   * repo; the bundle is a workspace-root sibling of the repo (never committed)
+   * on docker/none, and under the repo + local `.git/info/exclude` on gondolin
+   * (which mounts only cwd). Keyed per phase so parallel phases stay isolated.
    * Resolved by `phaseConfigFor` in the workflow runner from the phase's
    * `skill:`/`skills:` field.
    */

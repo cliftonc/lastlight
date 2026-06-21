@@ -105,12 +105,13 @@ Three kinds of phase the runner recognises:
     **per-phase bundle** at
     `<workspaceRoot>/.lastlight-skills/<phaseName>/<name>/` (symlink in
     gondolin/none, copy in docker) before the run, then maps the bundle
-    to the agent explicitly via pi's `--skill`/`skillPaths`. The bundle
-    lives at the **workspace root** — a sibling of any checked-out repo,
-    never inside its git tree (so the agent never sees or commits it) —
-    and is keyed per phase so two phases sharing a workspace (sequential
-    today, parallel via worktrees later) can't clobber each other's
-    catalogue. pi surfaces the mapped skills in the system prompt as an
+    to the agent explicitly via pi's `--skill`/`skillPaths` (absolute
+    paths, so cwd is irrelevant). The bundle lives at the **workspace
+    root** — a sibling of any checked-out repo, never inside its git tree
+    (so the agent never sees or commits it) — and is keyed per phase so
+    two phases sharing a workspace (sequential today, parallel via
+    worktrees later) can't clobber each other's catalogue. pi surfaces
+    the mapped skills in the system prompt as an
     XML `<available_skills>` catalogue; the agent reads each SKILL.md via
     its `read` tool on demand — pi.dev's progressive-disclosure model.
     Whole skill *directories* travel along, so any `scripts/` /
@@ -126,13 +127,17 @@ Three kinds of phase the runner recognises:
   - Phases with neither (`type: context`) get no skill bundle staged at
     all.
 
-  > **cwd convention.** Every phase runs with cwd = the **workspace
-  > root**, with any pre-cloned repo in a `<repo>/` subdirectory (and the
-  > skill bundle as its sibling). Repo-write prompts therefore `cd
-  > {{repo}}` as their first step; read-only prompts already reference the
-  > `{{repo}}/` subdir. This uniformity is what lets the skill bundle be a
-  > sibling of the repo on every backend — gondolin only mounts cwd, so
-  > the bundle must live under it but outside the repo.
+  > **cwd + skill-bundle placement.** When the harness pre-clones the
+  > repo (`prePopulateBranch`), the agent's cwd **is** the checkout, so
+  > commands run inside the repo with no `cd` preamble. The skill bundle
+  > stays a sibling at the workspace root, reached by an absolute
+  > `--skill`/`skillPaths` path — on docker the whole workspace is mounted
+  > so this resolves even with cwd inside the repo; on `none` the host FS
+  > is fully visible in-process. **gondolin** mounts *only* cwd, so a
+  > workspace-root sibling would be invisible — there the bundle is staged
+  > under the repo instead and added to the checkout's local
+  > `.git/info/exclude` (never committed). Non-pre-cloned workflows run
+  > with cwd = the workspace root and clone the repo into a subdir.
 - **loop-phase** — any phase with `loop:` set. Always executes as an
   agent phase internally, but repeated in `reviewer → fix → reviewer`
   pairs up to `max_cycles`. See loop iteration naming below.

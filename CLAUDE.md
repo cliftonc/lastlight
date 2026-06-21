@@ -165,12 +165,16 @@ skills/                 Skill directories — each contains SKILL.md
                         `--skill`/`skillPaths`. The bundle sits at the
                         workspace root — a sibling of any checked-out
                         repo, never in its git tree — and is keyed per
-                        phase so parallel phases stay isolated. pi
+                        phase so parallel phases stay isolated. The
+                        agent keeps cwd = the repo (no `cd` preamble);
+                        docker bind-mounts the whole workspace so the
+                        sibling bundle is reachable by an absolute
+                        `--skill` path. (gondolin mounts only cwd, so
+                        there the bundle is staged under the repo +
+                        local `.git/info/exclude` — never committed.) pi
                         surfaces the mapped skills as an XML system-prompt
                         catalogue and the agent reads each SKILL.md on
-                        demand via its `read` tool. (Agents run with cwd
-                        = the workspace root; repo-write prompts `cd
-                        {{repo}}` first.) Chat threads use the same skills
+                        demand via its `read` tool. Chat threads use the same skills
                         in-process via a `read_skill` tool —
                         catalogue built at boot from CHAT_SKILL_NAMES
                         in src/engine/chat-skills.ts.

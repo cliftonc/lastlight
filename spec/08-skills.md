@@ -180,13 +180,17 @@ Before each agent run, `stageSkillBundle` in
 then maps it to the agent explicitly via pi's `--skill` (docker) /
 `skillPaths` (in-process). Behaviour:
 
-- **cwd is the workspace root.** Every backend runs the agent with cwd =
-  the workspace root; any pre-cloned repo is a `<repo>/` **subdirectory**,
-  and the skill bundle is its **sibling** (`.lastlight-skills/`). Because
-  the bundle lives outside the repo, the agent never sees or commits it —
-  and because gondolin only mounts cwd, putting the bundle under cwd (not
-  inside the repo) is the only layout that's both repo-external and
-  VM-visible. Repo-write prompts `cd {{repo}}` as their first step.
+- **cwd is the repo; the bundle is an out-of-repo sibling.** When the
+  harness pre-clones the repo, the agent's cwd **is** the checkout — so its
+  commands run inside the repo with no `cd` preamble. The skill bundle is
+  staged at the workspace root (`.lastlight-skills/`), a **sibling** of the
+  `<repo>/` checkout, and mapped by an **absolute** `--skill`/`skillPaths`
+  path so cwd is irrelevant: docker bind-mounts the whole workspace (the
+  sibling resolves), and `none` sees the host FS directly. **gondolin**
+  mounts *only* cwd, so a workspace-root sibling would be invisible — there
+  the bundle is staged *under* the repo and added to the checkout's local
+  `.git/info/exclude` (`excludeFromGit`), so the agent still can't commit
+  it. Non-pre-cloned workflows run with cwd = the workspace root.
 - **Keyed per phase (`phaseKey` = sanitized phase name).** Only the
   phase's own `<phaseKey>` subtree is cleared, so a clean slate per phase
   never disturbs a sibling phase — concurrent phases sharing one workspace
@@ -200,14 +204,15 @@ then maps it to the agent explicitly via pi's `--skill` (docker) /
   `assets/` travel along.
 - **Two modes:**
   - `symlink` (gondolin / none) — `symlinkSync(hostDir, dest, "dir")`.
-    Zero-copy; pi resolves the skill files relative to cwd.
+    Zero-copy; pi reads the skill files host-side (`none`) or through the
+    cwd mount (`gondolin`, where the bundle sits under the repo).
   - `copy` (docker) — recursive `cpSync(hostDir, dest, { recursive: true, dereference: true })`.
     Symlinks pointing at harness host paths wouldn't resolve inside the
     container; copy piggybacks on the existing workspace bind-mount
     instead of adding new `-v` flags per skill.
 
 ```
-<workspaceRoot>/              ← agent's cwd (host workDir)
+<workspaceRoot>/              ← host workDir (bind-mounted whole on docker)
 ├── AGENTS.md                  ← persona + rules (see below)
 ├── .lastlight-skills/         ← sibling of the repo, never in its git tree
 │   └── <phase>/               ← e.g. reviewer, architect (per-phase bundle)
@@ -216,8 +221,8 @@ then maps it to the agent explicitly via pi's `--skill` (docker) /
 │       │   └── ...
 │       └── issue-triage/
 │           └── SKILL.md
-└── <repo>/                    ← pre-cloned target repo (a subdir; prompts cd in)
-    └── .git/
+└── <repo>/                    ← pre-cloned target repo = agent's cwd
+    └── .git/                  ← (gondolin: bundle lives here + info/exclude)
 ```
 
 ## Chat path
@@ -371,7 +376,7 @@ state belongs in `workflows/prompts/`.
 | Skill name validation + path resolution | `src/workflows/loader.ts` (`resolveSkillPaths`, `loadSkillRaw`) |
 | Phase config overlay (resolves `skill:`/`skills:` into `ExecutorConfig.skillPaths`) | `src/workflows/runner.ts` (`phaseConfigFor`) |
 | User prompt generation | `src/workflows/runner.ts` (`buildPhasePrompt`) |
-| Per-phase bundle staging (symlink/copy) | `src/engine/agent-executor.ts` (`stageSkillBundle`, `skillBundleKey`) |
+| Per-phase bundle staging (symlink/copy) | `src/engine/agent-executor.ts` (`stageSkillBundle`, `skillBundleKey`, `excludeFromGit`) |
 | Chat catalogue + `read_skill` tool | `src/engine/chat-skills.ts` |
 | Chat catalogue wiring | `src/index.ts` (ChatRunner boot) |
 | Skills | `skills/<name>/SKILL.md` |

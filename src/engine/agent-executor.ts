@@ -1,5 +1,5 @@
 import { resolve, basename, join, relative } from "path";
-import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { randomUUID } from "crypto";
 import type { run as agenticRunType, RunResult, ThinkingLevel } from "agentic-pi";
 import {
@@ -27,13 +27,16 @@ import { recordPiEvent } from "../telemetry/pi-events.js";
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 const DOCKER_WORKSPACE_DIR = "/home/agent/workspace";
-// Per-workspace root holding one skill bundle per phase. Deliberately NOT
-// named `.agents/skills` (pi's auto-discovery path): we map each phase's
-// bundle explicitly via --skill / skillPaths so two phases sharing a
-// workspace — sequential today, parallel via worktrees tomorrow — can never
-// clobber each other's catalogue. It lives at the workspace ROOT, a sibling
-// of any checked-out repo, so it never enters the repo's git tree and the
-// agent never sees or commits it.
+// Directory holding one skill bundle per phase. Deliberately NOT named
+// `.agents/skills` (pi's auto-discovery path): we map each phase's bundle
+// explicitly via --skill / skillPaths so two phases sharing a workspace —
+// sequential today, parallel via worktrees tomorrow — can never clobber each
+// other's catalogue. The agent keeps cwd = the repo (no `cd` preamble on
+// every command); the bundle is staged at the workspace ROOT — a sibling of
+// the repo, never in its git tree — and reached by an absolute path. On
+// docker/none that root is genuinely outside the repo. gondolin mounts only
+// cwd, so there the bundle is staged under the repo and added to the
+// checkout's local `.git/info/exclude` (never committed; see `excludeFromGit`).
 const SKILL_BUNDLE_ROOT = ".lastlight-skills";
 const THINKING_LEVELS: ReadonlySet<string> = new Set([
   "off", "minimal", "low", "medium", "high", "xhigh",
@@ -53,8 +56,7 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set([
  *
  * `mode` controls how each skill lands:
  *   - "symlink": one symlink per skill → host source. gondolin/none, where pi
- *     resolves skill files relative to cwd (the workspace root) and the bundle
- *     rides the cwd mount. Zero-copy.
+ *     reads skill files host-side / through the cwd mount. Zero-copy.
  *   - "copy": recursive copy. docker, where the agent's tools run inside the
  *     container and host symlink targets wouldn't resolve; the copy lands
  *     under the bind-mounted workspace.
@@ -95,6 +97,28 @@ export function stageSkillBundle(
 function skillBundleKey(config: ExecutorConfig): string {
   const raw = config.telemetry?.phaseName || config.telemetry?.workflowName || "phase";
   return raw.replace(/[^A-Za-z0-9_-]/g, "_") || "phase";
+}
+
+/**
+ * Add `entry` to a checkout's local `.git/info/exclude` (idempotent) so the
+ * agent's own `git add`/`commit` can never pick it up. This file lives inside
+ * `.git/` — it is never tracked, committed, or pushed, and it leaves the repo's
+ * real `.gitignore` untouched; the exclusion applies only to this ephemeral
+ * sandbox checkout. Used for the gondolin backend, where the skill bundle must
+ * be staged under cwd (the only mounted dir) rather than as an out-of-repo
+ * sibling. No-op when `repoDir` isn't a git checkout (e.g. the workspace root).
+ */
+export function excludeFromGit(repoDir: string, entry: string): void {
+  const gitDir = join(repoDir, ".git");
+  if (!existsSync(gitDir)) return; // not a checkout — nothing to exclude
+  const infoDir = join(gitDir, "info");
+  const excludeFile = join(infoDir, "exclude");
+  const line = `/${entry}/`;
+  let current = "";
+  try { current = readFileSync(excludeFile, "utf8"); } catch { /* may not exist yet */ }
+  if (current.split(/\r?\n/).includes(line)) return;
+  mkdirSync(infoDir, { recursive: true });
+  appendFileSync(excludeFile, `${current.length && !current.endsWith("\n") ? "\n" : ""}${line}\n`);
 }
 
 /**
@@ -298,20 +322,25 @@ async function executeInProcess(
   const thinking = coerceThinking(config.variant);
   const profile = ctx.access ? AGENTIC_PROFILE_FOR[ctx.access.profile] : undefined;
   const sessionsDir = resolveSessionsDir(config);
-  // cwd is the workspace ROOT — the parent of any pre-cloned repo subdir
-  // (`<workDir>/<repo>/`). Keeping the repo a child of cwd lets the per-phase
-  // skill bundle sit as a sibling (under cwd, so gondolin mounts it) without
-  // ever entering the repo's git tree. Repo-write prompts `cd {{repo}}` as
-  // their first step. pi-coding-agent's AGENTS.md discovery finds the
-  // workspace-root `AGENTS.md` directly at cwd.
-  const agentCwd = ctx.workDir;
+  // When the harness pre-cloned the target repo, cwd is the checkout
+  // (`<workDir>/<repo>/`) so the agent's commands run inside the repo with no
+  // `cd` preamble; otherwise cwd is the workspace root and the agent clones in.
+  const agentCwd = ctx.access?.prePopulateBranch
+    ? join(ctx.workDir, ctx.access.repo)
+    : ctx.workDir;
 
-  // Stage this phase's skills into its own bundle dir and point pi at the
-  // staged dirs explicitly via `skillPaths` below. Symlinks suffice — pi
-  // resolves them relative to cwd in the harness process / VM mount.
+  // Stage this phase's skills into its own bundle and point pi at the staged
+  // dirs explicitly via `skillPaths` below. The bundle lives at the workspace
+  // root — a sibling of the repo, outside its git tree — for `none` (the host
+  // FS is fully visible in-process). gondolin mounts only cwd, so its bundle
+  // is staged under the repo and added to the checkout's local
+  // `.git/info/exclude` so the agent can't commit it.
+  const gondolin = ctx.backend === "gondolin";
+  const skillRoot = gondolin ? agentCwd : ctx.workDir;
   let stagedSkillDirs: string[] | undefined;
   try {
-    stagedSkillDirs = stageSkillBundle(agentCwd, skillBundleKey(config), config.skillPaths, "symlink");
+    stagedSkillDirs = stageSkillBundle(skillRoot, skillBundleKey(config), config.skillPaths, "symlink");
+    if (stagedSkillDirs && gondolin) excludeFromGit(agentCwd, SKILL_BUNDLE_ROOT);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[executor] Could not stage skills: ${msg}`);
@@ -522,17 +551,19 @@ async function executeDocker(
   const thinking = coerceThinking(config.variant);
   const profile = ctx.access ? AGENTIC_PROFILE_FOR[ctx.access.profile] : undefined;
   const sessionsDir = resolveSessionsDir(config);
-  // cwd = workspace root (parent of any pre-cloned `<workspace>/<repo>/`
-  // subdir). See the in-process path for the rationale; repo-write prompts
-  // `cd {{repo}}` as their first step.
-  const agentCwd = DOCKER_WORKSPACE_DIR;
+  // When the harness pre-cloned the repo, cwd is the checkout
+  // (`<workspace>/<repo>/`) so the agent runs inside the repo with no `cd`
+  // preamble; otherwise it's the workspace root.
+  const agentCwd = ctx.prePopulate
+    ? `${DOCKER_WORKSPACE_DIR}/${ctx.prePopulate.repo}`
+    : DOCKER_WORKSPACE_DIR;
 
-  // Stage this phase's skills into its own bundle under the workspace root.
-  // The container's bind-mount of `<sbx.workDir>` → `/home/agent/workspace`
-  // is already live, so host writes appear in the container. Copy (not
-  // symlink) because the agent's tools run inside the container and host
-  // symlink targets don't resolve there. Map the host dests to their
-  // in-container paths for `--skill` (passed to runAgent below).
+  // Stage this phase's skills into its own bundle at the workspace ROOT — a
+  // sibling of any repo subdir, never inside its git tree. docker bind-mounts
+  // the WHOLE workspace, so the agent reaches the bundle by an absolute
+  // `--skill` path even though cwd is the repo. Copy (not symlink) because the
+  // agent's tools run inside the container and host symlink targets don't
+  // resolve there. Map the host dests to their in-container paths for `--skill`.
   let skillDirsInContainer: string[] = [];
   try {
     const staged = stageSkillBundle(sbx.workDir, skillBundleKey(config), config.skillPaths, "copy");

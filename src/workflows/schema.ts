@@ -110,13 +110,15 @@ const PhaseDefinitionSchema = z
      * agent to read on demand via pi's progressive-disclosure model.
      *
      * Each named skill is staged into a per-phase bundle at
-     * `<workspaceRoot>/.lastlight-skills/<phaseName>/<name>/` before the
-     * agent runs (symlink in gondolin/none, copy in docker) and mapped to
-     * the agent explicitly via pi's `--skill`/`skillPaths`. The bundle lives
-     * at the workspace root — a sibling of any checked-out repo, never inside
-     * its git tree — and is keyed per phase so concurrent phases can't clobber
-     * each other. Phases with no `skills:`/`skill:` field get no bundle —
-     * `prompt:`-only phases are unaffected.
+     * `.lastlight-skills/<phaseName>/<name>/` before the agent runs (symlink
+     * in gondolin/none, copy in docker) and mapped to the agent explicitly via
+     * pi's `--skill`/`skillPaths` (absolute paths). cwd stays the repo; the
+     * bundle is staged at the workspace root — a sibling of the repo, outside
+     * its git tree — for docker/none (gondolin, which mounts only cwd, stages
+     * it under the repo + local `.git/info/exclude` so it's never committed).
+     * Keyed per phase so concurrent phases can't clobber each other. Phases
+     * with no `skills:`/`skill:` field get no bundle — `prompt:`-only phases
+     * are unaffected.
      *
      * May coexist with `prompt`: when both are set, the prompt template
      * is the user prompt and `skills:` just stages the catalogue. The
