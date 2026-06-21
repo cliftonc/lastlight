@@ -122,7 +122,7 @@ export async function dispatch(
   if (deps.db.executions.isRunning(handler, triggerId)) {
     console.log(`[event] Skipping: ${handler} already running for ${triggerId}`);
     if (envelope.type === "message") {
-      await envelope.reply(`That task is already running. Use /status to check progress.`);
+      await envelope.reply(`That task is already running. Say "status" to check progress.`);
     }
     return { kind: "skipped", reason: `${handler} already running for ${triggerId}` };
   }

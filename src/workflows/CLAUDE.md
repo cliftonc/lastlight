@@ -252,7 +252,7 @@ The user then resolves the gate via one of:
 
 - **GitHub comment**: `@last-light approve` / `@last-light reject <reason>`.
   Router classifies it and dispatches the `approval-response` skill.
-- **Slack slash**: `/approve [workflowRunId]`, `/reject [id] [reason]`.
+- **Slack message**: `approve` / `reject <reason>` (classified by the router and dispatched to the `approval-response` handler).
 - **Dashboard**: approve/reject button on the workflow detail page.
 
 All three paths funnel into the same `resumeWorkflowRun(run, sender)`

@@ -1,3 +1,3 @@
-current_phase: architect
+current_phase: executor
 issue: 119
 branch: lastlight/119-slack-commands

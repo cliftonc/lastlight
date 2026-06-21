@@ -91,3 +91,5 @@ bin/
 checkpoints/
 whatsapp/
 solo.yml
+
+.npm-cache/

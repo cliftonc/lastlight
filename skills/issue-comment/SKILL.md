@@ -1,6 +1,6 @@
 ---
 name: issue-comment
-description: Handle a non-build maintainer comment on an issue or PR — close, reopen, label, dedupe, answer a brief question, or triage. Action-only; redirect anything that needs code changes to /build.
+description: Handle a non-build maintainer comment on an issue or PR — close, reopen, label, dedupe, answer a brief question, or triage. Action-only; redirect anything that needs code changes to @last-light build.
 version: 2.0.0
 tags: [github, issues, comments]
 ---
