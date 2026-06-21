@@ -106,26 +106,45 @@ npm run dev:dashboard</code></pre>
 		</div>
 	</div>
 
-	<h2>6. Trigger work via the CLI</h2>
+	<h2>6. Trigger and debug via the CLI</h2>
 
-	<p>The CLI is a thin HTTP client — it POSTs to the running server. Open a second terminal:</p>
+	<p>
+		The <code>lastlight</code> CLI is a thin HTTP client — it POSTs triggers and reads
+		the instance's admin API. In dev use <code>npm run cli -- &lt;args&gt;</code> (or
+		<code>npx tsx src/cli.ts &lt;args&gt;</code>); installed globally it's just
+		<code>lastlight</code>. Open a second terminal:
+	</p>
 
-	<pre><code># Cheap defaults — single agent invocation
-npm run cli -- &lt;github-url&gt;                                # default: triage the issue
-npm run cli -- owner/repo#N                                # shorthand: triage the issue
-npx tsx src/cli.ts owner/repo#42                          # triage one issue
-npx tsx src/cli.ts https://github.com/owner/repo/pull/99  # review one PR
-npx tsx src/cli.ts triage owner/repo                       # scan repo for new issues
-npx tsx src/cli.ts review owner/repo                       # scan repo for PRs to review
-npx tsx src/cli.ts health owner/repo                       # weekly-style health report
+	<pre><code># Authenticate once — saves the instance URL + token to ~/.lastlight
+lastlight login http://localhost:8644          # browser handoff (password / Slack / GitHub)
+lastlight login http://localhost:8644 --password   # headless fallback
+lastlight status                               # instance, server health, token validity
+
+# Cheap defaults — single agent invocation
+lastlight &lt;github-url&gt;                          # default: triage the issue
+lastlight owner/repo#N                          # shorthand: triage the issue
+lastlight https://github.com/owner/repo/pull/99 # review one PR
+lastlight triage owner/repo                     # scan repo for new issues
+lastlight review owner/repo                     # scan repo for PRs to review
+lastlight health owner/repo                     # weekly-style health report
 
 # Expensive, opt-in — full Architect → Executor → Reviewer → PR cycle
-npx tsx src/cli.ts build owner/repo#42</code></pre>
+lastlight build owner/repo#42
+
+# Debug a running instance instead of SSH (all accept --json)
+lastlight workflow list --status failed         # recent failed runs
+lastlight workflow log &lt;run-id&gt; --follow         # phases + live tail
+lastlight session list                          # recent sandbox sessions
+lastlight session log &lt;session-id&gt; --follow     # live transcript (SSE)
+lastlight logs search "ECONNREFUSED"            # search errors / transcripts
+lastlight approvals list                        # pending approval gates
+lastlight stats --daily 14                      # cost / token rollups</code></pre>
 
 	<p>
 		The default action for a single-issue or single-PR shorthand is the cheap one
 		(triage / review). Build cycles are always opt-in via the explicit <code>build</code>
-		subcommand.
+		subcommand. The debug commands read the same data the dashboard shows, so you can
+		investigate a remote instance from your terminal without SSHing in.
 	</p>
 
 	<h2>7. Open the dashboard</h2>
