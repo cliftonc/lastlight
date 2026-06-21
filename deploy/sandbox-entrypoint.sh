@@ -23,13 +23,18 @@ chown agent:agent "$AGENT_HOME/.config"
 
 # ── Shared package-manager cache (issue #107) ──
 # /cache is a Docker named volume shared across every sandbox so npm / pnpm /
-# yarn reuse already-downloaded tarballs. A freshly-created volume is root-owned;
-# chown the per-PM subdirs (non-recursive — existing children are already
-# agent-owned from prior runs) so the agent user can write to them.
+# yarn reuse already-downloaded tarballs. A freshly-created volume is root-owned,
+# and a cache seeded by an older image (when `agent` had a different UID) leaves
+# children owned by the wrong UID — which blocks npm/pnpm/yarn writes (e.g.
+# /cache/npm/_logs). Self-heal: if the subdir OR any immediate child isn't
+# agent-owned, chown -R it. The recursive pass runs only when something is
+# actually wrong, so a warm, correctly-owned cache stays cheap.
 if [ -d /cache ]; then
   for sub in npm pnpm yarn; do
     mkdir -p "/cache/$sub"
-    chown agent:agent "/cache/$sub" 2>/dev/null || true
+    if [ -n "$(find "/cache/$sub" -maxdepth 1 ! -user agent -print -quit 2>/dev/null)" ]; then
+      chown -R agent:agent "/cache/$sub" 2>/dev/null || true
+    fi
   done
 fi
 
