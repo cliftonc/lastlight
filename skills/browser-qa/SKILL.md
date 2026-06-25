@@ -184,8 +184,10 @@ row (e.g. a FAIL).
 <one or two lines: what was driven, and anything not tested and why>
 ```
 
-Reference screenshots **inline** as Markdown images when the prompt gives you a
-public artifact base URL (`![caption](<base>/<name>.png)`), so they render in
-the comment; otherwise reference them by filename. Every step in the flow must
+Reference screenshots **inline** as raw Markdown images when the prompt gives
+you a public artifact base URL — write `![caption](<base>/<name>.png)` directly
+in the report body (or table cell), **never** wrapped in backticks or a code
+fence (inside a code span it renders as literal text, not an image). Otherwise
+reference them by filename. Every step in the flow must
 have a row and a result. Never report a flow as "passed" with steps you didn't
 actually run — list them as untested instead.

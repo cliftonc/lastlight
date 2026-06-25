@@ -75,10 +75,14 @@ the key assertion/text/console results), and a one-sentence conclusion. No
 per-step narration, no code analysis, no long Coverage prose; a short
 "what was / wasn't exercised" is enough.
 
-**Embed each screenshot inline** so it renders in the comment:
-{{#if artifactBaseUrl}}every PNG you saved to `{{issueDir}}/<name>.png` is
-served publicly at `{{artifactBaseUrl}}/<name>.png` — reference it as
-`![<short caption>]({{artifactBaseUrl}}/<name>.png)` under Evidence.{{/if}}{{#if !artifactBaseUrl}}no
+**Embed each screenshot inline** so it renders in the comment.
+{{#if artifactBaseUrl}}Every PNG you saved to `<name>.png` is served publicly at
+`{{artifactBaseUrl}}/<name>.png`. Write a **raw Markdown image** for each one
+under Evidence — `!` then `[caption]` then the URL in parentheses — on its own
+line. Do **NOT** wrap it in backticks or a code fence; inside a code span it
+shows as literal text instead of rendering. For example, a screenshot saved as
+`home.png` becomes a line reading: an exclamation mark, `[Home]`, then
+`({{artifactBaseUrl}}/home.png)` with no spaces and no backticks.{{/if}}{{#if !artifactBaseUrl}}No
 public URL is configured, so reference each screenshot by filename (e.g.
 `after-login.png`) and note it's in the run's Artifacts view.{{/if}}
 

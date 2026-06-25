@@ -77,12 +77,16 @@ per step, terse Evidence cell), the inline screenshots, any issues found, and a
 short "what was / wasn't exercised". No per-step narration or code analysis.
 
 **Embed each step's screenshot inline** in its Evidence cell so it renders in
-the comment:
-{{#if artifactBaseUrl}}every PNG you saved to `{{issueDir}}/<name>.png` is
-served publicly at `{{artifactBaseUrl}}/<name>.png` — reference it as
-`![<step caption>]({{artifactBaseUrl}}/<name>.png)`.{{/if}}{{#if !artifactBaseUrl}}no
-public URL is configured, so reference each screenshot by filename (e.g.
-`step-2-cart.png`) and note it's in the run's Artifacts view.{{/if}}
+the comment.
+{{#if artifactBaseUrl}}Every PNG you saved to `<name>.png` is served publicly at
+`{{artifactBaseUrl}}/<name>.png`. Put a **raw Markdown image** in the Evidence
+cell — `!` then `[caption]` then the URL in parentheses — with no backticks and
+no code fence (inside a code span it shows as literal text instead of
+rendering). For example, a screenshot saved as `step-2.png` becomes: an
+exclamation mark, `[Step 2]`, then `({{artifactBaseUrl}}/step-2.png)` with no
+spaces and no backticks.{{/if}}{{#if !artifactBaseUrl}}No public URL is
+configured, so reference each screenshot by filename (e.g. `step-2-cart.png`)
+and note it's in the run's Artifacts view.{{/if}}
 
 **Do NOT post it yourself** with `github_add_issue_comment` — that would
 double-post. Never claim a step passed that you didn't run, and never fabricate
