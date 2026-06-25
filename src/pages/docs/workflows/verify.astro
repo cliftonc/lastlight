@@ -41,9 +41,12 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<div class="docs-callout">
 		<div class="docs-callout-body">
-			<strong>Evidence is text only.</strong> The sandbox agent has bash, file
-			read, and the GitHub tools — no browser, screenshots, or video. A claim
-			that can only be shown in a rendered UI is reported <code>INCONCLUSIVE</code>.
+			<strong>Text evidence by default, screenshots when available.</strong> The
+			text phase uses bash, file read, and the GitHub tools — no browser. On a
+			Docker host with the browser-QA image built, a second gated phase drives
+			the claim in a real headless Chromium and posts screenshot evidence on top
+			of the text verdict; everywhere else that phase is silently skipped and a
+			UI-only claim is reported <code>INCONCLUSIVE</code>.
 		</div>
 	</div>
 
@@ -57,7 +60,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<h2>Skills</h2>
 
-	<p>This workflow uses the <code>verify</code> skill (the investigator procedure and report shape) plus the <code>building</code> skill (install + run the repo).</p>
+	<p>This workflow uses the <code>verify</code> skill (the investigator procedure and report shape) plus the <code>building</code> skill (install + run the repo). The gated browser phase additionally uses the <code>browser-qa</code> skill (a bundled Playwright driver) to capture screenshot evidence.</p>
 
 	<div class="docs-next">
 		<a href="/docs/workflows/security-feedback" class="prev">

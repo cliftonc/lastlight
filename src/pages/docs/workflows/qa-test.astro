@@ -41,9 +41,12 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<div class="docs-callout">
 		<div class="docs-callout-body">
-			<strong>Evidence is text only.</strong> The sandbox agent has bash, file
-			read, and the GitHub tools — no browser or screenshots. A step that needs
-			rendered-UI interaction is marked <code>BLOCKED</code> with the reason.
+			<strong>Text evidence by default, screenshots when available.</strong> The
+			text phase uses bash, file read, and the GitHub tools — no browser. On a
+			Docker host with the browser-QA image built, a second gated phase drives the
+			locally-served app in a real headless Chromium and posts step-level
+			screenshot evidence on top of the text report; everywhere else that phase is
+			silently skipped and a rendered-UI step is marked <code>BLOCKED</code>.
 		</div>
 	</div>
 
@@ -57,7 +60,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 
 	<h2>Skills</h2>
 
-	<p>This workflow uses the <code>qa-test</code> skill (the flow procedure and report shape) plus the <code>building</code> skill (install + run the repo).</p>
+	<p>This workflow uses the <code>qa-test</code> skill (the flow procedure and report shape) plus the <code>building</code> skill (install + run the repo). The gated browser phase additionally uses the <code>browser-qa</code> skill (a bundled Playwright driver) to drive the UI and capture screenshot evidence.</p>
 
 	<div class="docs-next">
 		<a href="/docs/workflows/verify" class="prev">
