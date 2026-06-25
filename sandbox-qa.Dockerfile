@@ -58,31 +58,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-unifont \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright + Chromium at a FIXED, world-readable browsers path so the
-# non-root `agent` user (UID 10001, from the base image) can launch it.
+# Install Playwright + Chromium into FIXED, world-readable paths so the non-root
+# `agent` user (UID 10001, from the base image) can launch the browser.
+#
+# The package goes in a dedicated dir via a LOCAL `npm install` — deliberately
+# NOT a global `npm install -g`. The base image puts fnm's node first on PATH
+# (`ENV PATH=$FNM_DIR/aliases/default/bin:$PATH`), so a `-g` install lands in a
+# versioned fnm global dir that's awkward to resolve. A local install in a fixed
+# dir is deterministic regardless of which node/npm is active. The CLI imports
+# it by the absolute path in $LASTLIGHT_PLAYWRIGHT (so resolution never depends
+# on NODE_PATH / ESM bare-specifier rules).
 #
 # Playwright version pin: 1.49.1 (recent stable on the 1.49.x line). Pinning the
 # package version also pins the Chromium revision Playwright downloads, so the
 # baked browser is reproducible.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
-RUN npm install -g --no-audit --no-fund playwright@1.49.1 \
+ENV LASTLIGHT_PLAYWRIGHT=/opt/agent-browser/node_modules/playwright
+ENV NODE_PATH=/opt/agent-browser/node_modules
+RUN mkdir -p /opt/agent-browser \
+ && cd /opt/agent-browser \
+ && npm init -y >/dev/null \
+ && npm install --no-audit --no-fund playwright@1.49.1 \
  && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers \
-      npx --yes playwright@1.49.1 install chromium \
- && chmod -R a+rX /opt/playwright-browsers
+      /opt/agent-browser/node_modules/.bin/playwright install chromium \
+ && chmod -R a+rX /opt/playwright-browsers /opt/agent-browser
 
-# Make the global `playwright` package resolvable from an arbitrary cwd by a
-# plain `node script.mjs` doing `import('playwright')`, run by the `agent` user.
-# /usr/local/lib/node_modules is npm's global modules dir on the node:20 base
-# image (npm global prefix = /usr/local) — the same dir agentic-pi is installed
-# into by the base image. Setting NODE_PATH lets Node resolve global packages
-# without a local node_modules. This must stay consistent with where the
-# `npm install -g playwright` above lands.
-ENV NODE_PATH=/usr/local/lib/node_modules
-
-# Sanity-check at build time that playwright resolves with the NODE_PATH above
-# (NODE_PATH is honoured by the module resolver at process start, so this `node`
-# invocation sees it). Fails the build early if the global modules dir is wrong.
-RUN node -e "require.resolve('playwright'); console.log('playwright resolves via NODE_PATH=' + process.env.NODE_PATH)"
+# Validate at build time the same way the CLI loads playwright at runtime: a
+# CJS `require` of the $LASTLIGHT_PLAYWRIGHT directory (require resolves a
+# package dir via its package.json `main`; ESM `import()` of a directory is not
+# supported). Fails the build early otherwise.
+RUN node -e "const pw = require(process.env.LASTLIGHT_PLAYWRIGHT); if (!pw.chromium) throw new Error('playwright.chromium export missing'); console.log('playwright ok via ' + process.env.LASTLIGHT_PLAYWRIGHT);"
 
 # Keep the base image's ENTRYPOINT/CMD (root entrypoint → gosu agent). Restore
 # the workspace WORKDIR the base image ends on.

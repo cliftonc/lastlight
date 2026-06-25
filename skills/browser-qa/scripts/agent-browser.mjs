@@ -54,6 +54,11 @@
 
 import { readFileSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { createRequire } from 'node:module';
+
+// This file is ESM (.mjs); playwright is a CJS package. createRequire gives us
+// a `require` that resolves an absolute package-dir path (see loadPlaywright).
+const require = createRequire(import.meta.url);
 
 const WAIT_TIMEOUT = 10_000; // sane default for waitFor / assertText probes
 
@@ -62,16 +67,25 @@ function emit(obj) {
 }
 
 async function loadPlaywright() {
-  try {
-    return await import('playwright');
-  } catch {
-    emit({
-      ok: false,
-      error:
-        'playwright not available — browser QA needs the lastlight-sandbox-qa image',
-    });
-    process.exit(1);
+  // Resolve playwright via CJS `require`: it handles an absolute package-dir
+  // path ($LASTLIGHT_PLAYWRIGHT, baked into the QA image) by reading the
+  // package.json `main` — which ESM `import()` of a directory does NOT do — and
+  // it honours NODE_PATH for the bare-specifier fallback. playwright ships a CJS
+  // entry, so `require` returns { chromium, … } directly.
+  const candidates = [process.env.LASTLIGHT_PLAYWRIGHT, 'playwright'].filter(Boolean);
+  for (const spec of candidates) {
+    try {
+      return require(spec);
+    } catch {
+      // try the next candidate
+    }
   }
+  emit({
+    ok: false,
+    error:
+      'playwright not available — browser QA needs the lastlight-sandbox-qa image',
+  });
+  process.exit(1);
 }
 
 async function doctor() {
