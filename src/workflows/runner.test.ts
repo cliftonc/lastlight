@@ -499,6 +499,43 @@ describe("runWorkflow — requires_sandbox gate", () => {
     expect(mockExecuteAgent).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(true);
   });
+
+  // A `sandbox_image: qa` phase needs the browser-QA image built on the host.
+  // The mocked child_process has no `execFileSync`, so `qaImageAvailable()`
+  // throws → false: the phase must skip even on the docker backend rather than
+  // try (and fail) to spawn a sandbox from a non-existent image.
+  const QA_WORKFLOW: AgentWorkflowDefinition = {
+    kind: "agent",
+    name: "qa",
+    phases: [
+      { name: "phase_0", type: "context" },
+      {
+        name: "browser",
+        type: "agent",
+        prompt: "prompts/browser.md",
+        requires_sandbox: "docker",
+        sandbox_image: "qa",
+        messages: { on_skipped_done: "Browser QA skipped — image not built." },
+      },
+    ],
+  };
+
+  it("skips a sandbox_image:qa phase on docker when the QA image isn't built", async () => {
+    const db = makeMockDb();
+    const result = await runWorkflow(QA_WORKFLOW, BASE_CTX, { sandbox: "docker" } as never, {}, db);
+
+    expect(mockExecuteAgent).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    const browser = result.phases.find((p) => p.phase === "browser");
+    expect(browser?.success).toBe(true);
+    expect(browser?.output).toMatch(/lastlight-sandbox-qa:latest/);
+    expect(db.executions.recordSkippedPhase).toHaveBeenCalledWith(
+      "qa:browser",
+      expect.any(String),
+      undefined,
+      expect.any(String),
+    );
+  });
 });
 
 describe("runWorkflow — approval gate", () => {

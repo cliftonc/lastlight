@@ -163,7 +163,8 @@ export function buildPhasePrompt(
 
 /**
  * Overlay per-phase executor config fields (`unrestricted_egress`,
- * `web_search`, resolved skill paths) onto the run-level config.
+ * `web_search`, `sandbox_image`, resolved skill paths) onto the run-level
+ * config.
  */
 export function phaseConfigFor(config: ExecutorConfig, phase: PhaseDefinition): ExecutorConfig {
   const skills = phaseSkillNames(phase);
@@ -172,6 +173,7 @@ export function phaseConfigFor(config: ExecutorConfig, phase: PhaseDefinition): 
   if (
     phase.unrestricted_egress === undefined &&
     phase.web_search === undefined &&
+    phase.sandbox_image === undefined &&
     !skillPaths
   ) {
     return config;
@@ -182,6 +184,9 @@ export function phaseConfigFor(config: ExecutorConfig, phase: PhaseDefinition): 
   }
   if (phase.web_search !== undefined) {
     next.webSearch = phase.web_search;
+  }
+  if (phase.sandbox_image !== undefined) {
+    next.sandboxImage = phase.sandbox_image;
   }
   if (skillPaths) {
     next.skillPaths = skillPaths;

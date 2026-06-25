@@ -49,6 +49,18 @@ services:
     profiles:
       - build-only     # never started as a service, just built
 
+  # Build the enriched browser-QA sandbox image (Tier B). Separate + heavier
+  # (Playwright + a baked Chromium), built only when QA is enabled. Its FROM
+  # depends on lastlight-sandbox:latest existing first, so build in that order:
+  #   docker compose --profile build-only build sandbox sandbox-qa
+  sandbox-qa:
+    build:
+      context: .
+      dockerfile: sandbox-qa.Dockerfile
+    image: lastlight-sandbox-qa:latest
+    profiles:
+      - build-only     # never started as a service, just built
+
   # ── Egress firewall (replaces the earlier tinyproxy CONNECT-proxy) ────
   #
   # See src/sandbox/egress-firewall-config.ts for the architecture rationale.

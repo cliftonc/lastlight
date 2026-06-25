@@ -44,6 +44,28 @@ describe("BuildAssetStore read/write/list", () => {
     expect(store.listKeys("nobody", "nothing")).toEqual([]);
     expect(store.listFiles({ owner: "nobody", repo: "x", issueKey: "issue-1" })).toEqual([]);
   });
+
+  it("readBuffer returns raw bytes (binary-safe) for harvested screenshots", () => {
+    const store = new BuildAssetStore(root);
+    expect(store.readBuffer(REF, "shot.png")).toBeUndefined();
+
+    // A PNG signature + a non-UTF8 byte that utf-8 decoding would mangle.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00]);
+    const dir = store.dirFor(REF);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "shot.png"), png);
+
+    const got = store.readBuffer(REF, "shot.png");
+    expect(got).toBeInstanceOf(Buffer);
+    expect(got && Buffer.compare(got, png)).toBe(0);
+    // The file shows up in listFiles alongside markdown, ready for harvest.
+    expect(store.listFiles(REF)).toContain("shot.png");
+  });
+
+  it("readBuffer rejects path traversal in the filename", () => {
+    const store = new BuildAssetStore(root);
+    expect(() => store.readBuffer(REF, "../../secret")).toThrow();
+  });
 });
 
 describe("BuildAssetStore stageInto / harvestFrom", () => {

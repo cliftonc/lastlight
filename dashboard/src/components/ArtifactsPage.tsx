@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api";
+import { api, isImageArtifact } from "../api";
 import { ArtifactEditor } from "./ArtifactEditor";
+import { ArtifactImageViewer } from "./ArtifactImageViewer";
 import {
   useUrlState,
   stringParser,
@@ -183,8 +184,12 @@ export function ArtifactsPage() {
         </div>
       </div>
 
-      {/* ── Main editor pane ────────────────────────────────────────────── */}
-      <ArtifactEditor owner={owner} repo={name} docKey={key} doc={doc} />
+      {/* ── Main pane — image viewer for screenshot evidence, else editor ─ */}
+      {doc && isImageArtifact(doc) ? (
+        <ArtifactImageViewer owner={owner} repo={name} docKey={key} doc={doc} />
+      ) : (
+        <ArtifactEditor owner={owner} repo={name} docKey={key} doc={doc} />
+      )}
     </div>
   );
 }

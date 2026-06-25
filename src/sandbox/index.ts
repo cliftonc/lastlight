@@ -2,8 +2,15 @@ import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
 import { DockerSandbox, type WorkspaceMount } from "./docker.js";
+import { SANDBOX_IMAGE, isSandboxAvailable } from "./images.js";
 
 export { DockerSandbox } from "./docker.js";
+export {
+  SANDBOX_IMAGE,
+  SANDBOX_IMAGE_QA,
+  isSandboxAvailable,
+  qaImageAvailable,
+} from "./images.js";
 
 /**
  * Clean up orphaned sandbox containers from previous runs.
@@ -22,36 +29,6 @@ export function cleanupOrphanedSandboxes(): void {
     }
   } catch {
     // Docker not available or no containers — fine
-  }
-}
-
-const SANDBOX_IMAGE = "lastlight-sandbox:latest";
-
-/**
- * Check if Docker sandbox mode is available.
- */
-export function isSandboxAvailable(): boolean {
-  return dockerAvailable() && sandboxImageExists(SANDBOX_IMAGE);
-}
-
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function sandboxImageExists(imageName: string): boolean {
-  try {
-    const out = execFileSync("docker", ["images", "-q", imageName], {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return out.trim().length > 0;
-  } catch {
-    return false;
   }
 }
 
@@ -149,6 +126,12 @@ export async function createTaskSandbox(opts: {
    * `--dns <ip>`. See src/sandbox/egress-firewall-config.ts.
    */
   dnsIp?: string;
+  /**
+   * Override the container image. Defaults to the lean `SANDBOX_IMAGE`; a
+   * browser-QA phase passes `SANDBOX_IMAGE_QA`. The caller is responsible for
+   * ensuring the image exists (see `qaImageAvailable`).
+   */
+  imageName?: string;
 }): Promise<{ sandbox: DockerSandbox; workDir: string; cleanup: () => Promise<void> } | null> {
   if (!sandboxAvailable()) return null;
 
@@ -167,7 +150,7 @@ export async function createTaskSandbox(opts: {
   }
 
   const sandbox = new DockerSandbox({
-    imageName: SANDBOX_IMAGE,
+    imageName: opts.imageName || SANDBOX_IMAGE,
     env: opts.env || {},
     memoryLimit: process.env.SANDBOX_MEMORY_LIMIT || undefined,
     dnsIp: opts.dnsIp,

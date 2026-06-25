@@ -5,6 +5,7 @@ import type { run as agenticRunType, RunResult, ThinkingLevel } from "agentic-pi
 import {
   createTaskSandbox,
   setupTaskWorktree,
+  SANDBOX_IMAGE_QA,
   type DockerSandbox,
 } from "../sandbox/index.js";
 import { refreshGitAuth } from "./git-auth.js";
@@ -601,6 +602,12 @@ async function executeDocker(
     ? (process.env.LASTLIGHT_DNS_OPEN || "172.30.0.11")
     : (process.env.LASTLIGHT_DNS_STRICT || "172.30.0.10");
 
+  // A phase can opt into the browser-QA image (Playwright + Chromium baked in)
+  // with `sandbox_image: qa`. The runner only schedules such a phase when the
+  // image is actually present (see `qaImageAvailable`), so by here it's safe to
+  // request; pass undefined otherwise to use the lean default image.
+  const imageName = config.sandboxImage === "qa" ? SANDBOX_IMAGE_QA : undefined;
+
   const sbx = await createTaskSandbox({
     taskId: ctx.taskId,
     stateDir: ctx.stateDir,
@@ -608,6 +615,7 @@ async function executeDocker(
     env: ctx.env,
     prePopulate: ctx.prePopulate,
     dnsIp,
+    imageName,
   });
   if (!sbx) {
     throw new Error(

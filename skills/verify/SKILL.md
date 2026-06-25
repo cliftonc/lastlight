@@ -13,13 +13,16 @@ or refutes it. The deliverable is a **verdict with evidence**, not an opinion.
 This skill uses the **building** skill for installing dependencies and running
 the repo's build/test commands in the sandbox.
 
-> **Scope (text-evidence path).** The sandbox agent has bash, file read, and the
-> github tools — no browser, no screenshots, no video. Prove claims with what
-> bash can capture: test output, command stdout/stderr, `curl` against a
-> dev-server you start, log excerpts, file contents, exit codes. A browser /
-> screenshot path is a separate docker-gated capability (not available here);
-> if a claim genuinely can only be shown in a rendered UI, say so under
-> **INCONCLUSIVE** rather than guessing.
+> **Scope (text-evidence path).** In the default text phase the sandbox agent
+> has bash, file read, and the github tools — no browser, no screenshots, no
+> video. Prove claims with what bash can capture: test output, command
+> stdout/stderr, `curl` against a dev-server you start, log excerpts, file
+> contents, exit codes. Driving a real browser and attaching screenshots is the
+> separate `browser-qa` skill, which is staged only in the gated browser phase
+> running on the docker QA image (Playwright + Chromium). If that skill isn't in
+> your catalogue and a claim genuinely can only be shown in a rendered UI, say
+> so under **INCONCLUSIVE** rather than guessing — the browser phase will pick
+> it up when available.
 
 ## Ground rule — investigator, not advocate
 

@@ -14,14 +14,17 @@ verdict — partial coverage with documented failures is the expected output.
 This skill uses the **building** skill for installing dependencies and running
 the repo's build/run commands in the sandbox.
 
-> **Scope (text-evidence path).** The sandbox agent has bash, file read, and the
-> github tools — no browser, no screenshots. QA a **CLI** directly, or a **web
-> service** by starting its dev-server in the background and exercising it with
-> `curl` (status codes, response bodies, headers). Capture stdout/stderr, exit
-> codes, and log excerpts as per-step evidence. Driving a real browser UI and
-> attaching screenshots is a separate docker-gated capability (not available
-> here) — for a step that genuinely needs rendered-UI interaction, mark it
-> **BLOCKED** with the reason rather than faking a result.
+> **Scope (text-evidence path).** In the default text phase the sandbox agent
+> has bash, file read, and the github tools — no browser, no screenshots. QA a
+> **CLI** directly, or a **web service** by starting its dev-server in the
+> background and exercising it with `curl` (status codes, response bodies,
+> headers). Capture stdout/stderr, exit codes, and log excerpts as per-step
+> evidence. Driving a real browser UI and attaching screenshots is the separate
+> `browser-qa` skill, staged only in the gated browser phase running on the
+> docker QA image (Playwright + Chromium). If that skill isn't in your
+> catalogue, mark a step that genuinely needs rendered-UI interaction
+> **BLOCKED** with the reason rather than faking a result — the browser phase
+> will pick it up when available.
 
 ## Parse the target
 

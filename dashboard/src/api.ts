@@ -365,6 +365,29 @@ async function reqText(path: string, init?: RequestInit): Promise<string> {
   return await res.text();
 }
 
+/** Same as `reqText` but returns the raw response Blob (binary artifacts). */
+async function reqBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const token = auth.getToken();
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new UnauthorizedError();
+  }
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return await res.blob();
+}
+
+/**
+ * True when a build-asset filename is an image we render in an <img> viewer
+ * rather than the markdown editor (PNG screenshot evidence etc.). Mirrors the
+ * server's `imageMimeForArtifact` extension set.
+ */
+export function isImageArtifact(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+}
+
 export const api = {
   authRequired: () => req<{ required: boolean; slackOAuth: boolean; githubOAuth: boolean }>("/auth-required"),
   login: (password: string) =>
@@ -456,6 +479,12 @@ export const api = {
     ),
   getArtifact: (owner: string, repo: string, key: string, doc: string) =>
     reqText(
+      `/artifacts/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(key)}/${encodeURIComponent(doc)}`,
+    ),
+  // Binary artifacts (PNG screenshot evidence etc.) — fetched as a Blob the
+  // image viewer turns into an object URL.
+  getArtifactBlob: (owner: string, repo: string, key: string, doc: string) =>
+    reqBlob(
       `/artifacts/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(key)}/${encodeURIComponent(doc)}`,
     ),
   saveArtifact: async (owner: string, repo: string, key: string, doc: string, content: string) => {

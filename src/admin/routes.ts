@@ -36,6 +36,31 @@ import { BuildAssetStore, buildAssetIssueKey } from "../state/build-assets.js";
 import type { PublicConfigBundle, BuildAssetsLocation } from "../config.js";
 
 /**
+ * Map a build-asset filename extension to a binary image MIME type, or null
+ * when the file should be served as text/plain (markdown handoff docs). Binary
+ * artifacts (e.g. PNG screenshot evidence from browser QA) must be served as
+ * raw bytes, not utf-8 text, so the dashboard can render them in an <img>.
+ */
+function imageMimeForArtifact(name: string): string | null {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".svg":
+      return "image/svg+xml";
+    default:
+      return null;
+  }
+}
+
+/**
  * Parse a JSON status column (`extension_status` / `skills_status`) into the
  * object the dashboard renders. Tolerates null / malformed JSON (returns
  * undefined) so a bad row never breaks the executions endpoint.
@@ -1021,11 +1046,21 @@ export function createAdminRoutes(
     }
   });
 
-  // Read one doc as text/plain (the dashboard renders it with marked/DOMPurify).
+  // Read one doc. Image artifacts (PNG screenshot evidence etc.) are served as
+  // raw bytes with the right Content-Type; everything else is text/plain (the
+  // dashboard renders it with marked/DOMPurify).
   app.get("/artifacts/:owner/:repo/:key/:doc", (c) => {
     if (!buildAssetStore) return c.json({ error: "build-assets store not configured" }, 404);
     const { owner, repo, key, doc } = c.req.param();
     try {
+      const imageMime = imageMimeForArtifact(doc);
+      if (imageMime) {
+        const buf = buildAssetStore.readBuffer({ owner, repo, issueKey: key }, doc);
+        if (buf === undefined) return c.json({ error: `doc not found: ${doc}` }, 404);
+        return new Response(new Uint8Array(buf), {
+          headers: { "Content-Type": imageMime, "Cache-Control": "no-store" },
+        });
+      }
       const content = buildAssetStore.read({ owner, repo, issueKey: key }, doc);
       if (content === undefined) return c.json({ error: `doc not found: ${doc}` }, 404);
       return c.text(content, 200, { "Content-Type": "text/plain; charset=utf-8" });

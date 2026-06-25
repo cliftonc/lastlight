@@ -29,6 +29,13 @@ export interface ExecutorConfig {
   /** Workflow sandbox backend (overrides config-level default). */
   sandbox?: SandboxBackend;
   /**
+   * Which docker sandbox image this phase runs in: `"qa"` selects the
+   * browser-QA image (Playwright + Chromium), anything else the lean default.
+   * Overlaid per-phase from `sandbox_image:` by `phaseConfigFor`; only acted on
+   * by the docker path.
+   */
+  sandboxImage?: "default" | "qa";
+  /**
    * Where build handoff docs live for this run:
    *   - "repo" (default): the agent writes/commits `.lastlight/<issueKey>/`
    *     into the target repo branch; the stage-in/harvest seam is skipped.

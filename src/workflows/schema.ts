@@ -195,6 +195,16 @@ const PhaseDefinitionSchema = z
      * to surface why the phase was skipped.
      */
     requires_sandbox: z.enum(["docker", "gondolin", "none"]).optional(),
+    /**
+     * Which docker sandbox image this phase runs in. `default` (or omitted) uses
+     * the lean `lastlight-sandbox:latest`; `qa` uses the heavier
+     * `lastlight-sandbox-qa:latest` (Playwright + Chromium baked in) for the
+     * browser-QA path. Only meaningful on the docker backend — pair it with
+     * `requires_sandbox: docker` so the phase skips on gondolin. When `qa` is
+     * requested but that image isn't built on the host, the scheduler skips the
+     * phase too (graceful degradation), so keep such phases terminal.
+     */
+    sandbox_image: z.enum(["default", "qa"]).optional(),
     /** Named approval gate to pause at after this phase */
     approval_gate: z.string().optional(),
     /**

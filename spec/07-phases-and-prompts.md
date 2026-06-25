@@ -19,7 +19,7 @@ depending on whether it declares `loop:` or `generic_loop:`.
 | Type | Used for | Required fields | Optional fields |
 |---|---|---|---|
 | `context` | Dashboard checkpoints — no agent runs | `name`, `label`, `type: "context"` | — |
-| `agent` (default) | One agent session | `name`; at least one of `prompt:`, `skill:`, `skills:` | `model`, `variant`, `loop`, `generic_loop`, `approval_gate`, `output_var`, `on_output`, `messages`, `depends_on`, `unrestricted_egress`, `web_search` |
+| `agent` (default) | One agent session | `name`; at least one of `prompt:`, `skill:`, `skills:` | `model`, `variant`, `loop`, `generic_loop`, `approval_gate`, `output_var`, `on_output`, `messages`, `depends_on`, `unrestricted_egress`, `web_search`, `requires_sandbox`, `sandbox_image` |
 
 `prompt:` and `skills:` (or sugar `skill:`) may be set together — the
 prompt template is rendered as the user prompt, and the named skills

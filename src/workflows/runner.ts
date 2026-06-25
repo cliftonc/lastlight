@@ -11,6 +11,7 @@ import type { AgentWorkflowDefinition } from "./schema.js";
 import { loadPromptTemplate } from "./loader.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
 import { buildDag, getReadyNodes, getNodesToSkip, isComplete } from "./dag.js";
+import { qaImageAvailable, SANDBOX_IMAGE_QA } from "../sandbox/images.js";
 import {
   PhaseExecutor,
   isTerminated,
@@ -327,25 +328,37 @@ export async function runWorkflow(
 
     const ready = getReadyNodes(dag);
 
-    // Capability gate: skip any ready node whose `requires_sandbox` backend
-    // isn't the one we're running. Safe-by-default graceful degradation — a
-    // gated phase (e.g. a /demo video render that needs the docker image)
-    // silently no-ops on a host without that backend instead of failing the
-    // workflow. Uses the same non-failing skip mechanics as the trigger-rule
-    // skip above, plus the phase's `on_skipped_done` message so the user sees
-    // why it was skipped.
-    const gatedSkip = ready.filter((node) => {
-      const req = phaseByName.get(node.name)?.requires_sandbox;
-      return req !== undefined && req !== activeBackend;
-    });
+    // Capability gate: skip any ready node whose declared capability isn't
+    // available on this host. Safe-by-default graceful degradation — a gated
+    // phase (e.g. the browser-QA step that needs the docker image) silently
+    // no-ops instead of failing the workflow. Two reasons trigger a skip:
+    //   1. `requires_sandbox` names a backend other than the one running.
+    //   2. `sandbox_image: qa` but the browser-QA image isn't built here (only
+    //      checked on docker — on other backends the field is inert).
+    // Uses the same non-failing skip mechanics as the trigger-rule skip above,
+    // plus the phase's `on_skipped_done` message so the user sees why.
+    const gatedSkip: { node: (typeof ready)[number]; reason: string }[] = [];
+    for (const node of ready) {
+      const phaseDef = phaseByName.get(node.name);
+      const req = phaseDef?.requires_sandbox;
+      if (req !== undefined && req !== activeBackend) {
+        gatedSkip.push({ node, reason: `requires ${req} sandbox; running ${activeBackend}` });
+      } else if (
+        phaseDef?.sandbox_image === "qa" &&
+        activeBackend === "docker" &&
+        !qaImageAvailable()
+      ) {
+        gatedSkip.push({ node, reason: `requires the ${SANDBOX_IMAGE_QA} image, not built on this host` });
+      }
+    }
     if (gatedSkip.length > 0) {
-      for (const node of gatedSkip) {
+      for (const { node, reason } of gatedSkip) {
         node.status = "skipped";
         const phaseDef = phaseByName.get(node.name);
         phases.push({
           phase: node.name,
           success: true,
-          output: `Skipped (requires ${phaseDef?.requires_sandbox} sandbox; running ${activeBackend})`,
+          output: `Skipped (${reason})`,
         });
         db?.executions.recordSkippedPhase(
           `${definition.name}:${node.name}`,

@@ -114,6 +114,18 @@ export class BuildAssetStore {
     return readFileSync(path, "utf-8");
   }
 
+  /**
+   * Read one doc as raw bytes, or undefined when it does not exist. Same
+   * traversal validation as {@link read}, but no text decoding — the admin
+   * API uses this to serve binary artifacts (e.g. PNG screenshot evidence)
+   * intact, since `read()`'s utf-8 decode corrupts binary content.
+   */
+  readBuffer(ref: BuildAssetRef, file: string): Buffer | undefined {
+    const path = this.fileFor(ref, file);
+    if (!existsSync(path)) return undefined;
+    return readFileSync(path);
+  }
+
   /** Write (create or overwrite) one doc, creating the run dir as needed. */
   write(ref: BuildAssetRef, file: string, content: string): void {
     const path = this.fileFor(ref, file);

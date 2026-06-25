@@ -12,6 +12,11 @@ description: |
   Slack thread for Slack-initiated runs. The skill therefore does NOT post the
   report itself.
 
+  When the host runs the docker backend with the browser-QA image built, a
+  second gated phase drives the UI in a real headless Chromium and posts
+  screenshot evidence on top of the text verdict; everywhere else that phase is
+  silently skipped (graceful degradation) and the text verdict stands alone.
+
   Triggered by:
     - a `@last-light verify <claim>` comment on an issue/PR
     - manual CLI: tsx src/cli.ts verify owner/repo#N -- "<claim>"
@@ -34,3 +39,23 @@ phases:
       on_start: "Verifying the claim — installing, running, and capturing evidence..."
       on_success: "{{verifyResult}}"
       on_failure: "I couldn't complete the verification — see the logs for details."
+
+  # Browser-QA pass (Tier B). Gated to the docker backend AND the enriched
+  # `lastlight-sandbox-qa:latest` image (Playwright + Chromium). On gondolin, or
+  # a docker host without that image, the scheduler silently skips this phase —
+  # so it must stay terminal (nothing depends on it). When it runs it posts a
+  # supplementary screenshot-evidence comment; the text verdict above is always
+  # the baseline.
+  - name: verify_browser
+    label: Verify (browser)
+    prompt: prompts/verify-browser.md
+    skills: [verify, building, browser-qa]
+    model: "{{models.verify}}"
+    variant: "{{variants.verify}}"
+    requires_sandbox: docker
+    sandbox_image: qa
+    output_var: verifyBrowserResult
+    messages:
+      on_start: "Browser QA available — driving the UI and capturing screenshots..."
+      on_success: "{{verifyBrowserResult}}"
+      on_failure: "The browser-QA pass couldn't complete — the text verdict above stands."

@@ -164,6 +164,22 @@ a downstream phase depending on a gated phase via the default `all_success` rule
 would itself skip — keep gated phases **terminal**, or give their dependants
 `trigger_rule: all_done`.
 
+### Per-phase sandbox image (`sandbox_image`)
+
+A phase can declare `sandbox_image: qa` to run on the enriched browser-QA image
+(`lastlight-sandbox-qa:latest` — Playwright + Chromium baked in) instead of the
+lean default (`lastlight-sandbox:latest`). The field is overlaid by
+`phaseConfigFor` onto `ExecutorConfig.sandboxImage`; only the docker path acts on
+it (`executeDocker` → `createTaskSandbox({ imageName })`). The image name is a
+fixed constant in `src/sandbox/images.ts` (`SANDBOX_IMAGE_QA`) — not env-overridable.
+
+Pair it with `requires_sandbox: docker` so the phase skips on gondolin. On the
+docker backend the scheduler *also* skips it when the QA image isn't built
+(`qaImageAvailable()` in `images.ts`, kept docker-free so the runner can import
+it), recorded as the same non-failing skip. So the phase runs only where browser
+QA is genuinely possible; otherwise it no-ops. This is the Tier B browser-QA
+mechanism — see `docs/tier-b-browser-qa-scope.md` and `skills/browser-qa/`.
+
 ## Per-phase egress policy
 
 Any phase can declare `unrestricted_egress: true` to bypass the sandbox
