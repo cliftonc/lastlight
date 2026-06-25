@@ -441,6 +441,23 @@ export async function runWorkflow(
     failWorkflow(firstFailure?.error || "workflow failed");
   }
 
+  // Single final update: render the workflow's `final_message` against the
+  // accumulated outputs and deliver it once — folded into the checklist comment
+  // as its footer when the in-place reporter is active, else posted as one
+  // standalone comment. Empty render ⇒ no-op (e.g. the synthesizing phase was
+  // skipped). This is what lets verify/qa-test end with a single combined
+  // verdict instead of a comment per phase.
+  if (success && definition.final_message) {
+    const finalRendered = renderTemplate(definition.final_message, {
+      ...ctx,
+      phaseOutputs: outputs,
+    }).trim();
+    if (finalRendered) {
+      if (reporter) await reporter.footer(finalRendered);
+      else await notify(finalRendered);
+    }
+  }
+
   if (reporter) {
     if (success && prNumber && terminalPhase) {
       const link = prUrl ? `[PR #${prNumber}](${prUrl})` : `PR #${prNumber}`;

@@ -74,6 +74,15 @@ export class ProgressNotifier implements ProgressReporter {
     });
   }
 
+  footer(markdown: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.model) return;
+      const footer = markdown.trim() || undefined;
+      this.model = { ...this.model, footer };
+      await this.publish();
+    });
+  }
+
   note(markdown: string): Promise<void> {
     return this.noteTo(this.transports, markdown);
   }

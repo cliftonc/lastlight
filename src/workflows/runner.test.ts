@@ -3,6 +3,7 @@ import type { AgentWorkflowDefinition } from "./schema.js";
 import type { TemplateContext } from "./templates.js";
 import type { RunnerCallbacks, ApprovalGateConfig } from "./runner.js";
 import type { StateDb } from "../state/db.js";
+import type { ProgressReporter, ProgressModel, ProgressStep, StepStatus } from "../notify/types.js";
 
 // Mock the executor so we don't make real agent calls
 vi.mock("../engine/agent-executor.js", () => ({
@@ -535,6 +536,108 @@ describe("runWorkflow — requires_sandbox gate", () => {
       undefined,
       expect.any(String),
     );
+  });
+});
+
+describe("runWorkflow — final_message + synthesize (verify/qa-test shape)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Mirrors verify.yaml: a gated browser phase that skips off-docker, and a
+  // `synthesize` phase that depends ONLY on the text phase so it still runs
+  // (after the gated phase, by declaration order) and folds the outputs into
+  // `final_message` → the single comment's footer.
+  const VERIFY_LIKE: AgentWorkflowDefinition = {
+    kind: "verify",
+    name: "verify",
+    status_checklist: true,
+    final_message: "{{synthesisResult}}",
+    phases: [
+      { name: "phase_0", type: "context", depends_on: [] },
+      {
+        name: "verify",
+        type: "agent",
+        prompt: "prompts/verify.md",
+        depends_on: ["phase_0"],
+        output_var: "verifyResult",
+        messages: { on_success: "Text verification complete." },
+      },
+      {
+        name: "verify_browser",
+        type: "agent",
+        prompt: "prompts/verify-browser.md",
+        depends_on: ["verify"],
+        requires_sandbox: "docker",
+        sandbox_image: "qa",
+        output_var: "verifyBrowserResult",
+        messages: { on_skipped_done: "Browser QA unavailable on this host." },
+      },
+      {
+        name: "synthesize",
+        type: "agent",
+        prompt: "prompts/verify-synth.md",
+        depends_on: ["verify"],
+        output_var: "synthesisResult",
+        messages: { on_success: "Verdict posted below." },
+      },
+    ],
+  };
+
+  function fakeReporter(sink: { footer?: string; steps: Array<[string, StepStatus]> }): ProgressReporter {
+    return {
+      start: async (_m: ProgressModel) => {},
+      step: async (k: string, s: StepStatus) => { sink.steps.push([k, s]); },
+      insertStep: async (_st: ProgressStep) => {},
+      note: async () => {},
+      footer: async (m: string) => { sink.footer = m; },
+      noteTerminal: async () => {},
+    };
+  }
+
+  it("synthesizes into the checklist footer (single comment) when the browser phase is gated out", async () => {
+    // gondolin backend (no `sandbox`) → verify_browser skips. Only verify +
+    // synthesize call the agent.
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSuccessResult("text verdict body"))      // verify
+      .mockResolvedValueOnce(makeSuccessResult("## CONFIRMED\nfinal verdict")); // synthesize
+
+    const sink: { footer?: string; steps: Array<[string, StepStatus]> } = { steps: [] };
+    const comments: string[] = [];
+    const result = await runWorkflow(VERIFY_LIKE, BASE_CTX, {} as never, {
+      reporter: fakeReporter(sink),
+      postComment: async (m) => { comments.push(m); },
+    }, makeMockDb());
+
+    expect(result.success).toBe(true);
+    // verify + synthesize ran; verify_browser was skipped (no docker).
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2);
+    expect(result.phases.map((p) => p.phase)).toContain("synthesize");
+    // The synthesized verdict lands in the footer — NOT as a standalone comment.
+    expect(sink.footer).toBe("## CONFIRMED\nfinal verdict");
+    expect(comments).toHaveLength(0);
+    // Per-phase progress went to checklist steps, not comments.
+    expect(sink.steps).toContainEqual(["verify", "done"]);
+    expect(sink.steps).toContainEqual(["synthesize", "done"]);
+  });
+
+  it("renders final_message to a single postComment in the legacy (no-reporter) path", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSuccessResult("the synthesized verdict"));
+    const def: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "fin",
+      final_message: "{{r}}",
+      phases: [
+        { name: "phase_0", type: "context" },
+        { name: "a", type: "agent", prompt: "prompts/a.md", output_var: "r" },
+      ],
+    };
+    const comments: string[] = [];
+    const result = await runWorkflow(def, BASE_CTX, {} as never, {
+      postComment: async (m) => { comments.push(m); },
+    });
+    expect(result.success).toBe(true);
+    expect(comments).toContain("the synthesized verdict");
   });
 });
 

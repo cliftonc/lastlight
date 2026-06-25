@@ -188,6 +188,18 @@ no `PUBLIC_URL`) — to embed each screenshot inline (`![cap]({{artifactBaseUrl}
 so it renders directly in the GitHub comment. The store and the cross-phase
 handoff are otherwise unchanged — the branch is just no longer the carrier.
 
+**Single-comment delivery (`status_checklist` + `final_message`).** A workflow
+can render its progress as one in-place "task list" comment (`status_checklist:
+true`, driving `src/notify/`) instead of a comment per phase, and end with one
+synthesized result via the workflow-level `final_message` template: rendered at
+wrap-up against the accumulated `output_var`s and delivered once — set as the
+checklist comment's **footer** when the checklist is active, else posted as a
+single standalone comment. `verify`/`qa-test` use this: their text and gated
+browser passes write short progress lines into the checklist and stash their
+full reports in `output_var`s; a terminal `synthesize` phase (which depends only
+on the always-run text phase, so it still runs when the browser phase is gated
+out) folds them into one verdict that `final_message` drops into the footer.
+
 ## Prompt vs skill — when to pick which
 
 They serve different purposes and can coexist on the same phase:

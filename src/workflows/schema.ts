@@ -295,6 +295,16 @@ export const AgentWorkflowSchema = z.object({
    * health) that post their own result.
    */
   status_checklist: z.boolean().optional(),
+  /**
+   * Template rendered once at workflow wrap-up (against the accumulated
+   * `output_var`s) and delivered as the single final update: set as the
+   * footer of the in-place checklist comment when `status_checklist` is on, or
+   * posted as one standalone comment otherwise. Renders empty ⇒ no-op. Lets a
+   * workflow end with one synthesized result (e.g. verify/qa-test fold their
+   * text + browser passes into a single verdict via a final `synthesize` phase
+   * whose `output_var` this references) instead of a comment per phase.
+   */
+  final_message: z.string().optional(),
   variables: z.record(z.string(), z.string()).optional(),
   phases: z.array(PhaseDefinitionSchema),
 });

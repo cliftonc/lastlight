@@ -2,32 +2,38 @@ kind: verify
 name: verify
 description: |
   Verify a behaviour claim against a repo or PR and report whether the evidence
-  confirms or refutes it. Single agent invocation: it installs and runs the
-  code in the sandbox, captures bash/text evidence, and posts a
-  CONFIRMED / REFUTED / INCONCLUSIVE report. Does not modify code.
+  confirms or refutes it. It installs and runs the code in the sandbox, captures
+  bash/text evidence, optionally drives the UI in a real browser, then posts a
+  single CONFIRMED / REFUTED / INCONCLUSIVE verdict. Does not modify code.
 
-  Delivery is uniform with `answer`: the agent's final message (the report) is
-  captured as `verifyResult` and posted by the harness via `postComment` — as a
-  comment on the originating issue/PR for GitHub-initiated runs, or into the
-  Slack thread for Slack-initiated runs. The skill therefore does NOT post the
-  report itself.
+  Delivery is a single in-place status comment (`status_checklist`): the run
+  shows its phases ticking off, then a final `synthesize` phase folds the text
+  verdict and (when it ran) the browser evidence into ONE combined verdict,
+  delivered as the comment's footer via `final_message`. No comment-per-phase.
+  Posted on the originating issue/PR for GitHub runs, or into the Slack thread
+  for Slack runs. The agents therefore do NOT post anything themselves.
 
-  When the host runs the docker backend with the browser-QA image built, a
-  second gated phase drives the UI in a real headless Chromium and posts
-  screenshot evidence on top of the text verdict; everywhere else that phase is
-  silently skipped (graceful degradation) and the text verdict stands alone.
+  When the host runs the docker backend with the browser-QA image built, the
+  gated `verify_browser` phase drives the UI in a real headless Chromium and
+  captures screenshot evidence; everywhere else it is silently skipped (graceful
+  degradation) and the text verdict stands alone. The synthesis runs either way.
 
   Triggered by:
     - a `@last-light verify <claim>` comment on an issue/PR
     - manual CLI: tsx src/cli.ts verify owner/repo#N -- "<claim>"
 
+status_checklist: true
+final_message: "{{synthesisResult}}"
+
 phases:
   - name: phase_0
     label: Context
     type: context
+    depends_on: []
 
   - name: verify
     label: Verify
+    depends_on: [phase_0]
     prompt: prompts/verify.md
     # verify: the investigator procedure + report shape (primary).
     # building: install + run the repo to capture evidence.
@@ -37,17 +43,18 @@ phases:
     output_var: verifyResult
     messages:
       on_start: "Verifying the claim — installing, running, and capturing evidence..."
-      on_success: "{{verifyResult}}"
+      on_success: "Text verification complete."
       on_failure: "I couldn't complete the verification — see the logs for details."
 
   # Browser-QA pass (Tier B). Gated to the docker backend AND the enriched
   # `lastlight-sandbox-qa:latest` image (Playwright + Chromium). On gondolin, or
-  # a docker host without that image, the scheduler silently skips this phase —
-  # so it must stay terminal (nothing depends on it). When it runs it posts a
-  # supplementary screenshot-evidence comment; the text verdict above is always
-  # the baseline.
+  # a docker host without that image, the scheduler silently skips this phase.
+  # It is terminal (nothing depends on it) — `synthesize` depends only on
+  # `verify`, so it still runs (after this phase, by declaration order) and
+  # folds in `verifyBrowserResult` only when this phase actually produced it.
   - name: verify_browser
     label: Verify (browser)
+    depends_on: [verify]
     prompt: prompts/verify-browser.md
     skills: [verify, building, browser-qa]
     model: "{{models.verify}}"
@@ -57,5 +64,22 @@ phases:
     output_var: verifyBrowserResult
     messages:
       on_start: "Browser QA available — driving the UI and capturing screenshots..."
-      on_success: "{{verifyBrowserResult}}"
-      on_failure: "The browser-QA pass couldn't complete — the text verdict above stands."
+      on_success: "Browser QA complete — screenshots captured."
+      on_skipped_done: "Browser QA unavailable on this host — text verdict stands."
+
+  # Synthesis. Depends only on `verify` (always runs after the gated browser
+  # phase by declaration order, and never skips when that phase is gated out).
+  # Reads the prior reports from phaseOutputs and writes ONE concise combined
+  # verdict; its output (`synthesisResult`) becomes the comment footer via the
+  # workflow-level `final_message`. Pure composition — no skills, no repo work.
+  - name: synthesize
+    label: Summary
+    depends_on: [verify]
+    prompt: prompts/verify-synth.md
+    model: "{{models.verify}}"
+    variant: "{{variants.verify}}"
+    output_var: synthesisResult
+    messages:
+      on_start: "Synthesizing the final verdict..."
+      on_success: "Verdict posted below."
+      on_failure: "I couldn't synthesize the final verdict — see the logs."

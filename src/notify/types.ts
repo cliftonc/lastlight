@@ -86,6 +86,13 @@ export interface ProgressReporter {
   /** Post a standalone message to every surface (e.g. an approval prompt). */
   note(markdown: string): Promise<void>;
   /**
+   * Set (or clear) the trailing footer of the single status surface and
+   * re-publish in place. Used to fold a workflow's final synthesized result
+   * into the same comment as the checklist rather than posting a new one.
+   * Pass an empty string to clear.
+   */
+  footer(markdown: string): Promise<void>;
+  /**
    * Post the run's completion message, but only to surfaces that want a
    * terminal ping (Slack) — GitHub is left with just the finished checklist.
    */

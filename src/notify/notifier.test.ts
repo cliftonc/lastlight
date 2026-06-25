@@ -74,6 +74,27 @@ describe("ProgressNotifier", () => {
     expect(gh.notes).toEqual([]);
   });
 
+  it("footer sets the trailing section and re-publishes in place", async () => {
+    const { t, published } = fakeTransport();
+    const n = new ProgressNotifier([t]);
+    await n.start(model);
+    await n.footer("## CONFIRMED\nthe verdict");
+    const last = published[published.length - 1];
+    expect(last).toContain("## CONFIRMED");
+    expect(last).toContain("the verdict");
+    // Still the same surface (in-place update), not a standalone note.
+    expect(last).toContain("**A**");
+  });
+
+  it("footer with blank content clears the footer and re-publishes", async () => {
+    const { t, published } = fakeTransport();
+    const n = new ProgressNotifier([t]);
+    await n.start(model);
+    await n.footer("temp");
+    await n.footer("   ");
+    expect(published[published.length - 1]).not.toContain("temp");
+  });
+
   it("no-ops cleanly with zero transports", async () => {
     const n = new ProgressNotifier([]);
     await expect(n.start(model)).resolves.toBeUndefined();
