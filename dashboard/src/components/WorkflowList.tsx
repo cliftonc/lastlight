@@ -472,29 +472,32 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
   // If selectedId points to a run that isn't in the loaded list (e.g. linked
   // from outside or hidden behind pagination), fetch it directly so the
   // detail panel still works.
-  const [standaloneRun, setStandaloneRun] = useState<WorkflowRun | null>(null);
+  //
+  // We always fetch the full detail (`/workflow-runs/:id`) for the selected
+  // run — not just when it's absent from the list. The list query omits the
+  // heavy `context` blob, but the detail panel's Artifacts tab needs
+  // `context.issueDir` to locate the run's build assets. The list row still
+  // wins for the live-updating fields (status / phaseHistory refresh on poll);
+  // we only splice the immutable `context` in from the detail fetch below.
+  const [detailRun, setDetailRun] = useState<WorkflowRun | null>(null);
   useEffect(() => {
     if (!selectedId) {
-      setStandaloneRun(null);
-      return;
-    }
-    if (visibleRuns.some((r) => r.id === selectedId)) {
-      setStandaloneRun(null);
+      setDetailRun(null);
       return;
     }
     let cancelled = false;
     api
       .workflowRun(selectedId)
       .then((res) => {
-        if (!cancelled) setStandaloneRun(res.workflowRun);
+        if (!cancelled) setDetailRun(res.workflowRun);
       })
       .catch(() => {
-        if (!cancelled) setStandaloneRun(null);
+        if (!cancelled) setDetailRun(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedId, visibleRuns]);
+  }, [selectedId]);
 
   const handleCancel = async (id: string) => {
     try {
@@ -505,8 +508,16 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
     }
   };
 
-  const selectedRun =
-    visibleRuns.find((r) => r.id === selectedId) ?? standaloneRun ?? null;
+  const detailForSelected = detailRun?.id === selectedId ? detailRun : null;
+  const listRow = visibleRuns.find((r) => r.id === selectedId) ?? null;
+  // Prefer the live-updating list row, but splice in `context` (absent from the
+  // list payload) from the detail fetch. Fall back to the full detail when the
+  // run isn't in the list at all (deep-linked / paginated out).
+  const selectedRun: WorkflowRun | null = listRow
+    ? listRow.context
+      ? listRow
+      : { ...listRow, context: detailForSelected?.context }
+    : detailForSelected;
   const hasMore = runs.length < total;
 
   return (
