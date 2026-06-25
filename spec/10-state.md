@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS workflow_approvals (
   summary TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
   kind TEXT NOT NULL DEFAULT 'approve',   -- "approve" or "reply" (Socratic loop)
+  artifact TEXT,                          -- handoff doc the gate is approving (e.g. architect-plan.md)
   requested_by TEXT,
   responded_by TEXT,
   response TEXT,
@@ -124,6 +125,14 @@ CREATE TABLE IF NOT EXISTS workflow_approvals (
 
 `kind: "reply"` is the Socratic loop's reply gate — any free-form
 message resolves it; no explicit approve / reject needed.
+
+`artifact` (nullable) names the handoff doc a gate is asking a human to
+approve, set from a phase's `approval_artifact:` field. It powers the
+**focused approval view** (`/admin/?approval=<id>`): `GET
+/admin/api/approvals/:id` enriches the row with an `artifactRef` (owner /
+repo / issueKey / doc, plus a GitHub blob URL in repo mode) so the view can
+open the doc — editable in server mode, link-out in repo mode — beside the
+approve / reject buttons. See `06-workflow-engine.md`.
 
 ### `cron_overrides`
 

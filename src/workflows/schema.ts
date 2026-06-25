@@ -41,6 +41,12 @@ const PhaseLoopSchema = z.object({
   }),
   /** Gate to pause at before running the fix (optional) */
   approval_gate: z.string().optional(),
+  /**
+   * Artifact (handoff doc) filename this gate is asking the reviewer to
+   * approve, e.g. `reviewer-verdict.md`. Surfaced by the focused approval
+   * view so the reviewer reads/edits the right doc before approving.
+   */
+  approval_artifact: z.string().optional(),
   /** Optional per-event notification templates rendered through the template engine. */
   messages: PhaseLoopMessagesSchema.optional(),
 });
@@ -170,6 +176,12 @@ const PhaseDefinitionSchema = z
     web_search: z.boolean().optional(),
     /** Named approval gate to pause at after this phase */
     approval_gate: z.string().optional(),
+    /**
+     * Artifact (handoff doc) filename this gate is asking the reviewer to
+     * approve, e.g. `architect-plan.md`. Surfaced by the focused approval
+     * view so the reviewer reads/edits the right doc before approving.
+     */
+    approval_artifact: z.string().optional(),
     /** Message template rendered when pausing at this phase's approval gate. */
     approval_gate_message: z.string().optional(),
     /** Optional per-event notification templates rendered through the template engine. */

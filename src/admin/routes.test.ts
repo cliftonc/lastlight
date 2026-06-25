@@ -773,6 +773,78 @@ describe("POST /approvals/:id/respond", () => {
   });
 });
 
+describe("GET /approvals/:id (focused approval enrichment)", () => {
+  function makeDb(approval: any, run: any) {
+    return {
+      ...((mockDb as unknown) as Record<string, unknown>),
+      approvals: {
+        ...((mockDb as unknown as { approvals: Record<string, unknown> }).approvals),
+        getById: vi.fn(() => approval),
+      },
+      runs: {
+        ...((mockDb as unknown as { runs: Record<string, unknown> }).runs),
+        getRun: vi.fn(() => run),
+      },
+    } as unknown as StateDb;
+  }
+
+  async function getApproval(db: StateDb, id: string, cfg: Partial<AdminConfig> = {}) {
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "", ...cfg }));
+    return request(app, `/approvals/${id}`);
+  }
+
+  // Production shape: workflow_runs.repo is the BARE name; owner lives in
+  // context (matching src/workflows/simple.ts). The Slack-invoked build flow
+  // uses the same createRun path, so this also covers it.
+  const run = {
+    id: "run-1",
+    workflowName: "build",
+    triggerId: "acme/widget#3",
+    repo: "widget",
+    issueNumber: 3,
+    context: { owner: "acme", branch: "lastlight/issue-3", issueDir: ".lastlight/issue-3" },
+  };
+
+  it("404s when the approval is missing", async () => {
+    const res = await getApproval(makeDb(null, run), "nope");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns a server-mode artifactRef (editable store doc)", async () => {
+    const approval = { id: "a1", status: "pending", workflowRunId: "run-1", artifact: "architect-plan.md" };
+    const res = await getApproval(makeDb(approval, run), "a1", { buildAssets: "server" });
+    const body = await res.json() as { artifactRef: any };
+    expect(res.status).toBe(200);
+    expect(body.artifactRef).toMatchObject({
+      mode: "server",
+      owner: "acme",
+      repo: "widget",
+      issueKey: "issue-3",
+      doc: "architect-plan.md",
+    });
+    expect(body.artifactRef.githubUrl).toBeUndefined();
+  });
+
+  it("returns a repo-mode artifactRef with a GitHub blob URL", async () => {
+    const approval = { id: "a1", status: "pending", workflowRunId: "run-1", artifact: "architect-plan.md" };
+    const res = await getApproval(makeDb(approval, run), "a1", { buildAssets: "repo" });
+    const body = await res.json() as { artifactRef: any };
+    expect(res.status).toBe(200);
+    expect(body.artifactRef.mode).toBe("repo");
+    expect(body.artifactRef.githubUrl).toBe(
+      "https://github.com/acme/widget/blob/lastlight%2Fissue-3/.lastlight/issue-3/architect-plan.md",
+    );
+  });
+
+  it("returns artifactRef: null when the gate carries no artifact", async () => {
+    const approval = { id: "a1", status: "pending", workflowRunId: "run-1" };
+    const res = await getApproval(makeDb(approval, run), "a1", { buildAssets: "server" });
+    const body = await res.json() as { artifactRef: any };
+    expect(res.status).toBe(200);
+    expect(body.artifactRef).toBeNull();
+  });
+});
+
 describe("artifacts endpoints (server-mode build assets)", () => {
   let dir: string;
   // Auth disabled (empty password) so the round-trip test doesn't need a token.

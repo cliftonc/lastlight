@@ -52,6 +52,8 @@ Agent phases iterate when a loop is declared:
 | `{{#if !varName}}…{{/if}}` | Negated conditional. |
 | `{{slugify varName}}` | Helper — lowercase, hyphen-separated, max 40 chars. |
 | `{{branchUrl filename}}` | Helper — produces `https://github.com/{owner}/{repo}/blob/{branch}/{issueDir}/{filename}`. |
+| `{{artifactUrl filename}}` | Helper — mode-aware handoff-doc link: GitHub blob URL in repo mode, dashboard Artifacts deep link in server mode (falls back to the blob URL without `PUBLIC_URL`). |
+| `{{approvalUrl}}` | Helper — deep link to the focused approval view (`${publicUrl}/admin/?approval=<id>`) for the gate being rendered; empty without `PUBLIC_URL` or `approvalId`. |
 
 The `walkKey()` fallback (`templates.ts:112–126`) is load-bearing for
 phase outputs: a prompt can write `{{architect.output}}` to read the

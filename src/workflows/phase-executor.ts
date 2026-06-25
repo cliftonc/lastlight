@@ -492,6 +492,8 @@ export class PhaseExecutor {
         "approve",
         phase.approval_gate_message,
         { gateKey: phase.approval_gate },
+        undefined,
+        phase.approval_artifact,
       );
       return { results: [result], status: "succeeded", paused: true, outputVars };
     }
@@ -567,6 +569,7 @@ export class PhaseExecutor {
     message: string | undefined,
     extraCtx: Partial<TemplateContext>,
     scratchPatch?: Record<string, unknown>,
+    artifact?: string,
   ): Promise<void> {
     const { db, workflowId, ctx } = this.run;
     if (!db || !workflowId) return;
@@ -579,6 +582,7 @@ export class PhaseExecutor {
         gate,
         summary,
         kind,
+        artifact,
         requestedBy: ctx.sender,
         createdAt: new Date().toISOString(),
       },
@@ -588,7 +592,9 @@ export class PhaseExecutor {
       },
       scratchPatch,
     );
-    await this.reporter.step(stepKey, "awaiting", message, extraCtx, { alsoNote: true });
+    // Expose `approvalId` to the gate message template so it can deep-link to
+    // the focused approval view via `{{approvalUrl}}`.
+    await this.reporter.step(stepKey, "awaiting", message, { ...extraCtx, approvalId }, { alsoNote: true });
   }
 
   private async runReviewerLoop(
@@ -694,6 +700,7 @@ export class PhaseExecutor {
               loop.messages?.on_pause_for_approval,
               { cycle: fixCycles, maxCycles: MAX_CYCLES, gateKey: loop.approval_gate },
               { [loopKey]: scratch[loopKey] },
+              loop.approval_artifact,
             );
             return { results, status: "succeeded", paused: true };
           }

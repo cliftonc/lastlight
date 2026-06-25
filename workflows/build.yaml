@@ -45,14 +45,15 @@ phases:
     model: "{{models.architect}}"
     variant: "{{variants.architect}}"
     approval_gate: post_architect
+    approval_artifact: architect-plan.md
     approval_gate_message: |
       **Architect analysis complete** — approval required before implementation.
 
       - Branch: `{{branch}}`
       - Plan: `{{issueDir}}/architect-plan.md`
 
-      **To proceed:** comment `@last-light approve`
-      **To abort:** comment `@last-light reject [reason]`
+      **Review & decide:** {{approvalUrl}}
+      **Or comment:** `@last-light approve` / `@last-light reject [reason]`
     messages:
       # Single-line messages become the one-line detail on the checklist step,
       # so keep them concise and link the artifact on the branch.
@@ -86,6 +87,7 @@ phases:
         fix_variant: "{{variants.fix}}"
         re_review_prompt: prompts/re-reviewer.md
       approval_gate: post_reviewer
+      approval_artifact: reviewer-verdict.md
       messages:
         on_cycle_start: "independent verification (cycle {{cycle}})…"
         on_approved: "Approved — [reviewer-verdict.md]({{artifactUrl reviewer-verdict.md}})"
@@ -98,8 +100,8 @@ phases:
 
           - Verdict: `{{issueDir}}/reviewer-verdict.md`
 
-          **To proceed with fixes:** comment `@last-light approve`
-          **To abort:** comment `@last-light reject [reason]`
+          **Review & decide:** {{approvalUrl}}
+          **Or comment:** `@last-light approve` / `@last-light reject [reason]`
 
   - name: pr
     label: PR

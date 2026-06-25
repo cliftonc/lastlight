@@ -276,8 +276,24 @@ export interface WorkflowApproval {
   gate: string;
   summary: string;
   status: "pending" | "approved" | "rejected";
+  /** Handoff doc filename this gate is asking the reviewer to approve. */
+  artifact?: string;
   requestedBy?: string;
   createdAt: string;
+}
+
+/**
+ * Where the artifact a gate is approving lives. In server mode it's an editable
+ * doc in the build-asset store ({owner, repo, issueKey, doc}); in repo mode the
+ * doc is committed on the branch and `githubUrl` links to it.
+ */
+export interface ArtifactRef {
+  mode: "repo" | "server";
+  owner: string;
+  repo: string;
+  issueKey: string;
+  doc: string;
+  githubUrl?: string;
 }
 
 export class UnauthorizedError extends Error {
@@ -438,6 +454,10 @@ export const api = {
     );
   },
   approvals: () => req<{ approvals: WorkflowApproval[] }>("/approvals"),
+  approval: (id: string) =>
+    req<{ approval: WorkflowApproval; artifactRef: ArtifactRef | null; run: WorkflowRun | null }>(
+      `/approvals/${encodeURIComponent(id)}`,
+    ),
   respondToApproval: (id: string, decision: "approved" | "rejected", reason?: string) =>
     req<{ status: string }>(`/approvals/${id}/respond`, {
       method: "POST",

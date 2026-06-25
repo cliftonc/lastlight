@@ -113,6 +113,15 @@ export function migrate(db: Database.Database): void {
     // Column already exists — ignore
   }
 
+  // Artifact (handoff doc) filename a gate is asking the reviewer to approve,
+  // e.g. 'architect-plan.md'. Lets the focused approval view open the right
+  // doc. Nullable — most gates carry no artifact. Additive, safe on existing DBs.
+  try {
+    db.exec(`ALTER TABLE workflow_approvals ADD COLUMN artifact TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
+
   // Add session_id column to executions so the dashboard can resolve a
   // phase click to its agent session log. Additive — safe on existing DBs.
   try {

@@ -43,6 +43,7 @@ describe("pauseForApproval", () => {
         gate: "post_architect",
         summary: "Plan ready",
         kind: "approve",
+        artifact: "architect-plan.md",
         createdAt: new Date().toISOString(),
       },
       { phase: "waiting_approval", summary: "Waiting for approval: post_architect" },
@@ -58,6 +59,7 @@ describe("pauseForApproval", () => {
     const approval = db.approvals.getById(approvalId);
     expect(approval!.status).toBe("pending");
     expect(approval!.gate).toBe("post_architect");
+    expect(approval!.artifact).toBe("architect-plan.md");
   });
 
   it("rolls back the phase-history append when the approval store throws (injected collaborator)", () => {

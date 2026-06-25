@@ -67,6 +67,33 @@ describe("renderTemplate — {{artifactUrl}} (build-assets mode)", () => {
   });
 });
 
+describe("renderTemplate — {{approvalUrl}} (focused approval deep link)", () => {
+  it("builds a focused-view link from publicUrl + approvalId", () => {
+    const result = renderTemplate("{{approvalUrl}}", {
+      ...BASE_CTX,
+      publicUrl: "https://last.example.com/",
+      approvalId: "appr-123",
+    });
+    expect(result).toBe("https://last.example.com/admin/?approval=appr-123");
+  });
+
+  it("renders empty when publicUrl is absent (so the rest of the message still posts)", () => {
+    const result = renderTemplate("see {{approvalUrl}} now", {
+      ...BASE_CTX,
+      approvalId: "appr-123",
+    });
+    expect(result).toBe("see  now");
+  });
+
+  it("renders empty when approvalId is absent", () => {
+    const result = renderTemplate("{{approvalUrl}}", {
+      ...BASE_CTX,
+      publicUrl: "https://last.example.com",
+    });
+    expect(result).toBe("");
+  });
+});
+
 describe("renderTemplate — doc-commit gate", () => {
   const TEMPLATE =
     "{{#if !externalizeArtifacts}}git commit docs{{/if}}{{#if externalizeArtifacts}}harness persists{{/if}}";

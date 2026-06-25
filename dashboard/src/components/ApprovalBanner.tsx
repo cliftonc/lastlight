@@ -6,6 +6,18 @@ interface Props {
   onResponded: () => void;
 }
 
+/**
+ * In-SPA navigation to the focused approval view. Pushes `?approval=<id>` and
+ * fires a synthetic popstate so App's router (which reads the param on
+ * popstate) swaps to the focused view — same pattern as `openArtifact`.
+ */
+function openFocusedApproval(id: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("approval", id);
+  window.history.pushState(null, "", url.toString());
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 function ApprovalItem({ approval, onResponded }: { approval: WorkflowApproval; onResponded: () => void }) {
   const [reason, setReason] = useState("");
   const [pending, setPending] = useState(false);
@@ -29,6 +41,15 @@ function ApprovalItem({ approval, onResponded }: { approval: WorkflowApproval; o
       <div className="flex items-center gap-2">
         <span className="badge badge-warning badge-sm">{approval.gate}</span>
         <span className="text-xs text-base-content/70">{approval.summary}</span>
+        {approval.artifact && (
+          <button
+            className="btn btn-xs btn-ghost text-primary ml-auto"
+            onClick={() => openFocusedApproval(approval.id)}
+            title={`Review ${approval.artifact}`}
+          >
+            Open focused review →
+          </button>
+        )}
       </div>
       <textarea
         className="textarea textarea-bordered textarea-xs w-full resize-none"

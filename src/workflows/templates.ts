@@ -41,6 +41,13 @@ export interface TemplateContext {
    */
   publicUrl?: string;
 
+  /**
+   * Id of the approval being created — injected into an approval-gate message's
+   * render context by `PhaseExecutor.pauseForApproval` so the `{{approvalUrl}}`
+   * helper can deep-link to the focused approval view.
+   */
+  approvalId?: string;
+
   // Optional: available during PR phase
   approved?: boolean;
   fixCycles?: number;
@@ -191,6 +198,18 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
       `&key=${encodeURIComponent(issueKey)}` +
       `&doc=${encodeURIComponent(file)}`;
     return `${base}/admin/?tab=artifacts&${q}`;
+  });
+
+  // 3c. Approval URL helper: {{approvalUrl}} — deep link to the focused
+  // approval view for the gate currently being rendered. `approvalId` is
+  // injected into the message context by PhaseExecutor.pauseForApproval, and
+  // `publicUrl` is the dashboard base. Renders empty when either is absent
+  // (e.g. no PUBLIC_URL configured) so the rest of the gate message still
+  // posts cleanly.
+  result = result.replace(/\{\{approvalUrl\}\}/g, () => {
+    if (!ctx.publicUrl || !ctx.approvalId) return "";
+    const base = String(ctx.publicUrl).replace(/\/+$/, "");
+    return `${base}/admin/?approval=${encodeURIComponent(String(ctx.approvalId))}`;
   });
 
   // 4. Simple variable substitution: {{varName}} and {{a.b.c...}}.

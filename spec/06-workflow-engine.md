@@ -71,7 +71,8 @@ through — webhook dispatch, CLI, cron, admin resume.
   model?: string;                       // can be "{{models.architect}}"
   variant?: string;                     // reasoning effort; can be "{{variants.fix}}"
   approval_gate?: string;               // pause gate name
-  approval_gate_message?: string;       // template rendered when pausing
+  approval_artifact?: string;           // handoff doc this gate approves (e.g. architect-plan.md)
+  approval_gate_message?: string;       // template rendered when pausing ({{approvalUrl}} deep-links the focused view)
   depends_on?: string[];                // triggers DAG mode if any phase has it
   trigger_rule?:
     | "all_success" | "one_success"     // DAG firing conditions
@@ -204,6 +205,20 @@ which calls back into `runSimpleWorkflow()`.
 
 If the gate name is *not* in `APPROVAL_GATES`, the phase proceeds
 without pausing. Gates are positive enable only.
+
+**Approving an artifact**: a gate can name the handoff doc it's asking a
+human to approve via `approval_artifact: architect-plan.md` (also valid
+inside `loop:`). The filename is stored on the `workflow_approvals` row
+([State](/spec/10-state)). The gate message can deep-link a **focused
+approval view** with `{{approvalUrl}}` — `pauseForApproval` injects the
+new `approvalId` into the message context and the helper renders
+`${publicUrl}/admin/?approval=<id>` (empty without `PUBLIC_URL`, so the
+message still posts; identical for GitHub- and Slack-initiated runs). That
+view (`GET /admin/api/approvals/:id`) enriches the approval with an
+`artifactRef` derived from the run (`context.owner` + bare `repo` +
+`buildAssetIssueKey`): **server** storage mode embeds the artifact editor
+(edit + save the store doc, then approve); **repo** mode links out to the
+doc on GitHub. Both resolve through the same dashboard approve/reject path.
 
 **Reply gate**: declared as `gate_kind: "reply"` on a `generic_loop`.
 The phase pauses, the next free-form maintainer message on the same

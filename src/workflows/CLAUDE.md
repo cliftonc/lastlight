@@ -253,12 +253,33 @@ Any phase can declare `approval_gate: <name>` (or `loop.approval_gate:
    `{ success: true, paused: true, phases }`. The dispatch path in
    `src/index.ts` swallows this as a non-failure.
 
+A gate can also name the artifact it's asking a human to approve via
+`approval_artifact: <filename>` (alongside `approval_gate` / inside `loop:`),
+e.g. `architect-plan.md` or `reviewer-verdict.md`. The filename is stored on
+the `workflow_approvals` row (`artifact` column) and powers the **focused
+approval view** (below). The gate's `approval_gate_message` can deep-link to
+that view with the `{{approvalUrl}}` template helper — `PhaseExecutor.
+pauseForApproval` injects the freshly-minted `approvalId` into the message
+render context, and `{{approvalUrl}}` renders `${publicUrl}/admin/?approval=<id>`
+(empty when no `PUBLIC_URL` is configured, so the rest of the message still
+posts). This works identically for GitHub- and Slack-initiated runs — both
+build the same template context with `publicUrl = callbacks.publicUrl`.
+
 The user then resolves the gate via one of:
 
 - **GitHub comment**: `@last-light approve` / `@last-light reject <reason>`.
   Router classifies it and dispatches the `approval-response` skill.
 - **Slack slash**: `/approve [workflowRunId]`, `/reject [id] [reason]`.
-- **Dashboard**: approve/reject button on the workflow detail page.
+- **Dashboard**: approve/reject button on the workflow detail page, or the
+  **focused approval view** at `/admin/?approval=<id>` (deep-linked from the
+  gate message / the run-detail banner's "Open focused review" link). It loads
+  `GET /admin/api/approvals/:id`, which enriches the approval with an
+  `artifactRef` derived from the run (`context.owner` + bare `repo` +
+  `buildAssetIssueKey`): in **server** storage mode the view embeds the
+  artifact editor (edit + save the store doc, then approve); in **repo** mode it
+  links out to the doc's file on GitHub (`context.branch` + `issueDir`). Both
+  approve/reject go through the same `POST /approvals/:id/respond` →
+  `config.resumeWorkflow` path as the inline button.
 
 All three paths funnel into the same `resumeWorkflowRun(run, sender)`
 callback wired in `src/index.ts`. It updates `workflow_approvals`,

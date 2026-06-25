@@ -32,8 +32,8 @@ import {
   getWorkflowTriggerKinds,
 } from "../workflows/triggers.js";
 import { getManagedRepos } from "../managed-repos.js";
-import { BuildAssetStore } from "../state/build-assets.js";
-import type { PublicConfigBundle } from "../config.js";
+import { BuildAssetStore, buildAssetIssueKey } from "../state/build-assets.js";
+import type { PublicConfigBundle, BuildAssetsLocation } from "../config.js";
 
 /**
  * Parse a JSON status column (`extension_status` / `skills_status`) into the
@@ -58,6 +58,13 @@ export interface AdminConfig {
    * unconfigured — the endpoints then report the store as empty.
    */
   buildAssetsDir?: string;
+  /**
+   * Where build handoff docs live: "repo" (committed to the target repo) |
+   * "server" (externalized to the store). Drives the focused approval view's
+   * artifact ref: server mode → editable doc in the store; repo mode → a link
+   * to the file on GitHub. Defaults to "repo" when absent.
+   */
+  buildAssets?: BuildAssetsLocation;
   adminPassword: string;
   adminSecret: string;
   publicConfig?: PublicConfigBundle;
@@ -1034,6 +1041,49 @@ export function createAdminRoutes(
   app.get("/approvals", (c) => {
     const approvals = db.approvals.listPending();
     return c.json({ approvals });
+  });
+
+  // Single approval, enriched with an `artifactRef` the focused approval view
+  // uses to open the right doc. `artifactRef` is null when the gate carries no
+  // artifact. In server mode the ref points at the editable store doc; in repo
+  // mode it carries a GitHub blob URL (the doc is committed on the branch).
+  app.get("/approvals/:id", (c) => {
+    const approval = db.approvals.getById(c.req.param("id"));
+    if (!approval) return c.json({ error: "approval not found" }, 404);
+    const run = db.runs.getRun(approval.workflowRunId);
+
+    let artifactRef: {
+      mode: BuildAssetsLocation;
+      owner: string;
+      repo: string;
+      issueKey: string;
+      doc: string;
+      githubUrl?: string;
+    } | null = null;
+
+    if (approval.artifact && run && run.repo) {
+      // `workflow_runs.repo` is the BARE repo name and `owner` lives in
+      // run.context (set by simple.ts) — except in tests / legacy rows that
+      // may store "owner/repo". Handle both: prefer context.owner, else split.
+      const ctx = run.context ?? {};
+      const ctxOwner = typeof ctx.owner === "string" ? ctx.owner : undefined;
+      const repo = run.repo.includes("/") ? run.repo.split("/")[1] : run.repo;
+      const owner = ctxOwner ?? (run.repo.includes("/") ? run.repo.split("/")[0] : "");
+      if (owner && repo) {
+        const mode: BuildAssetsLocation = config.buildAssets ?? "repo";
+        const issueKey = buildAssetIssueKey(run.workflowName, run.issueNumber, run.id);
+        const issueDir =
+          typeof ctx.issueDir === "string" ? ctx.issueDir : `.lastlight/${issueKey}`;
+        const branch = typeof ctx.branch === "string" ? ctx.branch : undefined;
+        const githubUrl =
+          mode === "repo" && branch
+            ? `https://github.com/${owner}/${repo}/blob/${encodeURIComponent(branch)}/${issueDir}/${approval.artifact}`
+            : undefined;
+        artifactRef = { mode, owner, repo, issueKey, doc: approval.artifact, githubUrl };
+      }
+    }
+
+    return c.json({ approval, artifactRef, run: run ?? null });
   });
 
   app.post("/approvals/:id/respond", async (c) => {

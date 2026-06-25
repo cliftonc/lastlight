@@ -18,6 +18,11 @@ import { ConfigPage } from "./components/ConfigPage";
 const ArtifactsPage = lazy(() =>
   import("./components/ArtifactsPage").then((m) => ({ default: m.ArtifactsPage })),
 );
+// Lazy for the same reason as ArtifactsPage — the focused approval view embeds
+// the MDXEditor in server mode.
+const FocusedApprovalView = lazy(() =>
+  import("./components/FocusedApprovalView").then((m) => ({ default: m.FocusedApprovalView })),
+);
 import {
   HomeIcon,
   RectangleStackIcon,
@@ -405,12 +410,25 @@ function readCliLogin(): CliLogin | null {
   return null;
 }
 
+function readApprovalId(): string | null {
+  return new URLSearchParams(window.location.search).get("approval");
+}
+
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [slackOAuth, setSlackOAuth] = useState(false);
   const [githubOAuth, setGithubOAuth] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [cliLogin, setCliLogin] = useState<CliLogin | null>(() => readCliLogin());
+  // Focused approval deep link (?approval=<id>). Tracked here so it survives
+  // login and re-reads on pushState/popstate navigation.
+  const [approvalId, setApprovalId] = useState<string | null>(() => readApprovalId());
+
+  useEffect(() => {
+    const onPop = () => setApprovalId(readApprovalId());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -516,6 +534,21 @@ export default function App() {
           setCliLogin(null);
         }}
       />
+    );
+  }
+  if (approvalId) {
+    return (
+      <Suspense fallback={<div className="h-full flex items-center justify-center text-base-content/40">Loading…</div>}>
+        <FocusedApprovalView
+          approvalId={approvalId}
+          onClose={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("approval");
+            window.history.pushState(null, "", url.toString());
+            setApprovalId(null);
+          }}
+        />
+      </Suspense>
     );
   }
   return (

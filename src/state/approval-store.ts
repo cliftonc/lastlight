@@ -12,6 +12,11 @@ export interface WorkflowApproval {
    * thread (used by the socratic explore loop).
    */
   kind: 'approve' | 'reply';
+  /**
+   * Artifact (handoff doc) filename this gate is asking the reviewer to
+   * approve, e.g. `architect-plan.md`. Surfaced by the focused approval view.
+   */
+  artifact?: string;
   requestedBy?: string;
   respondedBy?: string;
   response?: string;
@@ -41,8 +46,8 @@ export class ApprovalStore {
     this.db
       .prepare(
         `
-      INSERT INTO workflow_approvals (id, workflow_run_id, gate, summary, status, kind, requested_by, created_at)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+      INSERT INTO workflow_approvals (id, workflow_run_id, gate, summary, status, kind, artifact, requested_by, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
     `,
       )
       .run(
@@ -51,6 +56,7 @@ export class ApprovalStore {
         approval.gate,
         approval.summary,
         approval.kind ?? "approve",
+        approval.artifact ?? null,
         approval.requestedBy ?? null,
         approval.createdAt,
       );
@@ -161,6 +167,7 @@ export class ApprovalStore {
       summary: row.summary as string,
       status: row.status as WorkflowApproval['status'],
       kind: ((row.kind as string | undefined) || "approve") as WorkflowApproval["kind"],
+      artifact: row.artifact as string | undefined || undefined,
       requestedBy: row.requested_by as string | undefined || undefined,
       respondedBy: row.responded_by as string | undefined || undefined,
       response: row.response as string | undefined || undefined,
