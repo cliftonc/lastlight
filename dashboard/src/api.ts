@@ -276,9 +276,20 @@ export interface WorkflowApproval {
   gate: string;
   summary: string;
   status: "pending" | "approved" | "rejected";
+  /**
+   * Gate flavor. `approve` gates resolve on an explicit approve/reject; `reply`
+   * gates (socratic explore loop) resolve on any free-form reply.
+   */
+  kind?: "approve" | "reply";
   /** Handoff doc filename this gate is asking the reviewer to approve. */
   artifact?: string;
   requestedBy?: string;
+  /** Who approved/rejected (GitHub login / Slack user id / "admin"). */
+  respondedBy?: string;
+  /** Free-form comment/reason left with the decision (or reply text). */
+  response?: string;
+  /** ISO timestamp the decision was recorded. */
+  respondedAt?: string;
   createdAt: string;
 }
 
@@ -414,6 +425,10 @@ export const api = {
   workflowRun: (id: string) => req<{ workflowRun: WorkflowRun }>(`/workflow-runs/${id}`),
   workflowRunExecutions: (id: string) =>
     req<{ executions: WorkflowRunExecution[] }>(`/workflow-runs/${id}/executions`),
+  // All approvals (pending + resolved) for one run — powers the pipeline's
+  // approval-gate nodes and the detail panel's approval history.
+  workflowRunApprovals: (id: string) =>
+    req<{ approvals: WorkflowApproval[] }>(`/workflow-runs/${id}/approvals`),
   cancelWorkflowRun: (id: string) =>
     req<{ cancelled: string }>(`/workflow-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   workflowDefinition: (name: string) =>

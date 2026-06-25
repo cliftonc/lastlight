@@ -61,6 +61,8 @@ interface ResizablePipelineProps {
   definition: WorkflowDefinition | null;
   definitionError: string | null;
   executions: WorkflowRunExecution[];
+  /** Run-scoped approvals (all statuses) for the gate nodes + approval card. */
+  approvals: WorkflowApproval[];
   selectedPhase: string | null;
   onPhaseClick: (phase: string | null) => void;
   selectedExecution: WorkflowRunExecution | null;
@@ -79,6 +81,7 @@ function ResizablePipeline({
   definition,
   definitionError,
   executions,
+  approvals,
   selectedPhase,
   onPhaseClick,
   selectedExecution,
@@ -135,6 +138,7 @@ function ResizablePipeline({
             run={run}
             definition={definition}
             executions={executions}
+            approvals={approvals}
             height={180}
             selectedPhase={selectedPhase}
             onPhaseClick={onPhaseClick}
@@ -160,6 +164,7 @@ function ResizablePipeline({
               definition={definition}
               execution={selectedExecution}
               totalExecutions={selectedExecutions.length}
+              approvals={approvals}
             />
           </div>
           <div className="flex-1 overflow-hidden flex flex-col border border-base-300/60 rounded bg-base-100">
@@ -173,9 +178,11 @@ function ResizablePipeline({
               />
             ) : (
               <div className="flex-1 flex items-center justify-center text-base-content/40 text-sm p-6 text-center">
-                {selectedExecution
-                  ? "Session not captured for this run."
-                  : "No execution recorded for this phase yet."}
+                {selectedPhase?.startsWith("approval:")
+                  ? "Approval gate — no agent session. See the gate details on the left."
+                  : selectedExecution
+                    ? "Session not captured for this run."
+                    : "No execution recorded for this phase yet."}
               </div>
             )}
           </div>
@@ -192,12 +199,47 @@ function ResizablePipeline({
 // ── Detail panel ────────────────────────────────────────────────────────
 
 function DetailPanel({ run, approvals, onCancel, onApprovalResponded, onOpenDefinition }: DetailPanelProps) {
-  const runApprovals = approvals.filter((a) => a.workflowRunId === run.id);
   const canCancel = run.status === "running" || run.status === "paused";
 
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
   const [definitionError, setDefinitionError] = useState<string | null>(null);
   const [executions, setExecutions] = useState<WorkflowRunExecution[]>([]);
+
+  // Run-scoped approvals — ALL statuses (pending + resolved), unlike the global
+  // pending-only `approvals` prop. Drives the pipeline's gate nodes and the
+  // detail panel's read-only approval history. Seeded from the pending prop for
+  // an instant banner, then enriched (with resolved history) by the fetch.
+  const [runApprovals, setRunApprovals] = useState<WorkflowApproval[]>(() =>
+    approvals.filter((a) => a.workflowRunId === run.id),
+  );
+  const [approvalRefresh, setApprovalRefresh] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOnce = () => {
+      api
+        .workflowRunApprovals(run.id)
+        .then((res) => {
+          if (!cancelled) setRunApprovals(res.approvals);
+        })
+        .catch(() => {
+          /* keep the last good list (e.g. the prop seed) on transient error */
+        });
+    };
+    fetchOnce();
+    const isTerminal =
+      run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
+    const timer = isTerminal ? null : setInterval(fetchOnce, 3000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [run.id, run.status, approvalRefresh]);
+
+  const pendingApprovals = runApprovals.filter((a) => a.status === "pending");
+  const handleApprovalResponded = () => {
+    setApprovalRefresh((n) => n + 1);
+    onApprovalResponded();
+  };
   // Persisted in the URL so a deep link to ?run=…&phase=… reopens the same
   // split-view the user shared. Cleared when switching workflow runs (the
   // phase param from a previous run isn't meaningful in a new one).
@@ -325,13 +367,14 @@ function DetailPanel({ run, approvals, onCancel, onApprovalResponded, onOpenDefi
         {run.finishedAt && <span>finished {timeAgo(run.finishedAt)} ago</span>}
       </div>
 
-      <ApprovalBanner approvals={runApprovals} onResponded={onApprovalResponded} />
+      <ApprovalBanner approvals={pendingApprovals} onResponded={handleApprovalResponded} />
 
       <ResizablePipeline
         run={run}
         definition={definition}
         definitionError={definitionError}
         executions={executions}
+        approvals={runApprovals}
         selectedPhase={selectedPhase}
         onPhaseClick={setSelectedPhase}
         selectedExecution={selectedExecution}

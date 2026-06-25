@@ -788,6 +788,18 @@ export function createAdminRoutes(
     return c.json({ executions });
   });
 
+  // All approvals (pending + resolved) for a workflow run, oldest first. Powers
+  // the pipeline's approval-gate nodes + the detail panel's read-only approval
+  // history (status, who responded, when, and any comment). The global
+  // /approvals endpoint only lists pending ones, so it can't show history.
+  app.get("/workflow-runs/:id/approvals", (c) => {
+    const id = c.req.param("id");
+    const run = db.runs.getRun(id);
+    if (!run) return c.json({ error: "workflow run not found" }, 404);
+    const approvals = db.approvals.listForWorkflow(run.id);
+    return c.json({ approvals });
+  });
+
   app.post("/workflow-runs/:id/cancel", async (c) => {
     const id = c.req.param("id");
     const run = db.runs.getRun(id);

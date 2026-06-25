@@ -626,6 +626,46 @@ describe("POST /workflow-runs/:id/cancel", () => {
   });
 });
 
+describe("GET /workflow-runs/:id/approvals", () => {
+  function makeApprovalsDb(run: unknown, approvals: unknown[]) {
+    const listForWorkflow = vi.fn(() => approvals);
+    const db = {
+      ...((mockDb as unknown) as Record<string, unknown>),
+      runs: {
+        ...((mockDb as unknown as { runs: Record<string, unknown> }).runs),
+        getRun: vi.fn(() => run),
+      },
+      approvals: {
+        ...((mockDb as unknown as { approvals: Record<string, unknown> }).approvals),
+        listForWorkflow,
+      },
+    } as unknown as StateDb;
+    return { db, listForWorkflow };
+  }
+
+  it("returns 404 when the run is not found", async () => {
+    const { db } = makeApprovalsDb(null, []);
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/missing/approvals");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns every approval (all statuses) for the run, looked up by run id", async () => {
+    const run = { id: "run-1", triggerId: "t1", workflowName: "build" };
+    const approvals = [
+      { id: "a1", workflowRunId: "run-1", gate: "post_architect", status: "approved", respondedBy: "alice", createdAt: "2026-01-01T00:00:00Z" },
+      { id: "a2", workflowRunId: "run-1", gate: "pre_fix", status: "pending", createdAt: "2026-01-01T01:00:00Z" },
+    ];
+    const { db, listForWorkflow } = makeApprovalsDb(run, approvals);
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/run-1/approvals");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { approvals: unknown[] };
+    expect(body.approvals).toEqual(approvals);
+    expect(listForWorkflow).toHaveBeenCalledWith("run-1");
+  });
+});
+
 describe("GET /sessions — content filter + liveness", () => {
   const now = Date.now() / 1000;
   const meta = (over: Record<string, unknown>) => ({

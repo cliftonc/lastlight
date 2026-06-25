@@ -17,6 +17,7 @@ import type {
   WorkflowDefinition,
   PhaseHistoryEntry,
   WorkflowRunExecution,
+  WorkflowApproval,
 } from "../api";
 
 type PhaseStatus = "pending" | "active" | "paused" | "done" | "failed";
@@ -27,6 +28,10 @@ interface PhaseNodeData extends Record<string, unknown> {
   timestamp?: string;
   duration?: number;
   selected?: boolean;
+  /** "approval" nodes are human-in-the-loop gates, not executed phases. */
+  kind?: "phase" | "approval";
+  /** Pulse the status dot (a pending gate awaiting a decision). */
+  pulse?: boolean;
 }
 
 function formatDuration(secs: number): string {
@@ -41,13 +46,25 @@ function formatTime(ts: string): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+/** Tiny lock glyph for the approval-gate node header. */
+function LockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-2 h-2">
+      <rect x="5" y="11" width="14" height="9" rx="1.5" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
 function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
+  const isApproval = data.kind === "approval";
   const dotClass = clsx("w-2.5 h-2.5 rounded-full shrink-0", {
     "bg-success": data.status === "done",
     "bg-error": data.status === "failed",
     "bg-info animate-pulse": data.status === "active",
     "bg-warning": data.status === "paused",
     "bg-base-300": data.status === "pending",
+    "animate-pulse": data.pulse,
   });
 
   const containerClass = clsx(
@@ -58,6 +75,9 @@ function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
       "border-info/60 bg-info/15": data.status === "active",
       "border-warning/60 bg-warning/15": data.status === "paused",
       "border-base-300 bg-base-300/70": data.status === "pending",
+      // Approval gates get a dashed border so they read as a decision point,
+      // not an executed phase.
+      "border-dashed": isApproval,
       "ring-2 ring-primary ring-offset-1 ring-offset-base-100": data.selected,
     },
   );
@@ -65,6 +85,11 @@ function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
   return (
     <div className={containerClass}>
       <Handle type="target" position={Position.Left} className="!bg-base-300/60 !border-none !w-1 !h-1" />
+      {isApproval && (
+        <span className="text-[9px] font-semibold uppercase tracking-wider text-base-content/40 leading-none flex items-center gap-0.5">
+          <LockIcon /> approval
+        </span>
+      )}
       <div className="flex items-center gap-1.5">
         <span className={dotClass} />
         <span className="text-xs font-medium text-base-content/80">{data.label}</span>
@@ -117,6 +142,13 @@ interface Props {
    * completes, so its timestamps are useless as start times.
    */
   executions?: WorkflowRunExecution[];
+  /**
+   * Approval gates for this run (all statuses). Rendered in place of the
+   * generic `waiting_approval` history marker as status-colored gate nodes,
+   * labeled by gate name. Node ids are `approval:<id>` so the detail panel can
+   * resolve the clicked gate back to its record.
+   */
+  approvals?: WorkflowApproval[];
   /** Pixel height of the pipeline canvas. Defaults to 180. */
   height?: number | string;
   /** Optional: phase name currently selected (for visual indicator). */
@@ -140,6 +172,7 @@ export function WorkflowPipeline({
   run,
   definition,
   executions,
+  approvals,
   height = 180,
   selectedPhase,
   onPhaseClick,
@@ -235,6 +268,29 @@ export function WorkflowPipeline({
       };
     };
 
+    // An approval gate, rendered in place of the generic `waiting_approval`
+    // history marker. Colored by approval status; a pending gate pulses to
+    // signal it's blocking the run.
+    const buildApprovalNode = (a: WorkflowApproval, x: number): Node<PhaseNodeData> => {
+      const id = `approval:${a.id}`;
+      const status: PhaseStatus =
+        a.status === "approved" ? "done" : a.status === "rejected" ? "failed" : "paused";
+      return {
+        id,
+        type: "phase",
+        position: { x, y: 0 },
+        data: {
+          label: a.gate,
+          status,
+          kind: "approval",
+          pulse: a.status === "pending",
+          timestamp: a.respondedAt ?? a.createdAt,
+          selected: selectedPhase === id,
+        },
+        style: { width: NODE_WIDTH },
+      };
+    };
+
     const reactFlowNodes: Node<PhaseNodeData>[] = [];
     const reactFlowEdges: Edge[] = [];
 
@@ -275,29 +331,66 @@ export function WorkflowPipeline({
       });
     }
 
-    // Orphaned dynamic phases (no matching declared parent) — append after
-    // the last declared column on row 0, same as the previous behavior.
-    orphans.forEach((name, idx) => {
-      const x = (declaredNames.length + idx) * (NODE_WIDTH + NODE_GAP);
-      reactFlowNodes.push(buildNode(name, x, 0));
-      const prev = idx === 0
-        ? declaredNames[declaredNames.length - 1]
-        : orphans[idx - 1];
-      if (prev) {
-        reactFlowEdges.push({
-          id: `${prev}->${name}`,
-          source: prev,
-          target: name,
-          style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
-          animated: false,
-        });
+    // Orphaned dynamic phases (no matching declared parent) — append after the
+    // last declared column on row 0, chained in chronological (phase_history)
+    // order. The generic `waiting_approval` marker is expanded into one
+    // status-colored gate node per approval (preserving its chronological slot,
+    // e.g. between PR and complete) so the run shows which gate paused it and
+    // how it resolved. If approvals haven't loaded yet, fall back to the raw
+    // marker so the node never vanishes from a paused run.
+    const approvalRows = approvals ?? [];
+    const renderedApprovalIds = new Set<string>();
+    const linkTo = (
+      target: string,
+      prev: string | undefined,
+    ) => {
+      if (!prev) return;
+      reactFlowEdges.push({
+        id: `${prev}->${target}`,
+        source: prev,
+        target,
+        style: { stroke: "var(--color-base-300, #ccc)", strokeWidth: 1.5 },
+        animated: false,
+      });
+    };
+
+    let col = declaredNames.length;
+    let prevId: string | undefined = declaredNames[declaredNames.length - 1];
+    for (const name of orphans) {
+      if (name === "waiting_approval" && approvalRows.length > 0) {
+        for (const a of approvalRows) {
+          const node = buildApprovalNode(a, col * (NODE_WIDTH + NODE_GAP));
+          reactFlowNodes.push(node);
+          linkTo(node.id, prevId);
+          renderedApprovalIds.add(a.id);
+          prevId = node.id;
+          col++;
+        }
+      } else {
+        const x = col * (NODE_WIDTH + NODE_GAP);
+        reactFlowNodes.push(buildNode(name, x, 0));
+        linkTo(name, prevId);
+        prevId = name;
+        col++;
       }
-    });
+    }
+
+    // Defensive: any approval whose `waiting_approval` marker isn't in history
+    // yet (race between the approval fetch and phase_history persistence) still
+    // gets a node appended at the tail so it's never silently dropped.
+    for (const a of approvalRows) {
+      if (renderedApprovalIds.has(a.id)) continue;
+      const node = buildApprovalNode(a, col * (NODE_WIDTH + NODE_GAP));
+      reactFlowNodes.push(node);
+      linkTo(node.id, prevId);
+      prevId = node.id;
+      col++;
+    }
 
     const canvasHeight = (maxColumnDepth + 1) * (NODE_ROW_HEIGHT + ROW_GAP) + 20;
 
     return { nodes: reactFlowNodes, edges: reactFlowEdges, canvasHeight };
-  }, [definition, run, executions, selectedPhase]);
+  }, [definition, run, executions, approvals, selectedPhase]);
 
   // Re-center on resize. The pipeline section is wrapped in a draggable
   // divider; without this the nodes drift off-screen as the section shrinks.

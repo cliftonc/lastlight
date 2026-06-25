@@ -133,6 +133,19 @@ export class ApprovalStore {
     return row ? this.deserialize(row) : null;
   }
 
+  /**
+   * List every approval for a workflow run — all statuses (pending, approved,
+   * rejected), oldest first. Powers the dashboard's per-run approval history
+   * (who approved/rejected a gate, when, and any comment). Unlike
+   * {@link getPendingForWorkflow} this does not filter on status.
+   */
+  listForWorkflow(workflowRunId: string): WorkflowApproval[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM workflow_approvals WHERE workflow_run_id = ? ORDER BY created_at ASC
+    `).all(workflowRunId) as Record<string, unknown>[];
+    return rows.map((r) => this.deserialize(r));
+  }
+
   /** List all pending approvals */
   listPending(): WorkflowApproval[] {
     const rows = this.db.prepare(`

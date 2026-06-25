@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import {
   api,
+  type WorkflowApproval,
   type WorkflowDefinition,
   type WorkflowPhaseDefinition,
   type WorkflowRun,
@@ -24,6 +25,14 @@ function openArtifact(repo: string, key: string, doc: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+/** In-SPA navigation to the focused approval view (`?approval=<id>`). */
+function openFocusedApproval(id: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("approval", id);
+  window.history.pushState(null, "", url.toString());
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 interface Props {
   phaseName: string;
   run: WorkflowRun;
@@ -35,6 +44,12 @@ interface Props {
    * a loop phase had multiple iterations even though we only show the latest.
    */
   totalExecutions: number;
+  /**
+   * Run-scoped approvals (all statuses). When the selected node is an approval
+   * gate (`phaseName === "approval:<id>"`) the panel shows that record's
+   * read-only history instead of execution metrics.
+   */
+  approvals?: WorkflowApproval[];
 }
 
 function fmtDuration(ms?: number): string {
@@ -65,6 +80,11 @@ function fmtTime(iso?: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
+function fmtDateTime(iso?: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString();
+}
+
 function fmtExtension(v: {
   status: string;
   mode?: string;
@@ -93,7 +113,19 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export function PhaseDetailPanel({ phaseName, run, definition, execution, totalExecutions }: Props) {
+export function PhaseDetailPanel({
+  phaseName,
+  run,
+  definition,
+  execution,
+  totalExecutions,
+  approvals,
+}: Props) {
+  // Approval-gate nodes carry id `approval:<id>` and have no execution row —
+  // resolve the clicked gate back to its record so we can show its history.
+  const selectedApproval = phaseName.startsWith("approval:")
+    ? approvals?.find((a) => `approval:${a.id}` === phaseName) ?? null
+    : null;
   // Look up the phase in the workflow definition (may be missing for dynamic
   // phases like reviewer_recheck_1 / reviewer_fix_1 — we still show what we know).
   const phaseDef: WorkflowPhaseDefinition | undefined = definition?.phases.find(
@@ -162,6 +194,12 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
   }, [owner, repoName, issueKey]);
 
   const [tab, setTab] = useState<"details" | "loaded" | "artifacts">("details");
+
+  // Approval gate selected → show its read-only history instead of execution
+  // metrics. (Hooks above run unconditionally; this branch is after them.)
+  if (selectedApproval) {
+    return <ApprovalDetail approval={selectedApproval} run={run} fullRepo={fullRepo} />;
+  }
 
   return (
     <div className="flex flex-col gap-3 p-3 text-xs">
@@ -336,6 +374,87 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Read-only approval-gate history shown when the user clicks a gate node in the
+ * pipeline. Surfaces who requested it, who responded, when, and any comment.
+ * The actionable approve/reject lives in the ApprovalBanner + focused review.
+ */
+function ApprovalDetail({
+  approval,
+  run,
+  fullRepo,
+}: {
+  approval: WorkflowApproval;
+  run: WorkflowRun;
+  fullRepo: string;
+}) {
+  const statusClass = clsx("badge badge-xs font-mono", {
+    "badge-success": approval.status === "approved",
+    "badge-error": approval.status === "rejected",
+    "badge-warning": approval.status === "pending",
+  });
+  const decisionVerb =
+    approval.status === "approved"
+      ? "Approved by"
+      : approval.status === "rejected"
+        ? "Rejected by"
+        : "Awaiting response";
+
+  return (
+    <div className="flex flex-col gap-3 p-3 text-xs">
+      <div>
+        <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-1">
+          Approval Gate
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-base-content text-sm font-mono">{approval.gate}</span>
+          <span className={statusClass}>{approval.status}</span>
+        </div>
+        {approval.summary && (
+          <div className="text-2xs text-base-content/60 mt-1">{approval.summary}</div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Kind">{approval.kind ?? "approve"}</Field>
+        <Field label="Requested by">{approval.requestedBy ?? "—"}</Field>
+        <Field label={decisionVerb}>
+          {approval.status === "pending" ? "—" : approval.respondedBy ?? "—"}
+        </Field>
+        <Field label="Responded at">{fmtDateTime(approval.respondedAt)}</Field>
+        <Field label="Created">{fmtDateTime(approval.createdAt)}</Field>
+        {approval.artifact && <Field label="Artifact">{approval.artifact}</Field>}
+      </div>
+
+      {approval.response && (
+        <div>
+          <div className="text-2xs font-semibold uppercase tracking-wider text-base-content/40 mb-1">
+            {approval.kind === "reply" ? "Reply" : "Comment"}
+          </div>
+          <div className="text-xs text-base-content/80 whitespace-pre-wrap break-words border border-base-300/40 bg-base-200/30 rounded px-2 py-1.5">
+            {approval.response}
+          </div>
+        </div>
+      )}
+
+      {approval.artifact && (
+        <button
+          className="btn btn-xs btn-ghost text-primary self-start"
+          onClick={() => openFocusedApproval(approval.id)}
+          title={`Review ${approval.artifact}`}
+        >
+          Open focused review →
+        </button>
+      )}
+
+      <div className="text-2xs text-base-content/30 font-mono break-all">
+        {fullRepo}
+        {run.issueNumber ? `#${run.issueNumber}` : ""}
+      </div>
     </div>
   );
 }

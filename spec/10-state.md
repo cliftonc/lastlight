@@ -134,6 +134,13 @@ repo / issueKey / doc, plus a GitHub blob URL in repo mode) so the view can
 open the doc — editable in server mode, link-out in repo mode — beside the
 approve / reject buttons. See `06-workflow-engine.md`.
 
+`ApprovalStore.listForWorkflow(runId)` returns every approval for a run (all
+statuses, oldest first), exposed as `GET /admin/api/workflow-runs/:id/approvals`.
+It powers the run-detail pipeline's approval-gate nodes (status-colored, labeled
+by gate) and their read-only history (who approved / rejected, when, and any
+comment) — distinct from `GET /admin/api/approvals`, which lists only pending
+gates across all runs.
+
 ### `cron_overrides`
 
 ```sql
