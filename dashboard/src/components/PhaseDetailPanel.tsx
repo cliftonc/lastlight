@@ -135,8 +135,16 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
 
   // Build-asset ("Artifacts") handoff docs live per-run under
   // <owner>/<repo>/<issueKey>/, keyed by the run's issueDir (server mode only;
-  // empty in repo mode). Derive the lookup coordinates from the run.
-  const [owner, repoName] = (run.repo ?? "").split("/", 2);
+  // empty in repo mode). `run.repo` is the bare repo name; the owner lives in
+  // context. Some runs may store "owner/repo" in repo — handle both.
+  const ctxOwner = typeof run.context?.owner === "string" ? run.context.owner : "";
+  const rawRepo = run.repo ?? "";
+  const fullRepo = rawRepo.includes("/")
+    ? rawRepo
+    : ctxOwner
+      ? `${ctxOwner}/${rawRepo}`
+      : rawRepo;
+  const [owner, repoName] = fullRepo.split("/", 2);
   const issueDir = typeof run.context?.issueDir === "string" ? run.context.issueDir : "";
   const issueKey = issueDir.replace(/^\.lastlight\//, "");
 
@@ -318,7 +326,7 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
             {artifacts.map((f) => (
               <li key={f}>
                 <button
-                  onClick={() => openArtifact(run.repo!, issueKey, f)}
+                  onClick={() => openArtifact(fullRepo, issueKey, f)}
                   className="w-full text-left px-2 py-1 rounded text-xs font-mono text-primary hover:bg-base-300/50 truncate"
                 >
                   {f}
