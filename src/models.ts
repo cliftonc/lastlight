@@ -5,7 +5,9 @@
  * recognised by the built-in registry.
  */
 
-import { getModel } from "@earendil-works/pi-ai";
+// pi 0.80 moved the static catalog read off the pi-ai root: `getModel` now lives
+// in providers/all as `getBuiltinModel` (the root/`compat` aliases are deprecated).
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import type { Model } from "@earendil-works/pi-ai";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
@@ -23,9 +25,9 @@ export function parseModelSpec(spec: string): { provider: string; modelId: strin
 export function resolveModel(spec: string, registry: ModelRegistry): Model<any> {
   const { provider, modelId } = parseModelSpec(spec);
 
-  // The types of getModel are narrow keyof MODELS — runtime accepts strings.
+  // The types of getBuiltinModel are narrow keyof MODELS — runtime accepts strings.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const builtin = (getModel as unknown as (p: string, m: string) => Model<any> | undefined)(
+  const builtin = (getBuiltinModel as unknown as (p: string, m: string) => Model<any> | undefined)(
     provider,
     modelId,
   );
