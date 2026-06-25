@@ -91,8 +91,9 @@ result = await agenticRun({
   profile,                  // GitHub access profile — see below
   sandbox: backend === "gondolin" ? "gondolin" : "none",
   sandboxEnv,               // env forwarded into the agent's bash
-  cwd: agentCwd,
+  cwd: agentCwd,            // the pre-cloned repo (workspace root if not pre-cloned)
   noSession: true,
+  skillPaths,               // per-phase skill bundle dirs, absolute (see Skills §)
   allowedHttpHosts,         // egress allowlist or ["*"]
   webSearch: config.webSearch === true,
   webSearchProvider: config.webSearchProvider,

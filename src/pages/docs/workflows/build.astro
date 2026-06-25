@@ -88,7 +88,10 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 	<p>
 		If the <code>post_architect</code> approval gate is enabled, the workflow
 		pauses here until a maintainer comments <code>@last-light approve</code>
-		or approves via the dashboard.
+		or approves via the dashboard. The pause message links to a
+		<strong>focused approval view</strong> for the architect plan — in
+		server storage mode the maintainer can edit and save the plan before
+		approving; in repo mode it links out to the doc on GitHub.
 	</p>
 
 	<h3>3. Executor</h3>

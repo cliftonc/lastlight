@@ -32,12 +32,16 @@ The harness does *not* paste skill bodies into the user prompt. The
 runner only:
 
 1. Resolves the named skills to absolute host directory paths.
-2. Stages each directory at `<workspace>/.agents/skills/<name>/`
-   before the agent runs.
-3. Lets pi-coding-agent's built-in `.agents/skills/` auto-discovery
-   pick them up — it scans the cwd at session start, extracts
-   name/description from the frontmatter, and emits the XML catalogue
-   into the system prompt.
+2. Stages each directory into a **per-phase bundle** at
+   `<workspaceRoot>/.lastlight-skills/<phaseName>/<name>/` before the
+   agent runs (symlink in gondolin/none, copy in docker). The bundle
+   sits at the workspace root — a sibling of any checked-out repo, never
+   inside its git tree — and is keyed per phase so concurrent phases in
+   one workspace can't clobber each other's catalogue.
+3. Maps the bundle to the agent explicitly via pi's `--skill`/`skillPaths`
+   (rather than relying on `.agents/skills` auto-discovery, which only
+   reads that one fixed name). pi extracts name/description from the
+   frontmatter and emits the XML catalogue into the system prompt.
 
 This means the runner never reads SKILL.md content. The contract
 between the harness and the SDK is purely filesystem layout +
@@ -93,9 +97,10 @@ skills/issue-triage/
     └── comment-template.md
 ```
 
-The **whole directory** is staged into the workspace — helper scripts
-and references are visible at `.agents/skills/<name>/scripts/...` and
-runnable / readable by the agent's bash and read tools.
+The **whole directory** is staged into the phase bundle — helper scripts
+and references are visible at
+`.lastlight-skills/<phase>/<name>/scripts/...` and runnable / readable by
+the agent's bash and read tools.
 
 ## Skill loader
 
@@ -153,10 +158,10 @@ The runner's resolution order (`buildPhasePrompt` in `runner.ts`):
    "see the `pr-review` skill for the structured-feedback format" and
    the agent reads it via its `read` tool.
 2. Else if `skills:` (or `skill:`) set — emit a short auto-generated
-   nudge that points the agent at the primary skill:
+   nudge that points the agent at the primary skill (the mapped skills
+   already appear in the system-prompt catalogue, so no path is needed):
    ```
    Use the **pr-review** skill to handle this request.
-   Read `.agents/skills/pr-review/SKILL.md` for the full instructions.
    Other skills available if you need them: issue-triage.
 
    Context:
@@ -169,41 +174,55 @@ The runner's resolution order (`buildPhasePrompt` in `runner.ts`):
 
 ## Workspace staging
 
-Before each agent run, `stageSkillsInWorkspace` in
-`src/engine/agent-executor.ts` materialises the named skills under
-`<agentCwd>/.agents/skills/<name>/`. Behaviour:
+Before each agent run, `stageSkillBundle` in
+`src/engine/agent-executor.ts` materialises the named skills into a
+**per-phase bundle** at `<workspaceRoot>/.lastlight-skills/<phaseKey>/<name>/`,
+then maps it to the agent explicitly via pi's `--skill` (docker) /
+`skillPaths` (in-process). Behaviour:
 
-- **Always clears the staging directory first.** Each phase gets a
-  clean slate — a phase with no `skills:`/`skill:` sees no
-  `.agents/skills/` at all, even if a previous phase in the same
-  linear-runner workspace staged some.
+- **cwd is the repo; the bundle is an out-of-repo sibling.** When the
+  harness pre-clones the repo, the agent's cwd **is** the checkout — so its
+  commands run inside the repo with no `cd` preamble. The skill bundle is
+  staged at the workspace root (`.lastlight-skills/`), a **sibling** of the
+  `<repo>/` checkout, and mapped by an **absolute** `--skill`/`skillPaths`
+  path so cwd is irrelevant: docker bind-mounts the whole workspace (the
+  sibling resolves), and `none` sees the host FS directly. **gondolin**
+  mounts *only* cwd, so a workspace-root sibling would be invisible — there
+  the bundle is staged *under* the repo and added to the checkout's local
+  `.git/info/exclude` (`excludeFromGit`), so the agent still can't commit
+  it. Non-pre-cloned workflows run with cwd = the workspace root.
+- **Keyed per phase (`phaseKey` = sanitized phase name).** Only the
+  phase's own `<phaseKey>` subtree is cleared, so a clean slate per phase
+  never disturbs a sibling phase — concurrent phases sharing one workspace
+  (sequential today, parallel via worktrees later) can't clobber each
+  other's catalogue. A phase with no `skills:`/`skill:` gets no bundle.
+- **Explicit mapping, not auto-discovery.** The bundle is NOT named
+  `.agents/skills` (pi's auto-discovery path); the resolved skill dirs are
+  passed to pi via `--skill`/`skillPaths` so the per-phase isolation
+  survives — auto-discovery only ever reads that one fixed name.
 - **Whole directory, not just SKILL.md.** `scripts/`, `references/`,
   `assets/` travel along.
 - **Two modes:**
-  - `symlink` (gondolin / none) — `symlinkSync(hostDir, stageDir, "dir")`.
-    Zero-copy; pi-coding-agent's tools run in the harness process and
-    can follow host symlinks.
-  - `copy` (docker) — recursive `cpSync(hostDir, stageDir, { recursive: true, dereference: true })`.
+  - `symlink` (gondolin / none) — `symlinkSync(hostDir, dest, "dir")`.
+    Zero-copy; pi reads the skill files host-side (`none`) or through the
+    cwd mount (`gondolin`, where the bundle sits under the repo).
+  - `copy` (docker) — recursive `cpSync(hostDir, dest, { recursive: true, dereference: true })`.
     Symlinks pointing at harness host paths wouldn't resolve inside the
     container; copy piggybacks on the existing workspace bind-mount
     instead of adding new `-v` flags per skill.
-- **Rooted at `agentCwd`, not workDir.** When the harness pre-cloned
-  the target repo (`access.prePopulateBranch` set), cwd is
-  `<workDir>/<repo>` and `.agents/skills/` is staged there. This
-  avoids the walk-up auto-discovery ever crossing the inner repo's
-  `.git` boundary.
 
 ```
-<workspace>/                  ← agent's cwd (host workDir or workDir/<repo>)
+<workspaceRoot>/              ← host workDir (bind-mounted whole on docker)
 ├── AGENTS.md                  ← persona + rules (see below)
-├── .agents/
-│   └── skills/
+├── .lastlight-skills/         ← sibling of the repo, never in its git tree
+│   └── <phase>/               ← e.g. reviewer, architect (per-phase bundle)
 │       ├── pr-review/         ← staged from <repo>/skills/pr-review/
 │       │   ├── SKILL.md
 │       │   └── ...
 │       └── issue-triage/
 │           └── SKILL.md
-└── ... (target repo files)
+└── <repo>/                    ← pre-cloned target repo = agent's cwd
+    └── .git/                  ← (gondolin: bundle lives here + info/exclude)
 ```
 
 ## Chat path
@@ -241,8 +260,8 @@ chat runtime:
 | `repo-health` | Weekly health report (open / stale / velocity / labels) | `repo-health.yaml`, `cron-health.yaml`, chat |
 | `security-review` | Diff-based security scan since last review | `security-review.yaml`, `cron-security.yaml` |
 | `security-feedback` | Break out scan findings into individual issues | `security-feedback.yaml` |
-| `building` | Shared craft: install deps + run the test/lint/typecheck gate in the sandbox (package-manager detection from lockfile, install-first, TDD discipline when implementing) | build executor + reviewer, `pr-fix.yaml`, `pr-review.yaml` |
-| `code-review` | Shared review rubric: finding tiers (Critical / Important / Suggestions / Nits) + what to check (correctness, security, edge cases, regression risk, test coverage) | build cycle's branch-diff reviewer, `pr-review.yaml` (same rubric, different procedure) |
+| `building` | Shared craft: install deps + run the test/lint/typecheck gate in the sandbox (package-manager detection from lockfile, install-first, TDD discipline when implementing, a decomposition budget (~15 cyclomatic), no compiler-silencing assertions, and building a runnable in-sandbox verification path when the only test path needs an unavailable external service) | build executor + reviewer, `pr-fix.yaml`, `pr-review.yaml` |
+| `code-review` | Shared review rubric: finding tiers (Critical / Important / Suggestions / Nits) + what to check (correctness incl. silent-default/dropped-output as a bug, security, edge cases, complexity, duplication, type-safety, regression risk, test coverage) | build cycle's branch-diff reviewer, `pr-review.yaml` (same rubric, different procedure) |
 | `issue-answer` | Answer a question directly: sourced neutral reply to a GitHub issue or Slack thread; research repo docs + web; label `question` (GitHub only); never write a brief, mark ready-for-agent, or change code | `answer.yaml` |
 | `chat` | Conversational assistant persona | chat (always-on) |
 
@@ -336,14 +355,15 @@ state belongs in `workflows/prompts/`.
   are silently dropped by pi-coding-agent's loader. Every SKILL.md in
   `skills/` must carry both.
 - **The runner never reads SKILL.md content.** It only resolves paths
-  and stages directories. Skill bodies reach the agent through
-  pi-coding-agent's auto-discovery + the agent's own `read` tool.
-- **`.agents/skills/` is cleared at every phase.** A phase with no
-  `skills:` declaration gets no staged catalogue, even if a previous
-  phase in the same workspace staged some.
+  and stages directories. Skill bodies reach the agent through pi's
+  `--skill`/`skillPaths` catalogue + the agent's own `read` tool.
+- **Each phase's bundle is cleared at phase start.** A phase with no
+  `skills:` declaration gets no staged catalogue; clearing only its own
+  `.lastlight-skills/<phase>/` subtree leaves sibling phases untouched.
 - **Whole directories travel.** `scripts/` / `references/` / `assets/`
-  next to a SKILL.md are visible at `.agents/skills/<name>/...` and
-  runnable / readable by the agent's bash and read tools.
+  next to a SKILL.md are visible at
+  `.lastlight-skills/<phase>/<name>/...` and runnable / readable by the
+  agent's bash and read tools.
 - **Agent context is *append-only* per session.** The sandbox writes
   `AGENTS.md` at startup and never modifies it. Chat injects it once
   into the system prompt. Drift between sessions only happens if
@@ -356,7 +376,7 @@ state belongs in `workflows/prompts/`.
 | Skill name validation + path resolution | `src/workflows/loader.ts` (`resolveSkillPaths`, `loadSkillRaw`) |
 | Phase config overlay (resolves `skill:`/`skills:` into `ExecutorConfig.skillPaths`) | `src/workflows/runner.ts` (`phaseConfigFor`) |
 | User prompt generation | `src/workflows/runner.ts` (`buildPhasePrompt`) |
-| Workspace staging (symlink/copy) | `src/engine/agent-executor.ts` (`stageSkillsInWorkspace`) |
+| Per-phase bundle staging (symlink/copy) | `src/engine/agent-executor.ts` (`stageSkillBundle`, `skillBundleKey`, `excludeFromGit`) |
 | Chat catalogue + `read_skill` tool | `src/engine/chat-skills.ts` |
 | Chat catalogue wiring | `src/index.ts` (ChatRunner boot) |
 | Skills | `skills/<name>/SKILL.md` |
@@ -366,10 +386,11 @@ state belongs in `workflows/prompts/`.
 ## Rebuild notes
 
 - **Filesystem layout is the contract.** The decision to stage skills
-  at `<cwd>/.agents/skills/` and rely on pi-coding-agent's
-  auto-discovery means there is no SDK-level skill API to maintain.
-  A re-implementation on a different SDK should pick an equivalent
-  filesystem convention rather than threading skill objects through
+  into a per-phase bundle under `<workspaceRoot>/.lastlight-skills/` and
+  map it via the SDK's `--skill`/`skillPaths` means there is no
+  SDK-level skill-object API to maintain. A re-implementation on a
+  different SDK should pick an equivalent filesystem convention rather
+  than threading skill objects through
   function calls.
 - **Keep skills flat.** The loader's flat-name policy is a feature.
   Nested category directories are useful for human navigation in the

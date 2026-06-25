@@ -23,7 +23,8 @@ depending on whether it declares `loop:` or `generic_loop:`.
 
 `prompt:` and `skills:` (or sugar `skill:`) may be set together — the
 prompt template is rendered as the user prompt, and the named skills
-are staged at `<workspace>/.agents/skills/<name>/` alongside so the
+are staged into the phase's bundle at
+`<workspaceRoot>/.lastlight-skills/<phase>/<name>/` alongside so the
 agent can pull them via its `read` tool. See [Skills](/spec/08-skills)
 for the full staging mechanism. `skill:` and `skills:` are mutually
 exclusive with each other (sugar collision).
@@ -51,6 +52,8 @@ Agent phases iterate when a loop is declared:
 | `{{#if !varName}}…{{/if}}` | Negated conditional. |
 | `{{slugify varName}}` | Helper — lowercase, hyphen-separated, max 40 chars. |
 | `{{branchUrl filename}}` | Helper — produces `https://github.com/{owner}/{repo}/blob/{branch}/{issueDir}/{filename}`. |
+| `{{artifactUrl filename}}` | Helper — mode-aware handoff-doc link: GitHub blob URL in repo mode, dashboard Artifacts deep link in server mode (falls back to the blob URL without `PUBLIC_URL`). |
+| `{{approvalUrl}}` | Helper — deep link to the focused approval view (`${publicUrl}/admin/?approval=<id>`) for the gate being rendered; empty without `PUBLIC_URL` or `approvalId`. |
 
 The `walkKey()` fallback (`templates.ts:112–126`) is load-bearing for
 phase outputs: a prompt can write `{{architect.output}}` to read the
@@ -102,13 +105,16 @@ string":
 7. `buildPhasePrompt(phase, ctx)`:
    - If `prompt:` set — `loadPromptTemplate(path)`, render against ctx.
    - Else if `skills:`/`skill:` set — emit a short auto-generated
-     nudge: `Use the **<primary>** skill … Read \`.agents/skills/<primary>/SKILL.md\` … Other skills available: …` followed by the workflow context as `key: value` lines.
+     nudge: `Use the **<primary>** skill … Other skills available: …` followed by the workflow context as `key: value` lines.
    - Otherwise — error.
-8. `executeAgent()` stages the resolved skill paths under
-   `<agentCwd>/.agents/skills/<name>/` (symlink in gondolin/none,
-   recursive copy in docker), writes `AGENTS.md`, then invokes the
-   [Sandbox](/spec/09-sandbox) with the rendered prompt. The agent's
-   `read` tool pulls SKILL.md content on demand —
+8. `executeAgent()` runs with cwd = the pre-cloned repo (workspace root if
+   not pre-cloned) and stages the resolved skill paths into a per-phase
+   bundle at `<workspaceRoot>/.lastlight-skills/<phase>/<name>/` (symlink in
+   gondolin/none, recursive copy in docker) — a sibling of the `<repo>/`
+   subdir, never in its git tree — then maps it to the agent via absolute
+   `--skill` (docker) / `skillPaths` (in-process). It writes `AGENTS.md`,
+   then invokes the [Sandbox](/spec/09-sandbox) with the rendered prompt.
+   The agent's `read` tool pulls SKILL.md content on demand —
    [Skills](/spec/08-skills).
 9. Output is parsed for verdict / status markers and stored in
    `phaseOutputs[phase.name]` (and `phaseOutputs[phase.output_var]` if
@@ -159,11 +165,24 @@ not through in-memory state. By convention:
 └── reviewer-verdict.md    ← VERDICT line + issues (appended per re-review)
 ```
 
-`issueDir` is set in `simple.ts:175–177` based on the run scope; every
+`issueDir` is set in `simple.ts` based on the run scope; every
 prompt hardcodes paths under `{{issueDir}}/`. The runner never reads
 or writes these files — the prompts manage the lifecycle. Each prompt
 commits its outputs before exiting; the next phase clones the branch
 and reads what it needs.
+
+**Server mode (`buildAssets.location = server`).** When externalized, the
+same `{{issueDir}}/` layout is used, but the docs are **not** committed into
+the target repo. Instead the executor stages the server store's copy into the
+workspace before each phase and harvests changes back afterwards
+(`stageArtifactsIn`/`harvestArtifactsOut`, `src/engine/agent-executor.ts`),
+the dir is added to `.git/info/exclude` so the agent's `git add -A` never
+sweeps it into the feature commit, and each prompt gates its
+`git add .lastlight/ && commit` behind `{{#if !externalizeArtifacts}}` (the
+inverse flag defaults absent⇒repo so any un-tagged render still commits).
+PR-body links use `{{artifactUrl}}`, which resolves to the dashboard's
+Artifacts view rather than a GitHub blob URL. The store and the cross-phase
+handoff are otherwise unchanged — the branch is just no longer the carrier.
 
 ## Prompt vs skill — when to pick which
 
@@ -233,7 +252,7 @@ filesystem + `read` tool path.
 | `phaseConfigFor` (resolves skills onto ExecutorConfig) | `src/workflows/runner.ts` |
 | Prompt templates | `workflows/prompts/*.md` |
 | Skill name validation + path resolution | `src/workflows/loader.ts` (`resolveSkillPaths`) |
-| Workspace skill staging | `src/engine/agent-executor.ts` (`stageSkillsInWorkspace`) |
+| Per-phase skill bundle staging | `src/engine/agent-executor.ts` (`stageSkillBundle`) |
 | Variable context assembly | `src/workflows/simple.ts` |
 
 ## Rebuild notes
