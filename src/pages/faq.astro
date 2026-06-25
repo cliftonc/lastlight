@@ -101,6 +101,14 @@ const description = "Frequently asked questions about Last Light — the open-so
 			</details>
 
 			<details class="faq-item">
+				<summary>Where do the build handoff docs live — and can I keep them out of the target repo?</summary>
+				<div class="faq-answer">
+					<p>During a build, each phase writes a handoff doc — <code>architect-plan.md</code>, <code>status.md</code>, <code>executor-summary.md</code>, <code>reviewer-verdict.md</code>, <code>guardrails-report.md</code>, and the <code>explore-*</code> docs. By default (<code>buildAssets.location: repo</code>) these are committed into the target repo under <code>.lastlight/&lt;issueKey&gt;/</code> and ride the working branch.</p>
+					<p>If you'd rather not commit them, set <code>buildAssets.location: server</code> (or the <code>LASTLIGHT_BUILD_ASSETS=server</code> env var). The docs are then externalized to the Last Light host — written under <code>$STATE_DIR/build-assets/&lt;owner&gt;/&lt;repo&gt;/&lt;issueKey&gt;/*.md</code> (override the root with <code>BUILD_ASSETS_DIR</code>), injected into each phase from outside the repo and harvested back after. PR-body links point at the dashboard's <em>Artifacts</em> view instead of GitHub blob URLs, and the admin API serves them read-only at <code>/admin/api/artifacts</code>. Nothing is committed into the target repo.</p>
+				</div>
+			</details>
+
+			<details class="faq-item">
 				<summary>How do permission profiles downscope the GitHub token?</summary>
 				<div class="faq-answer">
 					<p>The GitHub App itself has broad permissions (contents read/write, issues read/write, PRs read/write). But every workflow declares a <code>profile</code> — one of <code>read</code>, <code>issues-write</code>, <code>review-write</code>, or <code>repo-write</code>. Before spawning a sandbox, the harness mints an installation token that only has the scopes that profile needs.</p>

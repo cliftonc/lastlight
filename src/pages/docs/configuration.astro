@@ -286,6 +286,49 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 		</tbody>
 	</table>
 
+	<h2>Build assets</h2>
+
+	<p>
+		The per-phase build handoff docs — <code>architect-plan.md</code>,
+		<code>status.md</code>, <code>executor-summary.md</code>,
+		<code>reviewer-verdict.md</code>, <code>guardrails-report.md</code>, and the
+		<code>explore-*</code> docs — can live in one of two places, selected by
+		<code>buildAssets.location</code> in YAML (or the <code>LASTLIGHT_BUILD_ASSETS</code>
+		env var). With <code>repo</code> (the default) they're committed into the target
+		repo under <code>.lastlight/&lt;issueKey&gt;/</code> and ride the working branch —
+		the historical behaviour. With <code>server</code> they're externalized to the
+		Last Light host instead, never committed into the target repo: injected into each
+		phase from outside the repo and harvested back after, PR-body links point at the
+		dashboard's <strong>Artifacts</strong> view rather than GitHub blob URLs, and the
+		admin API serves them read-only at <code>/admin/api/artifacts</code>.
+	</p>
+
+	<table class="docs-table config-table">
+		<colgroup>
+			<col class="col-var" />
+			<col class="col-req" />
+			<col class="col-default" />
+			<col class="col-desc" />
+		</colgroup>
+		<thead>
+			<tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td><code>LASTLIGHT_BUILD_ASSETS</code></td>
+				<td>No</td>
+				<td><code>repo</code></td>
+				<td>Where build handoff docs live: <code>repo</code> commits them into the target repo under <code>.lastlight/&lt;issueKey&gt;/</code> on the working branch; <code>server</code> externalizes them to the Last Light host and never commits them into the target repo. Equivalent to the <code>buildAssets.location</code> config key.</td>
+			</tr>
+			<tr>
+				<td><code>BUILD_ASSETS_DIR</code></td>
+				<td>No</td>
+				<td><code>$STATE_DIR/build-assets</code></td>
+				<td>Server-mode store root. Docs are written under <code>&lt;owner&gt;/&lt;repo&gt;/&lt;issueKey&gt;/*.md</code>. Only used when <code>LASTLIGHT_BUILD_ASSETS=server</code>.</td>
+			</tr>
+		</tbody>
+	</table>
+
 	<h2>Admin dashboard</h2>
 
 	<table class="docs-table config-table">
