@@ -77,6 +77,19 @@ export interface SimpleWorkflowRequest {
  */
 export const PER_TARGET_REUSE_WORKFLOWS = new Set(["pr-review", "pr-fix"]);
 
+/**
+ * Workflows that synthesize their own `lastlight/N-slug` branch (which doesn't
+ * exist on the remote at dispatch time) yet should still pre-populate the
+ * sandbox: the agent's cwd becomes the repo root (no `git clone`/`cd`), and —
+ * for the read-only `verify`/`qa-test` runs — server-mode artifacts the agent
+ * writes to `.lastlight/<key>/` (e.g. browser-QA screenshots) land where
+ * `serverArtifacts()` harvests them instead of being orphaned a level up.
+ * `build` was the original member; verify/qa-test were added for the harvest
+ * fix. The dispatcher leaves `prePopulateBranch` unset for all three; the
+ * missing-branch fallback in `prePopulateWorkspace` clones the default branch.
+ */
+export const PREPOPULATE_SYNTH_WORKFLOWS = new Set(["build", "verify", "qa-test"]);
+
 export function workflowScopedTaskId(
   repo: string,
   number: number | undefined,
@@ -147,16 +160,12 @@ export async function runSimpleWorkflow(
       ? `lastlight/${number}-${slugify(request.issueTitle || `issue-${number}`)}`
       : `lastlight/${workflowName}`);
 
-  // Build-style workflows synthesize a new `lastlight/N-slug` branch that
-  // doesn't exist on the remote at dispatch time, so the dispatcher leaves
-  // `prePopulateBranch` unset. The harness can still pre-clone — the new
-  // missing-branch fallback in `prePopulateWorkspace` clones the default
-  // branch and creates the target branch locally. With that, every phase of
-  // a build run enters a workspace already at `<repo>/` on the right branch,
-  // and the per-phase prompts no longer need a `git clone … && cd <repo>`
-  // preamble.
+  // Pre-populate (clone into the sandbox, cwd = repo root) for the workflows in
+  // PREPOPULATE_SYNTH_WORKFLOWS even though they synthesize a not-yet-pushed
+  // branch — see that const's doc comment for why (the verify/qa-test harvest
+  // fix in particular).
   const effectivePrePopulateBranch = request.prePopulateBranch
-    ?? (workflowName === "build" ? branch : undefined);
+    ?? (PREPOPULATE_SYNTH_WORKFLOWS.has(workflowName) ? branch : undefined);
 
   // ── Resume handling ────────────────────────────────────────────────────────
   //
@@ -307,6 +316,15 @@ export async function runSimpleWorkflow(
     externalizeArtifacts: config.buildAssets === "server",
     // Dashboard base URL for the {{artifactUrl}} helper (server-mode doc links).
     publicUrl: callbacks.publicUrl,
+    // Public, unauthenticated, image-only base URL for inline screenshot embeds
+    // in the browser-QA comment (so GitHub's image proxy can fetch them without
+    // a login). The agent appends `/<name>.png` per screenshot it saves. Empty
+    // when no PUBLIC_URL is configured — the prompt then falls back to
+    // filename-only references via `{{#if !artifactBaseUrl}}`. issueKey is
+    // issueDir minus the `.lastlight/` prefix.
+    artifactBaseUrl: callbacks.publicUrl
+      ? `${String(callbacks.publicUrl).replace(/\/+$/, "")}/admin/api/public/artifacts/${owner}/${repo}/${issueDir.replace(/^\.lastlight\//, "")}`
+      : "",
     bootstrapLabel,
     contextSnapshot,
     // Forwarded to the executor (via gitSandboxAccessForWorkflow) so the

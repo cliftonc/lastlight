@@ -181,7 +181,11 @@ sweeps it into the feature commit, and each prompt gates its
 `git add .lastlight/ && commit` behind `{{#if !externalizeArtifacts}}` (the
 inverse flag defaults absent⇒repo so any un-tagged render still commits).
 PR-body links use `{{artifactUrl}}`, which resolves to the dashboard's
-Artifacts view rather than a GitHub blob URL. The store and the cross-phase
+Artifacts view rather than a GitHub blob URL. The browser-QA prompts instead use
+`{{artifactBaseUrl}}` — the unauthenticated, image-only public base
+(`<publicUrl>/admin/api/public/artifacts/<owner>/<repo>/<issueKey>`, empty when
+no `PUBLIC_URL`) — to embed each screenshot inline (`![cap]({{artifactBaseUrl}}/<name>.png)`)
+so it renders directly in the GitHub comment. The store and the cross-phase
 handoff are otherwise unchanged — the branch is just no longer the carrier.
 
 ## Prompt vs skill — when to pick which

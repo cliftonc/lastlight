@@ -70,7 +70,10 @@ order, capturing evidence (command + stdout/stderr + exit code) at every step.
 ## Report
 
 Produce your report as your **final message** in this shape — the workflow posts
-it for you (don't `github_add_issue_comment` yourself; that would double-post):
+it for you (don't `github_add_issue_comment` yourself; that would double-post).
+**Keep it concise**: a one-line environment summary, the results table (terse
+Evidence cells), the failures, and a short coverage note — not a step-by-step
+narration.
 
 ```
 ## QA Test: <target>

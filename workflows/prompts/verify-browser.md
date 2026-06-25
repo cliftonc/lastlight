@@ -6,6 +6,12 @@ Read the `browser-qa` skill for the driver contract and the `verify` skill for
 the investigator rules, then follow them. The `building` skill installs and runs
 the repo.
 
+**Stay in the browser.** Do **not** read, quote, or analyse the repo's source
+code — the text pass already covered the code. Your evidence is strictly what
+the browser shows: the driver's extracted text, assertion results, console
+errors, and the screenshots. No `index.html`/CSS walkthroughs, no "from the
+checked-in code" observations.
+
 ## The claim to test
 
 {{#if commentBody}}
@@ -42,9 +48,9 @@ pass.
 
 ## Workspace + run the app
 
-The repo is (or will be) in a `{{repo}}/` subdirectory under your cwd. If you see
-`{{repo}}/.git/`, the harness pre-cloned it — `cd {{repo}}`. For a PR claim,
-check out the PR head. Follow the `building` skill to install and start the app's
+You are already inside the **{{repo}}** repo at branch {{branch}} — the harness
+pre-cloned it and your cwd is the repo root (no `cd`). For a PR claim, check out
+the PR head. Follow the `building` skill to install and start the app's
 dev-server in the background; wait until it's listening on `localhost`.
 
 ## Drive the UI and capture evidence
@@ -52,8 +58,7 @@ dev-server in the background; wait until it's listening on `localhost`.
 Author a `flow.json` (shape documented in the `browser-qa` skill), then run
 `agent-browser.mjs run flow.json --base-url http://localhost:<port>
 --out-dir {{issueDir}}`. Save every screenshot under **`{{issueDir}}/`** — the
-harness harvests that directory, so the PNGs become viewable in the dashboard
-**Artifacts** view for this run. Parse the JSON report (extracted text,
+harness harvests that directory. Parse the JSON report (extracted text,
 assertion results, console errors) — that, not the images, is what you reason
 over. For a before/after regression claim, capture both states.
 
@@ -63,11 +68,22 @@ Your **final message is the report**, and the harness posts it for you{{#if issu
 a comment on **#{{issueNumber}}**{{/if}}{{#if !issueNumber}} back into the thread this request came from{{/if}}.
 Title it clearly as the **browser-QA evidence** so it reads as a supplement to
 the text verdict, not a competing one. Use the `verify` report shape
-(Environment / Evidence / **Conclusion: CONFIRMED | REFUTED | INCONCLUSIVE**),
-and under Evidence reference each screenshot **by filename** (e.g.
-`after-login.png`) and note it's in the run's Artifacts view. **Do NOT post it
-yourself** with `github_add_issue_comment` — that would double-post. Never
-fabricate a screenshot or a pass; a clearly-evidenced **REFUTED** is a real
-finding. If screenshots couldn't be persisted (no server-mode build assets),
-still report what the DOM/text evidence showed and say the images weren't
-retained.
+(Environment / Evidence / **Conclusion: CONFIRMED | REFUTED | INCONCLUSIVE**).
+
+**Keep it tight** — a one-line environment summary, the evidence (screenshots +
+the key assertion/text/console results), and a one-sentence conclusion. No
+per-step narration, no code analysis, no long Coverage prose; a short
+"what was / wasn't exercised" is enough.
+
+**Embed each screenshot inline** so it renders in the comment:
+{{#if artifactBaseUrl}}every PNG you saved to `{{issueDir}}/<name>.png` is
+served publicly at `{{artifactBaseUrl}}/<name>.png` — reference it as
+`![<short caption>]({{artifactBaseUrl}}/<name>.png)` under Evidence.{{/if}}{{#if !artifactBaseUrl}}no
+public URL is configured, so reference each screenshot by filename (e.g.
+`after-login.png`) and note it's in the run's Artifacts view.{{/if}}
+
+**Do NOT post it yourself** with `github_add_issue_comment` — that would
+double-post. Never fabricate a screenshot or a pass; a clearly-evidenced
+**REFUTED** is a real finding. If screenshots couldn't be persisted (no
+server-mode build assets), still report what the DOM/text evidence showed and
+say the images weren't retained.

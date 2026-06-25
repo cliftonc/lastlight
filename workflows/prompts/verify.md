@@ -25,24 +25,26 @@ claim you chose.
 
 ## Workspace
 
-The repo is (or will be) in a `{{repo}}/` subdirectory under your cwd:
+You are already inside the **{{repo}}** repo at branch {{branch}} — the harness
+pre-cloned it and your cwd is the repo root. Git is configured; no clone, no
+`cd`. For a PR claim, check out the PR head (see the `pr-review`/`building`
+workspace notes); for a before/after claim, `git fetch` the base ref too.
 
-```
-ls -la
-```
+## First — is this even a text-checkable claim?
 
-If you see `{{repo}}/.git/`, the harness pre-cloned it — `cd {{repo}}`.
-Otherwise `git clone https://github.com/{{owner}}/{{repo}}.git {{repo}}` and
-`cd` in. For a PR claim, check out the PR head (see the `pr-review`/`building`
-workspace notes); for a before/after claim you'll also need the base ref.
+You have **bash, file read, and the github tools** — no browser, no
+screenshots, no video. Before doing any setup, judge whether the claim is
+**purely about a rendered UI** (visual layout, mobile rendering, a click/render
+flow that only shows in a browser). If it is, **do not install/build/guess** —
+a dedicated browser-QA pass runs after you and owns it. Say in one line that the
+claim is UI-shaped and defer it to the browser pass, conclude **INCONCLUSIVE
+(UI-only — deferred to browser QA)**, and stop. Spend your effort only on claims
+bash can actually settle.
 
 ## Evidence — what you can and can't capture
 
-You have **bash, file read, and the github tools** — no browser, no
-screenshots, no video. Prove the claim with test output, command stdout/stderr,
-exit codes, `curl` against a dev-server you start, and log/file excerpts. If the
-claim can only be shown in a rendered UI, report **INCONCLUSIVE** and say so —
-do not guess.
+For a text-checkable claim, prove it with test output, command stdout/stderr,
+exit codes, `curl` against a dev-server you start, and log/file excerpts.
 
 ## How your report is delivered — read carefully
 

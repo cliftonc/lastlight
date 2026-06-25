@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workflowScopedTaskId, PER_TARGET_REUSE_WORKFLOWS } from "./simple.js";
+import { workflowScopedTaskId, PER_TARGET_REUSE_WORKFLOWS, PREPOPULATE_SYNTH_WORKFLOWS } from "./simple.js";
 
 const RUN = "abcdef12-3456-7890-abcd-ef1234567890";
 
@@ -27,5 +27,20 @@ describe("workflowScopedTaskId", () => {
   it("does not reuse when a per-PR workflow has no number", () => {
     const id = workflowScopedTaskId("drizzle-cube", undefined, "pr-review", RUN);
     expect(id).toBe("drizzle-cube-pr-review-abcdef12");
+  });
+});
+
+describe("PREPOPULATE_SYNTH_WORKFLOWS", () => {
+  it("includes verify and qa-test so their browser-QA screenshots harvest correctly", () => {
+    // The harvest fix hinges on these pre-populating like build (cwd = repo
+    // root), so server-mode artifacts land where serverArtifacts() reads them.
+    expect(PREPOPULATE_SYNTH_WORKFLOWS.has("verify")).toBe(true);
+    expect(PREPOPULATE_SYNTH_WORKFLOWS.has("qa-test")).toBe(true);
+    expect(PREPOPULATE_SYNTH_WORKFLOWS.has("build")).toBe(true);
+  });
+
+  it("does not pre-populate read-only scan workflows that clone in-session", () => {
+    expect(PREPOPULATE_SYNTH_WORKFLOWS.has("triage")).toBe(false);
+    expect(PREPOPULATE_SYNTH_WORKFLOWS.has("answer")).toBe(false);
   });
 });

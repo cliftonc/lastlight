@@ -82,7 +82,10 @@ blocked it — that drives an **INCONCLUSIVE** result, not a guess.
 ## Report
 
 Produce your report as your **final message** in this shape — the workflow posts
-it for you (don't `github_add_issue_comment` yourself; that would double-post):
+it for you (don't `github_add_issue_comment` yourself; that would double-post).
+**Keep it concise**: a one-line environment summary, the decisive evidence
+(commands + key output, not every line), and a one-paragraph conclusion — not an
+exhaustive walkthrough.
 
 ```
 ## Verify: <claim>

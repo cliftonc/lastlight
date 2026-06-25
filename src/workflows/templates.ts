@@ -42,6 +42,15 @@ export interface TemplateContext {
   publicUrl?: string;
 
   /**
+   * Public, unauthenticated, image-only base URL for inline screenshot embeds
+   * in the browser-QA comment (`<publicUrl>/admin/api/public/artifacts/<owner>/
+   * <repo>/<issueKey>`). The agent appends `/<name>.png` per screenshot. Empty
+   * string when no public URL is configured — browser-QA prompts then fall back
+   * to filename-only references via `{{#if !artifactBaseUrl}}`.
+   */
+  artifactBaseUrl?: string;
+
+  /**
    * Id of the approval being created — injected into an approval-gate message's
    * render context by `PhaseExecutor.pauseForApproval` so the `{{approvalUrl}}`
    * helper can deep-link to the focused approval view.

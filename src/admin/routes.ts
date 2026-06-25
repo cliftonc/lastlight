@@ -41,7 +41,7 @@ import type { PublicConfigBundle, BuildAssetsLocation } from "../config.js";
  * artifacts (e.g. PNG screenshot evidence from browser QA) must be served as
  * raw bytes, not utf-8 text, so the dashboard can render them in an <img>.
  */
-function imageMimeForArtifact(name: string): string | null {
+export function imageMimeForArtifact(name: string): string | null {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
   switch (ext) {
     case ".png":

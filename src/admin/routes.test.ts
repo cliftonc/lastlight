@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
 import { createAdminRoutes, type AdminConfig } from "./routes.js";
+import { mountAdmin } from "./index.js";
+import { BuildAssetStore } from "../state/build-assets.js";
 import type { StateDb } from "../state/db.js";
 import type { SessionReader } from "./sessions.js";
 
@@ -935,5 +938,52 @@ describe("artifacts endpoints (server-mode build assets)", () => {
     const a = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
     const keys = await request(a, "/artifacts?repo=acme/widget");
     expect(await keys.json()).toEqual({ keys: [] });
+  });
+});
+
+describe("public artifact image route (mountAdmin carve-out)", () => {
+  let dir: string;
+  // Auth ENABLED — the public image route must still be reachable without a
+  // token (it's registered on the parent app, before the auth-guarded
+  // /admin/api sub-app), while the auth-gated route is not.
+  const mount = (buildAssetsDir?: string) => {
+    const app = new Hono();
+    mountAdmin(app, mockDb, makeConfig({ adminPassword: "secret", buildAssetsDir }));
+    return app;
+  };
+  const get = (app: Hono, path: string) => app.fetch(new Request(`http://localhost${path}`));
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ll-public-assets-"));
+    new BuildAssetStore(dir).write({ owner: "acme", repo: "widget", issueKey: "issue-1" }, "home.png", "PNG-BYTES");
+    new BuildAssetStore(dir).write({ owner: "acme", repo: "widget", issueKey: "issue-1" }, "plan.md", "# secret plan\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("serves a PNG as image/png with NO auth token", async () => {
+    const res = await get(mount(dir), "/admin/api/public/artifacts/acme/widget/issue-1/home.png");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/png");
+    expect(await res.text()).toBe("PNG-BYTES");
+  });
+
+  it("404s on a non-image doc (image-only gate keeps text docs private)", async () => {
+    const res = await get(mount(dir), "/admin/api/public/artifacts/acme/widget/issue-1/plan.md");
+    expect(res.status).toBe(404);
+  });
+
+  it("404s for a missing image", async () => {
+    const res = await get(mount(dir), "/admin/api/public/artifacts/acme/widget/issue-1/nope.png");
+    expect(res.status).toBe(404);
+  });
+
+  it("404s when the build-assets store is not configured", async () => {
+    const res = await get(mount(undefined), "/admin/api/public/artifacts/acme/widget/issue-1/home.png");
+    expect(res.status).toBe(404);
+  });
+
+  it("the auth-gated artifacts route still requires a token (contrast)", async () => {
+    const res = await get(mount(dir), "/admin/api/artifacts/acme/widget/issue-1/plan.md");
+    expect(res.status).toBe(401);
   });
 });

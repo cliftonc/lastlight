@@ -138,6 +138,11 @@ Three kinds of phase the runner recognises:
   > under the repo instead and added to the checkout's local
   > `.git/info/exclude` (never committed). Non-pre-cloned workflows run
   > with cwd = the workspace root and clone the repo into a subdir.
+  > `build`, `pr-review`, `pr-fix`, **`verify`, and `qa-test`** pre-clone
+  > (`PREPOPULATE_SYNTH_WORKFLOWS` in `simple.ts` + the pr-* dispatcher);
+  > verify/qa-test were added so their browser-QA screenshots, written to
+  > `.lastlight/<key>/` under the repo, land where `serverArtifacts()`
+  > harvests them rather than orphaned at the workspace root.
 - **loop-phase** — any phase with `loop:` set. Always executes as an
   agent phase internally, but repeated in `reviewer → fix → reviewer`
   pairs up to `max_cycles`. See loop iteration naming below.

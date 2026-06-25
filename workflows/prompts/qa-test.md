@@ -25,15 +25,9 @@ and their success criteria before running.
 
 ## Workspace
 
-The repo is (or will be) in a `{{repo}}/` subdirectory under your cwd:
-
-```
-ls -la
-```
-
-If you see `{{repo}}/.git/`, the harness pre-cloned it — `cd {{repo}}`.
-Otherwise `git clone https://github.com/{{owner}}/{{repo}}.git {{repo}}` and
-`cd` in.
+You are already inside the **{{repo}}** repo at branch {{branch}} — the harness
+pre-cloned it and your cwd is the repo root. Git is configured; no clone, no
+`cd`.
 
 ## Evidence — what you can and can't drive
 
@@ -41,9 +35,14 @@ You have **bash, file read, and the github tools** — no browser, no
 screenshots. QA a **CLI** directly, or a **web service** by starting its
 dev-server in the background and exercising it with `curl` (status codes,
 bodies, headers). Capture stdout/stderr and exit codes as per-step evidence.
-For a step that genuinely needs rendered-UI interaction, mark it **BLOCKED**
-with the reason rather than faking a result. On a step failure, continue to the
-next step unless it blocks everything downstream.
+
+If the **whole target is a rendered UI** (the flow only makes sense in a
+browser), don't install/build to guess at it — a browser-QA pass runs after you
+and owns it. Note in one line that it's UI-shaped and deferred, and stop. For a
+**mixed** flow, drive the text/CLI/API steps here and mark only the
+rendered-UI steps **BLOCKED** (deferred to browser QA) rather than faking a
+result. On a step failure, continue to the next step unless it blocks
+everything downstream.
 
 ## How your report is delivered — read carefully
 

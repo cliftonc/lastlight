@@ -158,26 +158,34 @@ Mirror `verify`/`qa-test` — you are an investigator, not an advocate:
 ## Report
 
 Produce your report as your **final message** — the workflow posts it for you
-(don't `github_add_issue_comment` yourself; that would double-post):
+(don't `github_add_issue_comment` yourself; that would double-post).
+
+**Be concise, and stay in the browser.** The deliverable is short: a one-line
+environment summary, the results table, the screenshots, console errors, and a
+one-line coverage note. Do **not** read or analyse the repo's source code (the
+text pass already did) and do **not** narrate every step or dump extracted DOM
+text — surface a `text`/assertion value only when it's the actual evidence for a
+row (e.g. a FAIL).
 
 ```
 ## Browser QA: <target>
 
-**Environment:** <branch / commit, package manager, how the app was served,
-Chromium version from `doctor`>
+**Environment:** <branch / commit, package manager, how served, Chromium version>
 
 ### Results
 | Step | Status | Evidence |
 |------|--------|----------|
-| <step description> | PASS / FAIL / BLOCKED | <extracted text / assertion result / screenshot path> |
+| <step description> | PASS / FAIL / BLOCKED | <terse evidence + inline screenshot if any> |
 
 ### Console errors
 - <each consoleErrors / pageerror entry, or "none observed">
 
 ### Coverage
-<what was driven in the browser, and anything not tested and why (e.g. the
-probe failed and you fell back to text; screenshots not retained).>
+<one or two lines: what was driven, and anything not tested and why>
 ```
 
-Every step in the flow must have a row and a result. Never report a flow as
-"passed" with steps you didn't actually run — list them as untested instead.
+Reference screenshots **inline** as Markdown images when the prompt gives you a
+public artifact base URL (`![caption](<base>/<name>.png)`), so they render in
+the comment; otherwise reference them by filename. Every step in the flow must
+have a row and a result. Never report a flow as "passed" with steps you didn't
+actually run — list them as untested instead.

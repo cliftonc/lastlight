@@ -237,6 +237,28 @@ describe("renderTemplate — conditional blocks", () => {
   });
 });
 
+describe("renderTemplate — artifactBaseUrl (inline screenshot embeds)", () => {
+  const tmpl =
+    "{{#if artifactBaseUrl}}![home]({{artifactBaseUrl}}/home.png){{/if}}" +
+    "{{#if !artifactBaseUrl}}see home.png in the Artifacts view{{/if}}";
+
+  it("emits an inline image URL when the base is set", () => {
+    const ctx = { ...BASE_CTX, artifactBaseUrl: "https://ll.example.com/admin/api/public/artifacts/acme/widget/issue-42" };
+    expect(renderTemplate(tmpl, ctx)).toBe(
+      "![home](https://ll.example.com/admin/api/public/artifacts/acme/widget/issue-42/home.png)",
+    );
+  });
+
+  it("falls back to the filename note when the base is empty", () => {
+    const ctx = { ...BASE_CTX, artifactBaseUrl: "" };
+    expect(renderTemplate(tmpl, ctx)).toBe("see home.png in the Artifacts view");
+  });
+
+  it("falls back when the base is absent", () => {
+    expect(renderTemplate(tmpl, BASE_CTX)).toBe("see home.png in the Artifacts view");
+  });
+});
+
 describe("renderTemplate — deep dotted access (scratch.a.b)", () => {
   it("resolves three-level dotted paths via walkKey", () => {
     const ctx = {
