@@ -299,6 +299,7 @@ export function ArtifactsPage() {
               key={`${repo}/${key}/${doc}`}
               markdown={content}
               onChange={(md) => setContent(md)}
+              className="dark-theme"
               contentEditableClassName="ll-prose"
               plugins={[
                 headingsPlugin(),

@@ -1,11 +1,28 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
-import type {
-  WorkflowDefinition,
-  WorkflowPhaseDefinition,
-  WorkflowRun,
-  WorkflowRunExecution,
+import {
+  api,
+  type WorkflowDefinition,
+  type WorkflowPhaseDefinition,
+  type WorkflowRun,
+  type WorkflowRunExecution,
 } from "../api";
+
+/**
+ * In-SPA navigation to the Artifacts editor for a specific doc. Pushes the
+ * deep-link params and fires a synthetic popstate so every `useUrlState` hook
+ * (App's `tab`, ArtifactsPage's repo/key/doc) re-reads — no full reload, no
+ * callback threading through the run-detail component tree.
+ */
+function openArtifact(repo: string, key: string, doc: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("tab", "artifacts");
+  url.searchParams.set("repo", repo);
+  url.searchParams.set("key", key);
+  url.searchParams.set("doc", doc);
+  window.history.pushState(null, "", url.toString());
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
 interface Props {
   phaseName: string;
@@ -116,7 +133,27 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
   const skillCount = execution?.skills?.skills.length ?? 0;
   const loadedCount = extensionCount + skillCount;
 
-  const [tab, setTab] = useState<"details" | "loaded">("details");
+  // Build-asset ("Artifacts") handoff docs live per-run under
+  // <owner>/<repo>/<issueKey>/, keyed by the run's issueDir (server mode only;
+  // empty in repo mode). Derive the lookup coordinates from the run.
+  const [owner, repoName] = (run.repo ?? "").split("/", 2);
+  const issueDir = typeof run.context?.issueDir === "string" ? run.context.issueDir : "";
+  const issueKey = issueDir.replace(/^\.lastlight\//, "");
+
+  const [artifacts, setArtifacts] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!owner || !repoName || !issueKey) {
+      setArtifacts([]);
+      return;
+    }
+    api.listArtifactFiles(owner, repoName, issueKey)
+      .then((res) => { if (!cancelled) setArtifacts(res.files); })
+      .catch(() => { if (!cancelled) setArtifacts([]); });
+    return () => { cancelled = true; };
+  }, [owner, repoName, issueKey]);
+
+  const [tab, setTab] = useState<"details" | "loaded" | "artifacts">("details");
 
   return (
     <div className="flex flex-col gap-3 p-3 text-xs">
@@ -143,6 +180,11 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
         <TabButton active={tab === "loaded"} onClick={() => setTab("loaded")}>
           Loaded{loadedCount > 0 ? ` (${loadedCount})` : ""}
         </TabButton>
+        {artifacts.length > 0 && (
+          <TabButton active={tab === "artifacts"} onClick={() => setTab("artifacts")}>
+            Artifacts ({artifacts.length})
+          </TabButton>
+        )}
       </div>
 
       {tab === "details" && (
@@ -264,6 +306,26 @@ export function PhaseDetailPanel({ phaseName, run, definition, execution, totalE
           )}
 
           {execution?.skills && <SkillsSection skills={execution.skills} />}
+        </div>
+      )}
+
+      {tab === "artifacts" && (
+        <div className="flex flex-col gap-2">
+          <div className="text-2xs text-base-content/40">
+            Handoff docs for this run — click to open in the editor.
+          </div>
+          <ul className="flex flex-col gap-1">
+            {artifacts.map((f) => (
+              <li key={f}>
+                <button
+                  onClick={() => openArtifact(run.repo!, issueKey, f)}
+                  className="w-full text-left px-2 py-1 rounded text-xs font-mono text-primary hover:bg-base-300/50 truncate"
+                >
+                  {f}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
