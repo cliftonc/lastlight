@@ -134,6 +134,13 @@ repo / issueKey / doc, plus a GitHub blob URL in repo mode) so the view can
 open the doc — editable in server mode, link-out in repo mode — beside the
 approve / reject buttons. See `06-workflow-engine.md`.
 
+`ApprovalStore.listForWorkflow(runId)` returns every approval for a run (all
+statuses, oldest first), exposed as `GET /admin/api/workflow-runs/:id/approvals`.
+It powers the run-detail pipeline's approval-gate nodes (status-colored, labeled
+by gate) and their read-only history (who approved / rejected, when, and any
+comment) — distinct from `GET /admin/api/approvals`, which lists only pending
+gates across all runs.
+
 ### `cron_overrides`
 
 ```sql
@@ -257,7 +264,7 @@ the same session id appends to the existing file. No file rotation.
 |---|---|---|
 | **SQLite** | Execution lifecycles, costs, phase history, approvals, scratch keys + pointers, schedule overrides, messaging session metadata | Indexed, fast list queries, small rows. The dashboard's list-view query is `ORDER BY started_at DESC LIMIT 20` polled every 5 s — it must return cheaply. |
 | **JSONL** | Every agent event in order — assistant messages, tool calls, tool results, usage snapshots, errors | Append-only event stream, unbounded length, one file per session. Lets the dashboard render the full conversation without paging through SQLite blobs. |
-| **Build-assets files** (server mode only) | The per-phase handoff docs (`architect-plan.md`, `status.md`, `executor-summary.md`, …) when `buildAssets.location = server` | Plain `.md` files under `$STATE_DIR/build-assets/<owner>/<repo>/<issueKey>/` so they're git-free (never committed into the target repo), editable, and servable by the admin Artifacts endpoints. In the default `repo` mode they live on the target repo's branch instead, not here. Store: `src/state/build-assets.ts`. |
+| **Build-assets files** (server mode only) | The per-phase handoff docs (`architect-plan.md`, `status.md`, `executor-summary.md`, …) — plus binary screenshot evidence (`*.png`) from the browser-QA phase — when `buildAssets.location = server` | Files under `$STATE_DIR/build-assets/<owner>/<repo>/<issueKey>/` so they're git-free (never committed into the target repo), editable, and servable by the admin Artifacts endpoints. Markdown is served `text/plain`; images via `readBuffer` + a MIME-typed response and rendered in the dashboard's image viewer. In the default `repo` mode they live on the target repo's branch instead, not here. Store: `src/state/build-assets.ts`. |
 
 The dashboard's workflow-runs list endpoint excludes `context`,
 `scratch`, and `node_statuses` from the `SELECT` so the list query

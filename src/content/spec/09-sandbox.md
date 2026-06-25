@@ -74,6 +74,16 @@ agentic-pi's VM. Container name: `lastlight-sandbox-{taskId}-{uuid}`.
 - DNS: `--dns 172.30.0.10` (strict) or `--dns 172.30.0.11` (open).
 - Memory: `--memory 2g --memory-swap 2g` by default.
 - Timeout: 30 min default; runs longer than that are killed.
+- Image: the lean `lastlight-sandbox:latest` (`sandbox.Dockerfile`) by
+  default. A phase declaring `sandbox_image: qa` runs instead on
+  `lastlight-sandbox-qa:latest` (`sandbox-qa.Dockerfile` — `FROM` the base
+  plus Playwright + a pinned Chromium baked at build time for the browser-QA
+  path; the egress allowlist never permits the Playwright CDN, so nothing is
+  fetched at runtime). Both image names are fixed constants in
+  `src/sandbox/images.ts`; `qaImageAvailable()` there lets the runner skip a
+  `sandbox_image: qa` phase (a non-failing skip) when that image isn't built,
+  so browser QA degrades gracefully on a lean host. Built only when QA is
+  enabled — `docker compose --profile build-only build sandbox sandbox-qa`.
 
 ### `none` — in-process
 
@@ -318,6 +328,8 @@ Per-phase model and variant overrides resolve through
 | Token minting + downscope | `src/engine/git-auth.ts` |
 | Docker backend | `src/sandbox/docker.ts` |
 | Sandbox dispatch + orphan cleanup | `src/sandbox/index.ts` |
+| Sandbox image names + availability probe | `src/sandbox/images.ts` (`SANDBOX_IMAGE`, `SANDBOX_IMAGE_QA`, `qaImageAvailable`) |
+| Browser-QA image | `sandbox-qa.Dockerfile`; bundled driver `skills/browser-qa/scripts/agent-browser.mjs` |
 | Egress allowlist (source) | `src/sandbox/egress-allowlist.ts` |
 | Firewall config generator | `src/sandbox/egress-firewall-config.ts` |
 | Container entrypoint | `deploy/sandbox-entrypoint.sh` |
