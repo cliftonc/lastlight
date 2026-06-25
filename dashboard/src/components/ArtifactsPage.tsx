@@ -59,6 +59,18 @@ export function ArtifactsPage() {
 
   const dirty = content !== savedContent;
 
+  // ── Dark-theme the portaled toolbar popups ───────────────────────────────
+  // MDXEditor's BlockTypeSelect (and other Radix selects) render their dropdown
+  // into a portal on document.body — outside the editor's own `dark-theme`
+  // root — so they'd fall back to MDXEditor's light variables. The `.dark-theme`
+  // class defines only CSS variables (no element styling) consumed solely by
+  // MDXEditor, so scoping it to <body> while this page is mounted recolors the
+  // portaled popups without affecting the rest of the app.
+  useEffect(() => {
+    document.body.classList.add("dark-theme");
+    return () => { document.body.classList.remove("dark-theme"); };
+  }, []);
+
   // ── Populate the repo picker from the managed-repos config ───────────────
   useEffect(() => {
     let cancelled = false;
