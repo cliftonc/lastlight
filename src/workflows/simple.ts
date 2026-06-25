@@ -85,10 +85,12 @@ export const PER_TARGET_REUSE_WORKFLOWS = new Set(["pr-review", "pr-fix"]);
  * writes to `.lastlight/<key>/` (e.g. browser-QA screenshots) land where
  * `serverArtifacts()` harvests them instead of being orphaned a level up.
  * `build` was the original member; verify/qa-test were added for the harvest
- * fix. The dispatcher leaves `prePopulateBranch` unset for all three; the
- * missing-branch fallback in `prePopulateWorkspace` clones the default branch.
+ * fix, and `demo` for the same reason (its `demo.mp4` is written under
+ * `.lastlight/<key>/` and harvested into the Artifacts store). The dispatcher
+ * leaves `prePopulateBranch` unset for all of them; the missing-branch fallback
+ * in `prePopulateWorkspace` clones the default branch.
  */
-export const PREPOPULATE_SYNTH_WORKFLOWS = new Set(["build", "verify", "qa-test"]);
+export const PREPOPULATE_SYNTH_WORKFLOWS = new Set(["build", "verify", "qa-test", "demo"]);
 
 export function workflowScopedTaskId(
   repo: string,

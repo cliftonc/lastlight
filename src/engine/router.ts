@@ -235,6 +235,25 @@ export async function routeEvent(
           },
         };
       }
+      // `@last-light demo [notes]` — record a demo video of the PR/feature.
+      // Anything after the command word flows through as `commentBody` (demo
+      // scope/notes). Gated to the docker QA image at the workflow level; on a
+      // host without it the demo phase silently skips.
+      const demoMatch = envelope.body.match(/@last-light\s+demo\b([\s\S]*)/i);
+      if (demoMatch) {
+        return {
+          action: "handler",
+          handler: gh.demo || "demo",
+          context: {
+            repo: envelope.repo,
+            issueNumber: envelope.issueNumber,
+            ...(envelope.prNumber ? { prNumber: envelope.prNumber } : {}),
+            title: envelope.title,
+            sender: envelope.sender,
+            commentBody: demoMatch[1].trim() || envelope.body,
+          },
+        };
+      }
 
       // Classify intent + screen for injection in parallel. Both run on the
       // same comment text and have similar latency (single haiku call); doing
@@ -273,6 +292,7 @@ export async function routeEvent(
           intent === "build" ? { handler: gh.pr_fix || "pr-fix", routeKey: "github.pr_fix" }
           : intent === "verify" ? { handler: gh.verify || "verify", routeKey: "github.verify" }
           : intent === "qa-test" ? { handler: gh.qa_test || "qa-test", routeKey: "github.qa_test" }
+          : intent === "demo" ? { handler: gh.demo || "demo", routeKey: "github.demo" }
           : { handler: gh.pr_comment || "pr-comment", routeKey: "github.pr_comment" };
         return {
           action: "handler",
@@ -324,6 +344,7 @@ export async function routeEvent(
         : intent === "explore" ? { handler: gh.issue_explore || "explore", routeKey: "github.issue_explore" }
         : intent === "verify" ? { handler: gh.verify || "verify", routeKey: "github.verify" }
         : intent === "qa-test" ? { handler: gh.qa_test || "qa-test", routeKey: "github.qa_test" }
+        : intent === "demo" ? { handler: gh.demo || "demo", routeKey: "github.demo" }
         : { handler: gh.issue_comment || "issue-comment", routeKey: "github.issue_comment" };
       return {
         action: "handler",

@@ -17,9 +17,17 @@
 //     and exits 0; on ANY failure prints {"ok":false,"error":"..."} and exits 1.
 //     The skill runs this first to decide browser-vs-text.
 //
-//   run <flow.json> [--base-url URL] [--out-dir DIR]
+//   run <flow.json> [--base-url URL] [--out-dir DIR] [--record-dir DIR]
 //     Executes a FLOW in ONE Chromium session (state preserved across steps) and
-//     prints a single JSON report. Flow shape:
+//     prints a single JSON report.
+//
+//     With --record-dir DIR (or `"record": true` in the flow), the whole session
+//     is screen-recorded via Playwright's native recordVideo and saved to
+//     <record-dir>/session.webm (default: the out-dir). The saved path is
+//     reported as `video` in the JSON. Used by the `/demo` workflow, which then
+//     composites the raw webm into a titled mp4 with compose-demo.sh.
+//
+//     Flow shape:
 //       { "baseUrl": "http://localhost:3000",
 //         "viewport": {"width":1280,"height":800},
 //         "steps": [
@@ -195,7 +203,7 @@ async function execStep(page, step, baseUrl, outDir, screenshots) {
   return { result, fatal };
 }
 
-async function run(flowPath, baseUrlArg, outDirArg) {
+async function run(flowPath, baseUrlArg, outDirArg, recordDirArg) {
   let flow;
   try {
     flow = JSON.parse(readFileSync(resolve(flowPath), 'utf8'));
@@ -210,17 +218,30 @@ async function run(flowPath, baseUrlArg, outDirArg) {
 
   const baseUrl = baseUrlArg || flow.baseUrl || '';
   const outDir = resolve(outDirArg || process.cwd());
+  // Record the session when --record-dir is passed OR the flow opts in with
+  // `"record": true`. The .webm lands in the record dir (default: out-dir).
+  const doRecord = !!recordDirArg || flow.record === true;
+  const videoDir = resolve(recordDirArg || outDir);
   try {
     mkdirSync(outDir, { recursive: true });
   } catch {
     /* best effort */
   }
+  if (doRecord) {
+    try {
+      mkdirSync(videoDir, { recursive: true });
+    } catch {
+      /* best effort */
+    }
+  }
 
+  const viewport = flow.viewport || { width: 1280, height: 800 };
   const { chromium } = await loadPlaywright();
   let browser;
   const steps = [];
   const screenshots = [];
   const consoleErrors = [];
+  let videoPath = null;
 
   try {
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
@@ -234,7 +255,10 @@ async function run(flowPath, baseUrlArg, outDirArg) {
 
   try {
     const context = await browser.newContext({
-      viewport: flow.viewport || { width: 1280, height: 800 },
+      viewport,
+      // Playwright records video per-context; the size matches the viewport so
+      // the clip isn't letterboxed. The .webm is flushed on context.close().
+      ...(doRecord ? { recordVideo: { dir: videoDir, size: viewport } } : {}),
     });
     const page = await context.newPage();
 
@@ -272,12 +296,33 @@ async function run(flowPath, baseUrlArg, outDirArg) {
       }
     }
 
+    // Finalize a recording (if any) BEFORE emitting: saving the video requires
+    // the context to close, which flushes the .webm to disk. A save failure is a
+    // reported finding, not a fatal run error.
+    if (doRecord) {
+      const video = page.video();
+      await context.close();
+      if (video) {
+        const target = join(videoDir, 'session.webm');
+        try {
+          await video.saveAs(target);
+          videoPath = target;
+          await video.delete().catch(() => {});
+        } catch (err) {
+          consoleErrors.push(
+            `video save failed: ${err && err.message ? err.message : err}`,
+          );
+        }
+      }
+    }
+
     emit({
       ok: steps.every((s) => s.ok),
       baseUrl,
       steps,
       consoleErrors,
       screenshots,
+      ...(videoPath ? { video: videoPath } : {}),
     });
     process.exit(0);
   } catch (err) {
@@ -289,6 +334,7 @@ async function run(flowPath, baseUrlArg, outDirArg) {
       steps,
       consoleErrors,
       screenshots,
+      ...(videoPath ? { video: videoPath } : {}),
     });
     process.exit(1);
   } finally {
@@ -308,17 +354,19 @@ async function main() {
     const positional = [];
     let baseUrl;
     let outDir;
+    let recordDir;
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
       if (a === '--base-url') baseUrl = rest[++i];
       else if (a === '--out-dir') outDir = rest[++i];
+      else if (a === '--record-dir') recordDir = rest[++i];
       else positional.push(a);
     }
     if (!positional[0]) {
-      emit({ ok: false, error: 'usage: agent-browser.mjs run <flow.json> [--base-url URL] [--out-dir DIR]' });
+      emit({ ok: false, error: 'usage: agent-browser.mjs run <flow.json> [--base-url URL] [--out-dir DIR] [--record-dir DIR]' });
       process.exit(1);
     }
-    await run(positional[0], baseUrl, outDir);
+    await run(positional[0], baseUrl, outDir, recordDir);
     return;
   }
 

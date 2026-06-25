@@ -758,14 +758,14 @@ async function cmdSkill(name: string): Promise<void> {
   const target = positionals[1];
   const skillMap: Record<string, string> = {
     triage: "issue-triage", review: "pr-review", health: "repo-health", security: "security-review",
-    verify: "verify", "qa-test": "qa-test",
+    verify: "verify", "qa-test": "qa-test", demo: "demo",
   };
   const skill = skillMap[name];
   const repoLevelOnly = name === "health" || name === "security";
-  // verify / qa-test take a free-text claim/steps argument after the target —
-  // accept it either as trailing positionals or as a quoted `-- "<text>"`
-  // (the arg parser folds the latter into flags[""]).
-  const takesClaim = name === "verify" || name === "qa-test";
+  // verify / qa-test / demo take a free-text argument after the target (claim,
+  // steps, or demo notes) — accept it either as trailing positionals or as a
+  // quoted `-- "<text>"` (the arg parser folds the latter into flags[""]).
+  const takesClaim = name === "verify" || name === "qa-test" || name === "demo";
   const claim = takesClaim
     ? (positionals.slice(2).join(" ") || (typeof flags[""] === "string" ? flags[""] : "")).trim()
     : "";
@@ -846,7 +846,8 @@ async function main() {
     case "health":
     case "security":
     case "verify":
-    case "qa-test": return cmdSkill(cmd);
+    case "qa-test":
+    case "demo": return cmdSkill(cmd);
     default: return cmdDefaultRef(cmd);
   }
 }

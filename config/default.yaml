@@ -60,6 +60,7 @@ routes:
     security_review: security-review
     verify: verify
     qa_test: qa-test
+    demo: demo
     pr_fix: pr-fix
     pr_comment: pr-comment
     issue_build: github-orchestrator
@@ -78,6 +79,7 @@ routes:
     security: security-review
     verify: verify
     qa_test: qa-test
+    demo: demo
     explore: explore
     answer: answer
     chat: chat

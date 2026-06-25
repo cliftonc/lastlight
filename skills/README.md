@@ -24,6 +24,10 @@ or editing a skill.
 | [`security-feedback`](security-feedback/) | `security-feedback.yaml` | Process a maintainer's comment on a security scan summary — break findings into issues or record suppressions. |
 | [`building`](building/) | build (executor, reviewer), `pr-fix.yaml`, `pr-review.yaml` | Shared craft: install-first + package-manager detection, the test/lint/typecheck gate, and TDD discipline in the sandbox. |
 | [`code-review`](code-review/) | build (reviewer), `pr-review.yaml` | Shared rubric: finding tiers (Critical/Important/Suggestions/Nits) and what-to-check. Referenced by both the branch-diff reviewer and the PR reviewer. |
+| [`verify`](verify/) | `verify.yaml` | Test a behaviour claim as an investigator — CONFIRMED / REFUTED / INCONCLUSIVE with bash-captured evidence. |
+| [`qa-test`](qa-test/) | `qa-test.yaml` | Run an automated QA flow against a CLI or locally-served app and report step-level pass/fail with evidence. |
+| [`browser-qa`](browser-qa/) | `verify.yaml`, `qa-test.yaml`, `demo.yaml` | Drive a real headless browser against a locally-served web UI and capture screenshot (and, for `demo`, video) evidence. Gated to the docker QA image. |
+| [`demo`](demo/) | `demo.yaml` | Record a short demo VIDEO of a PR/feature — drive the web UI, screen-record, and composite a titled, size-capped mp4 with ffmpeg. Gated to the docker QA image. |
 
 `building` and `code-review` are **shared building blocks** — referenced by the
 build-cycle prompts (`workflows/prompts/*.md`) and the PR skills so the install

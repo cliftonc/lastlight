@@ -56,7 +56,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libudev1 \
     fonts-liberation \
     fonts-unifont \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+# ffmpeg/ffprobe (installed above) back the `/demo` workflow's compositing step
+# (skills/demo/scripts/compose-demo.sh): it transcodes the Playwright screen
+# recording (webm) into a titled, trimmed, size-capped mp4. Baked at build time
+# — the strict egress allowlist blocks runtime downloads, and compose runs fully
+# offline. No Remotion / headless-render toolchain: the demo path is ffmpeg-only.
 
 # Install Playwright + Chromium into FIXED, world-readable paths so the non-root
 # `agent` user (UID 10001, from the base image) can launch the browser.

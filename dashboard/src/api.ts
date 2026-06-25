@@ -382,10 +382,19 @@ async function reqBlob(path: string, init?: RequestInit): Promise<Blob> {
 /**
  * True when a build-asset filename is an image we render in an <img> viewer
  * rather than the markdown editor (PNG screenshot evidence etc.). Mirrors the
- * server's `imageMimeForArtifact` extension set.
+ * server's `binaryMimeForArtifact` image extensions.
  */
 export function isImageArtifact(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+}
+
+/**
+ * True when a build-asset filename is a video we render in a <video> viewer
+ * (the `/demo` workflow's mp4/webm). Mirrors the server's `binaryMimeForArtifact`
+ * video extensions.
+ */
+export function isVideoArtifact(name: string): boolean {
+  return /\.(mp4|webm)$/i.test(name);
 }
 
 export const api = {

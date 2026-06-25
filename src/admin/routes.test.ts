@@ -967,7 +967,31 @@ describe("public artifact image route (mountAdmin carve-out)", () => {
     expect(await res.text()).toBe("PNG-BYTES");
   });
 
-  it("404s on a non-image doc (image-only gate keeps text docs private)", async () => {
+  it("serves an mp4 as video/mp4 with Range support and NO auth token", async () => {
+    new BuildAssetStore(dir).write(
+      { owner: "acme", repo: "widget", issueKey: "issue-1" },
+      "demo.mp4",
+      "MP4-BYTES-0123456789", // 20 bytes
+    );
+    const app = mount(dir);
+    const full = await get(app, "/admin/api/public/artifacts/acme/widget/issue-1/demo.mp4");
+    expect(full.status).toBe(200);
+    expect(full.headers.get("Content-Type")).toBe("video/mp4");
+    expect(full.headers.get("Accept-Ranges")).toBe("bytes");
+
+    // A Range request (what a <video> element / GitHub player sends) must
+    // return 206 Partial Content with a Content-Range so seeking works.
+    const ranged = await app.fetch(
+      new Request("http://localhost/admin/api/public/artifacts/acme/widget/issue-1/demo.mp4", {
+        headers: { Range: "bytes=0-3" },
+      }),
+    );
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get("Content-Range")).toBe("bytes 0-3/20");
+    expect(await ranged.text()).toBe("MP4-");
+  });
+
+  it("404s on a non-media doc (media-only gate keeps text docs private)", async () => {
     const res = await get(mount(dir), "/admin/api/public/artifacts/acme/widget/issue-1/plan.md");
     expect(res.status).toBe(404);
   });

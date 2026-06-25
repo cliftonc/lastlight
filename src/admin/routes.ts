@@ -36,12 +36,13 @@ import { BuildAssetStore, buildAssetIssueKey } from "../state/build-assets.js";
 import type { PublicConfigBundle, BuildAssetsLocation } from "../config.js";
 
 /**
- * Map a build-asset filename extension to a binary image MIME type, or null
- * when the file should be served as text/plain (markdown handoff docs). Binary
- * artifacts (e.g. PNG screenshot evidence from browser QA) must be served as
- * raw bytes, not utf-8 text, so the dashboard can render them in an <img>.
+ * Map a build-asset filename extension to a binary MIME type, or null when the
+ * file should be served as text/plain (markdown handoff docs). Binary artifacts
+ * — PNG screenshot evidence from browser QA, and `/demo`'s mp4/webm video — must
+ * be served as raw bytes, not utf-8 text, so the dashboard can render them in an
+ * <img>/<video> and GitHub can embed them.
  */
-export function imageMimeForArtifact(name: string): string | null {
+export function binaryMimeForArtifact(name: string): string | null {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
   switch (ext) {
     case ".png":
@@ -55,9 +56,62 @@ export function imageMimeForArtifact(name: string): string | null {
       return "image/webp";
     case ".svg":
       return "image/svg+xml";
+    case ".mp4":
+      return "video/mp4";
+    case ".webm":
+      return "video/webm";
     default:
       return null;
   }
+}
+
+/**
+ * Build an HTTP response for a binary artifact buffer, honoring a `Range`
+ * request so <video> elements can seek/stream (GitHub's inline player and
+ * browsers send `Range: bytes=…`; without 206 support, seeking — and some
+ * players — break). Artifacts are small (≤ a few MB), so we slice the in-memory
+ * buffer rather than streaming from disk. Returns 206 for a satisfiable range,
+ * 416 for an unsatisfiable one, else 200 with the full body. `Accept-Ranges:
+ * bytes` is always advertised.
+ */
+export function rangeResponse(
+  rangeHeader: string | undefined,
+  buf: Buffer,
+  mime: string,
+  cacheControl: string,
+): Response {
+  const total = buf.length;
+  const baseHeaders: Record<string, string> = {
+    "Content-Type": mime,
+    "Accept-Ranges": "bytes",
+    "Cache-Control": cacheControl,
+  };
+  const m = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null;
+  if (m) {
+    let start = m[1] ? parseInt(m[1], 10) : 0;
+    let end = m[2] ? parseInt(m[2], 10) : total - 1;
+    if (Number.isNaN(start)) start = 0;
+    if (Number.isNaN(end) || end >= total) end = total - 1;
+    if (start > end || start >= total) {
+      return new Response(null, {
+        status: 416,
+        headers: { ...baseHeaders, "Content-Range": `bytes */${total}` },
+      });
+    }
+    const chunk = buf.subarray(start, end + 1);
+    return new Response(new Uint8Array(chunk), {
+      status: 206,
+      headers: {
+        ...baseHeaders,
+        "Content-Range": `bytes ${start}-${end}/${total}`,
+        "Content-Length": String(chunk.length),
+      },
+    });
+  }
+  return new Response(new Uint8Array(buf), {
+    status: 200,
+    headers: { ...baseHeaders, "Content-Length": String(total) },
+  });
 }
 
 /**
@@ -1046,20 +1100,19 @@ export function createAdminRoutes(
     }
   });
 
-  // Read one doc. Image artifacts (PNG screenshot evidence etc.) are served as
-  // raw bytes with the right Content-Type; everything else is text/plain (the
-  // dashboard renders it with marked/DOMPurify).
+  // Read one doc. Binary artifacts (PNG screenshot evidence, /demo mp4/webm) are
+  // served as raw bytes with the right Content-Type and Range support (so the
+  // dashboard <video> can seek); everything else is text/plain (the dashboard
+  // renders it with marked/DOMPurify).
   app.get("/artifacts/:owner/:repo/:key/:doc", (c) => {
     if (!buildAssetStore) return c.json({ error: "build-assets store not configured" }, 404);
     const { owner, repo, key, doc } = c.req.param();
     try {
-      const imageMime = imageMimeForArtifact(doc);
-      if (imageMime) {
+      const binMime = binaryMimeForArtifact(doc);
+      if (binMime) {
         const buf = buildAssetStore.readBuffer({ owner, repo, issueKey: key }, doc);
         if (buf === undefined) return c.json({ error: `doc not found: ${doc}` }, 404);
-        return new Response(new Uint8Array(buf), {
-          headers: { "Content-Type": imageMime, "Cache-Control": "no-store" },
-        });
+        return rangeResponse(c.req.header("range"), buf, binMime, "no-store");
       }
       const content = buildAssetStore.read({ owner, repo, issueKey: key }, doc);
       if (content === undefined) return c.json({ error: `doc not found: ${doc}` }, 404);
