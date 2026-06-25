@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
+    "@mdxeditor/editor": "^4.0.4",
     "@xyflow/react": "^12.10.2",
     "agentic-pi": "^0.2.4",
     "ansi-to-html": "^0.7.2",

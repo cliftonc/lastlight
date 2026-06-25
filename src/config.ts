@@ -48,6 +48,8 @@ export interface VariantConfig {
 
 export type SandboxBackend = "gondolin" | "docker" | "none";
 
+export type BuildAssetsLocation = "repo" | "server";
+
 export interface DisabledConfig {
   workflows: string[];
   crons: string[];
@@ -98,6 +100,10 @@ export interface LastLightConfig {
   variants: VariantConfig;
   maxTurns: number;
   sandbox: SandboxBackend;
+  /** Where build handoff docs live: "repo" (committed) | "server" (externalized). */
+  buildAssets: BuildAssetsLocation;
+  /** Filesystem root for server-mode build assets (default $STATE_DIR/build-assets). */
+  buildAssetsDir: string;
   managedRepos: string[];
   routes: RouteConfig;
   disabled: DisabledConfig;
@@ -252,6 +258,10 @@ export function loadConfig(): LastLightConfig {
   const variants = fileCfg.variants;
   const sandbox = fileCfg.sandbox.backend;
   const maxTurns = fileCfg.sandbox.maxTurns;
+  const buildAssets = fileCfg.buildAssets;
+  const buildAssetsDir = resolve(
+    stringEnv("BUILD_ASSETS_DIR", join(stateDir, "build-assets")),
+  );
 
   // Two documented exceptions to plain key-by-key precedence, preserved for
   // backward compatibility (and kept out of the generic env layer so the file
@@ -317,6 +327,8 @@ export function loadConfig(): LastLightConfig {
     variants,
     maxTurns,
     sandbox,
+    buildAssets,
+    buildAssetsDir,
     managedRepos: fileCfg.managedRepos,
     routes: fileCfg.routes,
     disabled: fileCfg.disabled,
@@ -351,6 +363,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   models: ModelConfig;
   variants: VariantConfig;
   sandbox: { backend: SandboxBackend; maxTurns: number };
+  buildAssets: BuildAssetsLocation;
   approval: Record<string, boolean>;
   bootstrapLabel: string;
   exploreDefaultRepo?: string;
@@ -363,6 +376,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   const modelsRaw = isPlainObject(raw.models) ? raw.models : {};
   const variantsRaw = isPlainObject(raw.variants) ? raw.variants : {};
   const sandboxRaw = isPlainObject(raw.sandbox) ? raw.sandbox : {};
+  const buildAssetsRaw = isPlainObject(raw.buildAssets) ? raw.buildAssets : {};
   const bootstrapRaw = isPlainObject(raw.bootstrap) ? raw.bootstrap : {};
   const exploreRaw = isPlainObject(raw.explore) ? raw.explore : {};
   const reviewRaw = isPlainObject(raw.review) ? raw.review : {};
@@ -378,6 +392,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
 
   const backend = sandboxBackend(sandboxRaw.backend, "sandbox.backend");
   const maxTurns = typeof sandboxRaw.maxTurns === "number" ? sandboxRaw.maxTurns : 200;
+  const buildAssets = buildAssetsLocation(buildAssetsRaw.location, "buildAssets.location");
   const bootstrapLabel = typeof bootstrapRaw.label === "string" ? bootstrapRaw.label : "lastlight:bootstrap";
   const exploreDefaultRepo = typeof exploreRaw.defaultRepo === "string" ? exploreRaw.defaultRepo : undefined;
   const reviewPostsCheck = reviewRaw.postsCheck === true;
@@ -395,6 +410,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
     models,
     variants,
     sandbox: { backend, maxTurns },
+    buildAssets,
     approval,
     bootstrapLabel,
     exploreDefaultRepo,
@@ -474,6 +490,14 @@ function sandboxBackend(raw: unknown, path: string): SandboxBackend {
   throw new Error(`${path} must be one of gondolin, docker, none`);
 }
 
+function buildAssetsLocation(raw: unknown, path: string): BuildAssetsLocation {
+  // Absent → default to repo mode (current behaviour). An explicit bad value
+  // is a config error worth surfacing loudly.
+  if (raw === undefined || raw === null) return "repo";
+  if (raw === "repo" || raw === "server") return raw;
+  throw new Error(`${path} must be one of repo, server`);
+}
+
 function parseBool(raw: string | undefined): boolean {
   if (!raw) return false;
   const v = raw.trim().toLowerCase();
@@ -516,6 +540,13 @@ function buildEnvConfigLayer(env: NodeJS.ProcessEnv): Record<string, unknown> {
   }
   if (env.MAX_TURNS) sandbox.maxTurns = parseInt(env.MAX_TURNS, 10);
   if (Object.keys(sandbox).length) layer.sandbox = sandbox;
+
+  const buildAssetsLoc = (env.LASTLIGHT_BUILD_ASSETS || "").trim().toLowerCase();
+  if (buildAssetsLoc === "repo" || buildAssetsLoc === "server") {
+    layer.buildAssets = { location: buildAssetsLoc };
+  } else if (buildAssetsLoc) {
+    console.warn(`[config] Unknown LASTLIGHT_BUILD_ASSETS value "${buildAssetsLoc}" — using the file/default location`);
+  }
 
   const otel: Record<string, unknown> = {};
   setBoolEnv(otel, "enabled", env.LASTLIGHT_OTEL_ENABLED);

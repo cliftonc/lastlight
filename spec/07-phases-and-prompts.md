@@ -163,11 +163,24 @@ not through in-memory state. By convention:
 └── reviewer-verdict.md    ← VERDICT line + issues (appended per re-review)
 ```
 
-`issueDir` is set in `simple.ts:175–177` based on the run scope; every
+`issueDir` is set in `simple.ts` based on the run scope; every
 prompt hardcodes paths under `{{issueDir}}/`. The runner never reads
 or writes these files — the prompts manage the lifecycle. Each prompt
 commits its outputs before exiting; the next phase clones the branch
 and reads what it needs.
+
+**Server mode (`buildAssets.location = server`).** When externalized, the
+same `{{issueDir}}/` layout is used, but the docs are **not** committed into
+the target repo. Instead the executor stages the server store's copy into the
+workspace before each phase and harvests changes back afterwards
+(`stageArtifactsIn`/`harvestArtifactsOut`, `src/engine/agent-executor.ts`),
+the dir is added to `.git/info/exclude` so the agent's `git add -A` never
+sweeps it into the feature commit, and each prompt gates its
+`git add .lastlight/ && commit` behind `{{#if !externalizeArtifacts}}` (the
+inverse flag defaults absent⇒repo so any un-tagged render still commits).
+PR-body links use `{{artifactUrl}}`, which resolves to the dashboard's
+Artifacts view rather than a GitHub blob URL. The store and the cross-phase
+handoff are otherwise unchanged — the branch is just no longer the carrier.
 
 ## Prompt vs skill — when to pick which
 

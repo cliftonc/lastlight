@@ -25,6 +25,22 @@ export interface TemplateContext {
   issueDir: string;
   bootstrapLabel: string;
 
+  /**
+   * True only in server mode (handoff docs externalized to the Last Light
+   * store instead of committed into the target repo). Prompts gate their
+   * `git add .lastlight/ && commit` behind `{{#if !externalizeArtifacts}}`, so
+   * an absent flag defaults to repo behaviour (commit the docs) — fail-safe for
+   * any render path that doesn't set it.
+   */
+  externalizeArtifacts?: boolean;
+
+  /**
+   * Dashboard base URL (no trailing slash). Used by the `{{artifactUrl file}}`
+   * helper to build a server-mode dashboard link to a handoff doc. Absent when
+   * no public URL is configured.
+   */
+  publicUrl?: string;
+
   // Optional: available during PR phase
   approved?: boolean;
   fixCycles?: number;
@@ -156,6 +172,25 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
   result = result.replace(/\{\{branchUrl\s+(\S+)\}\}/g, (_match, file) => {
     const encoded = encodeURIComponent(ctx.branch);
     return `https://github.com/${ctx.owner}/${ctx.repo}/blob/${encoded}/${ctx.issueDir}/${file}`;
+  });
+
+  // 3b. Artifact URL helper: {{artifactUrl filename}} — mode-aware link to a
+  // handoff doc. In repo mode it's identical to {{branchUrl}} (the doc is
+  // committed on the branch). In server mode the doc lives on the Last Light
+  // host, so the link points at the admin dashboard's Artifacts view. Falls
+  // back to the branch URL when no publicUrl is configured so a server-mode
+  // deploy without PUBLIC_URL still produces a usable (if GitHub-less) link.
+  result = result.replace(/\{\{artifactUrl\s+(\S+)\}\}/g, (_match, file) => {
+    const branchHref = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${encodeURIComponent(ctx.branch)}/${ctx.issueDir}/${file}`;
+    if (!ctx.externalizeArtifacts) return branchHref;
+    if (!ctx.publicUrl) return branchHref;
+    const issueKey = ctx.issueDir.replace(/^\.lastlight\//, "");
+    const base = String(ctx.publicUrl).replace(/\/+$/, "");
+    const q =
+      `repo=${encodeURIComponent(`${ctx.owner}/${ctx.repo}`)}` +
+      `&key=${encodeURIComponent(issueKey)}` +
+      `&doc=${encodeURIComponent(file)}`;
+    return `${base}/admin/?tab=artifacts&${q}`;
   });
 
   // 4. Simple variable substitution: {{varName}} and {{a.b.c...}}.

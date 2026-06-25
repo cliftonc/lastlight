@@ -315,6 +315,10 @@ data/
                             chat process — generated opencode.json + AGENTS.md
                             live here.
   sandboxes/                Cloned repos per task (one dir per taskId).
+  build-assets/             Server-mode build handoff docs (only when
+                            buildAssets.location=server):
+                            <owner>/<repo>/<issueKey>/*.md — never committed
+                            into the target repo. Store: src/state/build-assets.ts.
   logs/                     Structured harness logs.
   proxy/                    Generated egress firewall configs (docker
                             backend): nginx-strict.conf, nginx-open.conf,
@@ -418,6 +422,19 @@ Runtime:
   subdir. Read at startup — restart to apply.
 - `STATE_DIR` — persistent state dir (default `./data`)
 - `DB_PATH` — override SQLite path
+- `LASTLIGHT_BUILD_ASSETS` — `repo` (default) | `server`. In `server` mode the
+  per-phase build handoff docs (`architect-plan.md`, `status.md`,
+  `executor-summary.md`, `reviewer-verdict.md`, …) are externalized to the
+  Last Light host instead of being committed into the target repo under
+  `.lastlight/`. The executor stages the store's docs into the workspace
+  before each phase and harvests them back afterwards
+  (`src/engine/agent-executor.ts`); prompts gate their doc commit behind
+  `{{#if !externalizeArtifacts}}`; `{{artifactUrl}}` links resolve to the
+  dashboard's Artifacts view; the admin API serves them read-only at
+  `/admin/api/artifacts`. Equivalent config: `buildAssets.location`.
+- `BUILD_ASSETS_DIR` — server-mode build-asset store root
+  (default `$STATE_DIR/build-assets`; layout
+  `<owner>/<repo>/<issueKey>/*.md`, store in `src/state/build-assets.ts`)
 - `OPENCODE_HOME_DIR` — override dashboard session-jsonl root
   (default `$STATE_DIR/opencode-home`)
 - `OPENCODE_SERVE_PORT` — port for the long-lived chat server

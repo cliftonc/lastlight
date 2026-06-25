@@ -14,14 +14,14 @@ Use the MCP tool github_create_pull_request with the following:
   (3-6 bullet points describing what changed)
 
   ## Planning and execution docs
-  - [Guardrails report]({{branchUrl guardrails-report.md}})
-  - [Architect plan]({{branchUrl architect-plan.md}})
-  - [Executor summary]({{branchUrl executor-summary.md}})
-  - [Reviewer verdict]({{branchUrl reviewer-verdict.md}})
-  - [Status]({{branchUrl status.md}})
+  - [Guardrails report]({{artifactUrl guardrails-report.md}})
+  - [Architect plan]({{artifactUrl architect-plan.md}})
+  - [Executor summary]({{artifactUrl executor-summary.md}})
+  - [Reviewer verdict]({{artifactUrl reviewer-verdict.md}})
+  - [Status]({{artifactUrl status.md}})
 
   Before adding each link above, run `ls -1 {{issueDir}}/`
-  on the branch and OMIT any line whose file doesn't exist on disk. Use the
+  and OMIT any line whose file doesn't exist on disk. Use the
   exact full https URLs above as written — do NOT shorten to relative paths,
   they will not render in the PR description.
 
@@ -34,6 +34,6 @@ Do NOT post a comment with the PR link — the harness adds it to the status
 checklist on the issue automatically. Just create the PR.
 
 Update status.md: current_phase = complete, add pr_number.
-git add .lastlight/ && git commit -m "status: PR created for #{{issueNumber}}" && git push origin HEAD
+{{#if !externalizeArtifacts}}git add .lastlight/ && git commit -m "status: PR created for #{{issueNumber}}" && git push origin HEAD{{/if}}{{#if externalizeArtifacts}}Do NOT git add or commit {{issueDir}}/ — the harness persists it to the Last Light server automatically.{{/if}}
 
 OUTPUT: The PR number and URL (so the harness can link the PR from the checklist).

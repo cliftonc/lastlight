@@ -196,6 +196,11 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
     branch,
     taskId,
     issueDir,
+    // Mirror the fresh-dispatch context so a resumed server-mode run keeps
+    // externalizing (and linking docs to the dashboard) instead of silently
+    // reverting to committing them on the branch.
+    externalizeArtifacts: opts.config.buildAssets === "server",
+    publicUrl: opts.publicUrl,
     bootstrapLabel: opts.bootstrapLabel || "lastlight:bootstrap",
     contextSnapshot: "",
     // Preserve the original prePopulateBranch so a resumed run still
@@ -282,11 +287,18 @@ async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Promise<v
     }
   }
 
+  // Server mode: tag the config with this run's artifact identity so the
+  // executor's stage-in/harvest seam targets the same store path the original
+  // dispatch used (issueKey = issueDir minus the `.lastlight/` prefix).
+  const runConfig = opts.config.buildAssets === "server"
+    ? { ...opts.config, buildAssetsKey: { owner, repo, issueKey: issueDir.replace(/^\.lastlight\//, "") } }
+    : opts.config;
+
   try {
     const result = await runWorkflow(
       definition,
       ctx,
-      opts.config,
+      runConfig,
       callbacks,
       opts.db,
       opts.models,

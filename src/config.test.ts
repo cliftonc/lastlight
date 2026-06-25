@@ -53,6 +53,33 @@ describe('loadConfig — model resolution', () => {
   });
 });
 
+describe('loadConfig — buildAssets location', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('defaults to repo mode with a state-relative store dir', () => {
+    vi.stubEnv('LASTLIGHT_BUILD_ASSETS', '');
+    const config = loadConfig();
+    expect(config.buildAssets).toBe('repo');
+    expect(config.buildAssetsDir).toMatch(/build-assets$/);
+  });
+
+  it('LASTLIGHT_BUILD_ASSETS=server overrides the file/default location', () => {
+    vi.stubEnv('LASTLIGHT_BUILD_ASSETS', 'server');
+    const config = loadConfig();
+    expect(config.buildAssets).toBe('server');
+  });
+
+  it('BUILD_ASSETS_DIR overrides the store directory', () => {
+    vi.stubEnv('BUILD_ASSETS_DIR', '/var/lib/lastlight/assets');
+    const config = loadConfig();
+    expect(config.buildAssetsDir).toBe('/var/lib/lastlight/assets');
+  });
+});
+
 describe('resolveVariant', () => {
   it('returns per-type override when present', () => {
     const variants: VariantConfig = { default: 'medium', architect: 'high', triage: 'minimal' };

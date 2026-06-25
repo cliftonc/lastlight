@@ -39,7 +39,7 @@ AFTER REVIEW:
    (paste actual output)
 
 2. Update status.md with reviewer_status: APPROVED or REQUEST_CHANGES (matching the verdict)
-3. git add .lastlight/ && git commit -m "review: verdict for #{{issueNumber}}" && git push origin HEAD
+{{#if !externalizeArtifacts}}3. git add .lastlight/ && git commit -m "review: verdict for #{{issueNumber}}" && git push origin HEAD{{/if}}{{#if externalizeArtifacts}}3. Do NOT git add or commit {{issueDir}}/ — the harness persists it to the Last Light server automatically.{{/if}}
 
 OUTPUT FORMAT — your stdout MUST start with one of these two lines, EXACTLY, on its own line, with no leading whitespace:
 

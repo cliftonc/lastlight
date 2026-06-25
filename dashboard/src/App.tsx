@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { api, auth, onUnauthorized, UnauthorizedError } from "./api";
 import { StatsHeader } from "./components/StatsHeader";
 import { SessionList } from "./components/SessionList";
@@ -12,6 +12,12 @@ import { WorkflowDefinitions } from "./components/WorkflowDefinitions";
 import { HomePage } from "./components/HomePage";
 import { CronsList } from "./components/CronsList";
 import { ConfigPage } from "./components/ConfigPage";
+// Lazy — the Artifacts editor pulls in MDXEditor (Lexical + CodeMirror, ~1 MB),
+// which would otherwise triple the initial bundle. Code-split so it loads only
+// when the Artifacts tab is opened.
+const ArtifactsPage = lazy(() =>
+  import("./components/ArtifactsPage").then((m) => ({ default: m.ArtifactsPage })),
+);
 import {
   HomeIcon,
   RectangleStackIcon,
@@ -20,6 +26,7 @@ import {
   ClockIcon,
   Cog6ToothIcon,
   Squares2X2Icon,
+  DocumentTextIcon,
 } from "@heroicons/react/24/outline";
 import {
   useUrlState,
@@ -32,11 +39,11 @@ import {
 } from "./hooks/useUrlState";
 
 type AuthState = "checking" | "required" | "ok";
-type Tab = "home" | "sessions" | "chat-sessions" | "workflows" | "runs" | "crons" | "config";
+type Tab = "home" | "sessions" | "chat-sessions" | "workflows" | "runs" | "crons" | "config" | "artifacts";
 
 const PAGE_SIZE = 50;
 
-const TABS = ["home", "workflows", "runs", "sessions", "chat-sessions", "crons", "config"] as const;
+const TABS = ["home", "workflows", "runs", "sessions", "chat-sessions", "artifacts", "crons", "config"] as const;
 
 const SESSION_SOURCE_PATHS: Record<"sessions" | "chat-sessions", string> = {
   sessions: "/admin/api/sessions",
@@ -257,6 +264,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             { id: "runs", label: "Workflow Runs", Icon: RectangleStackIcon },
             { id: "sessions", label: "Sandbox Sessions", Icon: CubeTransparentIcon },
             { id: "chat-sessions", label: "Chat Sessions", Icon: ChatBubbleLeftRightIcon },
+            { id: "artifacts", label: "Artifacts", Icon: DocumentTextIcon },
             { id: "crons", label: "Crons", Icon: ClockIcon },
             { id: "config", label: "Config", Icon: Cog6ToothIcon },
           ] as const
@@ -340,6 +348,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         />
       ) : tab === "workflows" ? (
         <WorkflowDefinitions />
+      ) : tab === "artifacts" ? (
+        <Suspense fallback={<div className="p-6 text-sm text-base-content/50">Loading editor…</div>}>
+          <ArtifactsPage />
+        </Suspense>
       ) : tab === "config" ? (
         <ConfigPage />
       ) : (

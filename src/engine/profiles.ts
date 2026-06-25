@@ -1,5 +1,5 @@
 import type { GitHubTokenPermissions } from "./git-auth.js";
-import type { OtelConfig, SandboxBackend } from "../config.js";
+import type { BuildAssetsLocation, OtelConfig, SandboxBackend } from "../config.js";
 import { loadAgentContext as loadResolvedAgentContext } from "../workflows/loader.js";
 
 /**
@@ -28,6 +28,22 @@ export interface ExecutorConfig {
   sessionsDir?: string;
   /** Workflow sandbox backend (overrides config-level default). */
   sandbox?: SandboxBackend;
+  /**
+   * Where build handoff docs live for this run:
+   *   - "repo" (default): the agent writes/commits `.lastlight/<issueKey>/`
+   *     into the target repo branch; the stage-in/harvest seam is skipped.
+   *   - "server": docs are staged in from / harvested back to the server store
+   *     under `buildAssetsDir`, never committed. Set from the runtime config.
+   */
+  buildAssets?: BuildAssetsLocation;
+  /** Filesystem root for the server-mode build-assets store (when buildAssets === "server"). */
+  buildAssetsDir?: string;
+  /**
+   * Server-mode artifact identity for this run. Used by the stage-in/harvest
+   * seam to locate the run's docs in the store at
+   * `<buildAssetsDir>/<owner>/<repo>/<issueKey>/`. Set per run from simple.ts.
+   */
+  buildAssetsKey?: { owner: string; repo: string; issueKey: string };
   /**
    * Bypass the HTTP egress allowlist for this phase. When true:
    *   - gondolin: `allowedHttpHosts: ["*"]` is passed to agentic-pi.

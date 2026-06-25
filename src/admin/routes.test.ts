@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createAdminRoutes, type AdminConfig } from "./routes.js";
 import type { StateDb } from "../state/db.js";
 import type { SessionReader } from "./sessions.js";
@@ -767,5 +770,58 @@ describe("POST /approvals/:id/respond", () => {
     expect(res.status).toBe(200);
     expect(calls.resolveGateAndFail).toEqual([["appr-1", "admin", "too risky"]]);
     expect(calls.respond).toEqual([]);
+  });
+});
+
+describe("artifacts endpoints (server-mode build assets)", () => {
+  let dir: string;
+  // Auth disabled (empty password) so the round-trip test doesn't need a token.
+  const app = () =>
+    createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({ adminPassword: "", buildAssetsDir: dir }));
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "ll-routes-assets-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("PUT then GET round-trips a doc and lists keys/files", async () => {
+    const a = app();
+    const put = await request(a, "/artifacts/acme/widget/issue-42/architect-plan.md", {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "# Plan\n",
+    });
+    expect(put.status).toBe(200);
+    expect(await put.json()).toEqual({ ok: true });
+
+    const keys = await request(a, "/artifacts?repo=acme/widget");
+    expect(await keys.json()).toEqual({ keys: ["issue-42"] });
+
+    const files = await request(a, "/artifacts/acme/widget/issue-42");
+    expect(await files.json()).toEqual({ files: ["architect-plan.md"] });
+
+    const doc = await request(a, "/artifacts/acme/widget/issue-42/architect-plan.md");
+    expect(doc.status).toBe(200);
+    expect(await doc.text()).toBe("# Plan\n");
+  });
+
+  it("400s on a traversal attempt in the doc name", async () => {
+    const res = await request(app(), "/artifacts/acme/widget/issue-42/..%2f..%2fsecret", {
+      method: "PUT",
+      body: "x",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("404 on an unknown doc; empty lists for an unknown repo", async () => {
+    const a = app();
+    const missing = await request(a, "/artifacts/acme/widget/issue-1/nope.md");
+    expect(missing.status).toBe(404);
+    const keys = await request(a, "/artifacts?repo=nobody/nothing");
+    expect(await keys.json()).toEqual({ keys: [] });
+  });
+
+  it("reports empty when no store dir is configured", async () => {
+    const a = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const keys = await request(a, "/artifacts?repo=acme/widget");
+    expect(await keys.json()).toEqual({ keys: [] });
   });
 });

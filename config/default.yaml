@@ -20,6 +20,16 @@ sandbox:
   backend: gondolin
   maxTurns: 200
 
+# Where the per-phase build handoff docs (architect-plan.md, status.md,
+# executor-summary.md, reviewer-verdict.md, …) live:
+#   repo   — committed into the target repo under .lastlight/issue-N/ (default,
+#            the docs ride the working branch and link to GitHub blob URLs).
+#   server — persisted on the Last Light server under $STATE_DIR/build-assets/,
+#            injected into each phase from outside the repo (never committed)
+#            and linked to the admin dashboard.
+buildAssets:
+  location: repo
+
 approval: {}
 
 bootstrap:

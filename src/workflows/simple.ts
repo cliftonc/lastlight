@@ -14,6 +14,7 @@ import type { TemplateContext } from "./templates.js";
 import { slugify } from "./templates.js";
 import { wrapUntrusted } from "../engine/screen.js";
 import { buildProgressModel, runDashboardUrl } from "../notify/model.js";
+import { buildAssetIssueKey } from "../state/build-assets.js";
 
 /**
  * Lightweight invocation request for any agent workflow. The runner handles
@@ -180,9 +181,7 @@ export async function runSimpleWorkflow(
     // Recover issueDir from stored context so resumed runs use the same
     // workspace path as the original.
     issueDir = (stored.issueDir as string | undefined)
-      || (number !== undefined
-        ? `.lastlight/issue-${number}`
-        : `.lastlight/${workflowName}-${workflowId.slice(0, 8)}`);
+      || `.lastlight/${buildAssetIssueKey(workflowName, number, workflowId)}`;
     const handled = await handleExistingRun(existingRun, definition, notify, db);
     if (handled) return handled;
   } else {
@@ -191,9 +190,7 @@ export async function runSimpleWorkflow(
     // Issue-scoped workflows share a dir by issue number; non-issue
     // workflows (explore, health, etc.) get a run-scoped dir so
     // concurrent sessions never overlap.
-    issueDir = number !== undefined
-      ? `.lastlight/issue-${number}`
-      : `.lastlight/${workflowName}-${workflowId.slice(0, 8)}`;
+    issueDir = `.lastlight/${buildAssetIssueKey(workflowName, number, workflowId)}`;
     db.runs.createRun({
       id: workflowId,
       workflowName,
@@ -303,6 +300,13 @@ export async function runSimpleWorkflow(
     branch,
     taskId,
     issueDir,
+    // True only in server mode — prompts gate their `git add .lastlight/ &&
+    // commit` behind `{{#if !externalizeArtifacts}}` so the handoff docs are
+    // never committed into the target repo (they're harvested to the server
+    // store instead). Absent/false ⇒ repo behaviour (commit the docs).
+    externalizeArtifacts: config.buildAssets === "server",
+    // Dashboard base URL for the {{artifactUrl}} helper (server-mode doc links).
+    publicUrl: callbacks.publicUrl,
     bootstrapLabel,
     contextSnapshot,
     // Forwarded to the executor (via gitSandboxAccessForWorkflow) so the
@@ -324,11 +328,28 @@ export async function runSimpleWorkflow(
     ...(request.extra || {}),
   };
 
+  // In server mode, tag the run's config with its artifact identity so the
+  // executor's stage-in/harvest seam can locate this run's docs in the store
+  // at `<buildAssetsDir>/<owner>/<repo>/<issueKey>/`. issueKey is issueDir
+  // without the `.lastlight/` prefix, so it tracks however issueDir was formed
+  // (fresh derivation or recovered-from-context on resume).
+  const runConfig: ExecutorConfig =
+    config.buildAssets === "server"
+      ? {
+          ...config,
+          buildAssetsKey: {
+            owner,
+            repo,
+            issueKey: issueDir.replace(/^\.lastlight\//, ""),
+          },
+        }
+      : config;
+
   try {
     const result = await runWorkflow(
       definition,
       ctx,
-      config,
+      runConfig,
       callbacks,
       db,
       models,

@@ -39,6 +39,49 @@ describe("slugify", () => {
   });
 });
 
+describe("renderTemplate — {{artifactUrl}} (build-assets mode)", () => {
+  it("repo mode (flag absent) → GitHub blob URL", () => {
+    const result = renderTemplate("{{artifactUrl architect-plan.md}}", BASE_CTX);
+    expect(result).toBe(
+      "https://github.com/acme/widget/blob/lastlight%2F42-add-rate-limiter/.lastlight/issue-42/architect-plan.md",
+    );
+  });
+
+  it("server mode → dashboard deep link when publicUrl is set", () => {
+    const result = renderTemplate("{{artifactUrl architect-plan.md}}", {
+      ...BASE_CTX,
+      externalizeArtifacts: true,
+      publicUrl: "https://last.example.com/",
+    });
+    expect(result).toBe(
+      "https://last.example.com/admin/?tab=artifacts&repo=acme%2Fwidget&key=issue-42&doc=architect-plan.md",
+    );
+  });
+
+  it("server mode without publicUrl → falls back to the branch URL", () => {
+    const result = renderTemplate("{{artifactUrl status.md}}", {
+      ...BASE_CTX,
+      externalizeArtifacts: true,
+    });
+    expect(result).toContain("https://github.com/acme/widget/blob/");
+  });
+});
+
+describe("renderTemplate — doc-commit gate", () => {
+  const TEMPLATE =
+    "{{#if !externalizeArtifacts}}git commit docs{{/if}}{{#if externalizeArtifacts}}harness persists{{/if}}";
+
+  it("repo mode (flag absent) renders the git commit", () => {
+    expect(renderTemplate(TEMPLATE, BASE_CTX)).toBe("git commit docs");
+  });
+
+  it("server mode renders the persistence note instead", () => {
+    expect(renderTemplate(TEMPLATE, { ...BASE_CTX, externalizeArtifacts: true })).toBe(
+      "harness persists",
+    );
+  });
+});
+
 describe("renderTemplate — simple substitution", () => {
   it("replaces {{varName}} with context value", () => {
     const result = renderTemplate("Hello {{owner}}/{{repo}}#{{issueNumber}}", BASE_CTX);

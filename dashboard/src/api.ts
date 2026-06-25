@@ -416,6 +416,27 @@ export const api = {
   workflowPrompt: (name: string, path: string) =>
     reqText(`/workflows/${encodeURIComponent(name)}/prompt?path=${encodeURIComponent(path)}`),
   skill: (name: string) => reqText(`/skills/${encodeURIComponent(name)}`),
+  // ── Build assets (server-mode handoff docs) ──────────────────────────────
+  listArtifactKeys: (repo: string) =>
+    req<{ keys: string[] }>(`/artifacts?repo=${encodeURIComponent(repo)}`),
+  listArtifactFiles: (owner: string, repo: string, key: string) =>
+    req<{ files: string[] }>(
+      `/artifacts/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(key)}`,
+    ),
+  getArtifact: (owner: string, repo: string, key: string, doc: string) =>
+    reqText(
+      `/artifacts/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(key)}/${encodeURIComponent(doc)}`,
+    ),
+  saveArtifact: async (owner: string, repo: string, key: string, doc: string, content: string) => {
+    await reqText(
+      `/artifacts/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(key)}/${encodeURIComponent(doc)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: content,
+      },
+    );
+  },
   approvals: () => req<{ approvals: WorkflowApproval[] }>("/approvals"),
   respondToApproval: (id: string, decision: "approved" | "rejected", reason?: string) =>
     req<{ status: string }>(`/approvals/${id}/respond`, {

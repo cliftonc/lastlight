@@ -20,6 +20,7 @@ import {
 } from "./profiles.js";
 import { AgenticShim, truncateForLog, safeStringify } from "./event-shim.js";
 import { projectSlugForCwd } from "../session-log.js";
+import { BuildAssetStore, type BuildAssetRef } from "../state/build-assets.js";
 import type { SandboxBackend } from "../config.js";
 import { ALLOW_ALL_SENTINEL, DEFAULT_ALLOWLIST, mergeAllowlist } from "../sandbox/egress-allowlist.js";
 import { getDockerSandboxOtelEnv, getOtelEnvForSandbox, recordError, recordExecutionMetrics, safeSpanAttributes, withSpan } from "../telemetry/index.js";
@@ -119,6 +120,76 @@ export function excludeFromGit(repoDir: string, entry: string): void {
   if (current.split(/\r?\n/).includes(line)) return;
   mkdirSync(infoDir, { recursive: true });
   appendFileSync(excludeFile, `${current.length && !current.endsWith("\n") ? "\n" : ""}${line}\n`);
+}
+
+// ── Server-mode build assets ────────────────────────────────────────
+//
+// In "server" mode the per-phase handoff docs live in the Last Light store
+// rather than being committed into the target repo. The seam is symmetric to
+// the skill bundle but bidirectional: stage the run's stored docs into the
+// repo's `.lastlight/<issueKey>/` before the agent runs (so a later phase /
+// resumed run sees prior context), and harvest whatever the phase wrote back
+// to the store afterwards. The directory is the SAME relative path as repo
+// mode (`{{issueDir}}`), so prompts are unchanged except for gating their
+// `git add .lastlight/ && commit` off — the dir is git-excluded here too as a
+// backstop against the agent's `git add -A` feature commit sweeping it in.
+const ARTIFACT_DIR_ROOT = ".lastlight";
+
+interface ServerArtifacts {
+  store: BuildAssetStore;
+  ref: BuildAssetRef;
+  /** Host path to `<repo>/.lastlight/<issueKey>` (the staged doc dir). */
+  dir: string;
+  /** Host path to the repo checkout root. */
+  repoDir: string;
+}
+
+/**
+ * Resolve the server-mode artifact context for a run, or undefined when not in
+ * server mode (the default — the whole seam is then skipped and behaviour is
+ * byte-for-byte repo mode). `hostRepoDir` is the host-visible repo checkout
+ * (for docker that's the bind-mounted workspace path, not the in-container one).
+ */
+function serverArtifacts(config: ExecutorConfig, hostRepoDir: string): ServerArtifacts | undefined {
+  if (config.buildAssets !== "server" || !config.buildAssetsDir || !config.buildAssetsKey) {
+    return undefined;
+  }
+  const store = new BuildAssetStore(config.buildAssetsDir);
+  const ref = config.buildAssetsKey;
+  return { store, ref, dir: join(hostRepoDir, ARTIFACT_DIR_ROOT, ref.issueKey), repoDir: hostRepoDir };
+}
+
+/** Stage stored docs into the workspace + exclude the dir from git (server mode). */
+function stageArtifactsIn(art: ServerArtifacts | undefined): void {
+  if (!art) return;
+  try {
+    // Stage the run's stored docs into `<repoDir>/.lastlight/<issueKey>/`. This
+    // is safe for every workflow shape here: pre-cloned workflows (build, pr-*)
+    // already have the checkout at `repoDir`, and non-pre-cloned ones (explore)
+    // clone the repo into a *subdir* — so `repoDir` is the workspace root and a
+    // `.lastlight/` there never collides with the agent's clone. (A future
+    // workflow that `git clone … .` into cwd would be the one exception.)
+    art.store.stageInto(art.ref, art.dir);
+    // Backstop the prompt-level commit gate: when this is a real checkout, keep
+    // the docs out of the agent's `git add -A` feature commit. No-op at the
+    // workspace root (no `.git`), where the docs sit outside the repo subtree
+    // and are never in the repo's git tree anyway.
+    excludeFromGit(art.repoDir, ARTIFACT_DIR_ROOT);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[executor] Could not stage build assets: ${msg}`);
+  }
+}
+
+/** Persist docs the phase wrote back to the store (server mode). */
+function harvestArtifactsOut(art: ServerArtifacts | undefined): void {
+  if (!art) return;
+  try {
+    art.store.harvestFrom(art.ref, art.dir);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[executor] Could not harvest build assets: ${msg}`);
+  }
 }
 
 /**
@@ -346,6 +417,12 @@ async function executeInProcess(
     console.warn(`[executor] Could not stage skills: ${msg}`);
   }
 
+  // Server-mode build assets: agentCwd is the host-visible repo checkout for
+  // the in-process backends (gondolin's cwd mount / none's host FS), so stage
+  // and harvest operate on it directly.
+  const artifacts = serverArtifacts(config, agentCwd);
+  stageArtifactsIn(artifacts);
+
   const shim = new AgenticShim({
     homeDir: sessionsDir,
     projectSlug: projectSlugForCwd(agentCwd),
@@ -451,6 +528,8 @@ async function executeInProcess(
     });
   } catch (err: unknown) {
     restore();
+    // Harvest even on failure so a partial plan/summary still reaches the store.
+    harvestArtifactsOut(artifacts);
     const msg = err instanceof Error ? err.message : String(err);
     const durationMs = Date.now() - startTime;
     recordError("agent", err, { "sandbox.backend": ctx.backend, model, success: false, stop_reason: "error_executor", "workflow.name": config.telemetry?.workflowName, "phase.name": config.telemetry?.phaseName });
@@ -474,6 +553,7 @@ async function executeInProcess(
     };
   }
   restore();
+  harvestArtifactsOut(artifacts);
 
   // agentic-pi's in-process `stats` is the same compaction-blind
   // `usage_snapshot`. Prefer our per-message accumulation when it carries
@@ -574,6 +654,15 @@ async function executeDocker(
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[executor] Could not stage skills in docker workspace: ${msg}`);
   }
+
+  // Server-mode build assets. The host-visible repo checkout is the
+  // bind-mounted workspace path (`sbx.workDir[/<repo>]`), NOT the in-container
+  // `agentCwd`. Stage now; harvest before each `sbx.cleanup()` below (cleanup
+  // removes the workspace, taking the docs with it).
+  const hostRepoDir = ctx.prePopulate ? join(sbx.workDir, ctx.prePopulate.repo) : sbx.workDir;
+  const artifacts = serverArtifacts(config, hostRepoDir);
+  stageArtifactsIn(artifacts);
+
   // The dashboard reads from <sessionsDir>/projects/<slug>/. Use the same
   // resolved cwd for the slug so live tails land in the right project dir.
   const shim = new AgenticShim({
@@ -649,6 +738,7 @@ async function executeDocker(
         msg,
       )
       .catch(() => null);
+    harvestArtifactsOut(artifacts);
     await sbx.cleanup();
     return {
       success: false,
@@ -660,6 +750,7 @@ async function executeDocker(
       stopReason: "error_sandbox",
     };
   }
+  harvestArtifactsOut(artifacts);
   await sbx.cleanup();
   const finalResult = await finalizeFromRunResult(acc.build(0), prompt, shim, startTime, acc.extensions(), acc.skills(), acc.toolError(), acc.endedOnToolCall());
   recordExecutionMetrics("agent", {

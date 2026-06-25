@@ -32,6 +32,7 @@ import {
   getWorkflowTriggerKinds,
 } from "../workflows/triggers.js";
 import { getManagedRepos } from "../managed-repos.js";
+import { BuildAssetStore } from "../state/build-assets.js";
 import type { PublicConfigBundle } from "../config.js";
 
 /**
@@ -51,6 +52,12 @@ function parseJsonColumn(raw: string | undefined): unknown {
 export interface AdminConfig {
   stateDir: string;
   sessionsDir: string;
+  /**
+   * Filesystem root for server-mode build assets (when `buildAssets.location:
+   * server`). The Artifacts endpoints read handoff docs from here. Absent when
+   * unconfigured — the endpoints then report the store as empty.
+   */
+  buildAssetsDir?: string;
   adminPassword: string;
   adminSecret: string;
   publicConfig?: PublicConfigBundle;
@@ -958,6 +965,67 @@ export function createAdminRoutes(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return c.json({ error: `skill not found: ${name}`, detail: msg }, 404);
+    }
+  });
+
+  // ── Build assets (server mode) ─────────────────────────────────
+  // Read-only views of the externalized handoff docs (architect-plan.md, …)
+  // that live in the server store when `buildAssets.location: server`. The
+  // store itself rejects path traversal on every segment. With no store dir
+  // configured (repo mode) the list endpoints report empty rather than 404 so
+  // the dashboard tab degrades gracefully.
+  const buildAssetStore = config.buildAssetsDir ? new BuildAssetStore(config.buildAssetsDir) : null;
+
+  // List the run keys (issue-N / <workflow>-<id>) stored for ?repo=owner/repo.
+  app.get("/artifacts", (c) => {
+    const repoParam = c.req.query("repo");
+    if (!repoParam || !repoParam.includes("/")) {
+      return c.json({ error: "missing or invalid ?repo=owner/repo" }, 400);
+    }
+    if (!buildAssetStore) return c.json({ keys: [] });
+    const [owner, repo] = repoParam.split("/", 2);
+    try {
+      return c.json({ keys: buildAssetStore.listKeys(owner, repo) });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  // List the doc filenames stored for one run.
+  app.get("/artifacts/:owner/:repo/:key", (c) => {
+    if (!buildAssetStore) return c.json({ files: [] });
+    const { owner, repo, key } = c.req.param();
+    try {
+      return c.json({ files: buildAssetStore.listFiles({ owner, repo, issueKey: key }) });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  // Read one doc as text/plain (the dashboard renders it with marked/DOMPurify).
+  app.get("/artifacts/:owner/:repo/:key/:doc", (c) => {
+    if (!buildAssetStore) return c.json({ error: "build-assets store not configured" }, 404);
+    const { owner, repo, key, doc } = c.req.param();
+    try {
+      const content = buildAssetStore.read({ owner, repo, issueKey: key }, doc);
+      if (content === undefined) return c.json({ error: `doc not found: ${doc}` }, 404);
+      return c.text(content, 200, { "Content-Type": "text/plain; charset=utf-8" });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  // Overwrite one doc with the raw markdown request body. The store creates
+  // the run dir on demand and rejects path traversal on every segment.
+  app.put("/artifacts/:owner/:repo/:key/:doc", async (c) => {
+    if (!buildAssetStore) return c.json({ error: "build-assets store not configured" }, 404);
+    const { owner, repo, key, doc } = c.req.param();
+    try {
+      const body = await c.req.text();
+      buildAssetStore.write({ owner, repo, issueKey: key }, doc, body);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
   });
 

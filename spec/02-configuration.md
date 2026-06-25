@@ -34,6 +34,8 @@ interface LastLightConfig {
   variants: VariantConfig;                // { default?: string; [taskType: string]: string | undefined }
   maxTurns: number;
   sandbox: "gondolin" | "docker" | "none";
+  buildAssets: "repo" | "server";         // where build handoff docs live
+  buildAssetsDir: string;                  // server-mode store root ($STATE_DIR/build-assets)
   githubApp?: {
     appId: string;
     privateKeyPath: string;
@@ -150,6 +152,35 @@ Resolution at dispatch (`src/config.ts:296`): per-type if present, else
 Unknown `LASTLIGHT_SANDBOX` values log a warning and fall back to
 `gondolin`. `none` is for local dev only — no isolation.
 
+### Build assets
+
+Where the per-phase build handoff docs (`architect-plan.md`, `status.md`,
+`executor-summary.md`, `reviewer-verdict.md`, `guardrails-report.md`, the
+`explore-*` docs) live. Config block `buildAssets.location` (file/overlay) or
+the env override below.
+
+| Var | Purpose | Default |
+|---|---|---|
+| `LASTLIGHT_BUILD_ASSETS` | `repo` / `server` | file/default `repo` |
+| `BUILD_ASSETS_DIR` | server-mode store root | `$STATE_DIR/build-assets` |
+
+- **`repo`** (default) — the agent writes the docs into `.lastlight/<issueKey>/`
+  inside the target repo and `git commit`s them onto the working branch. PR
+  bodies link them via `{{branchUrl}}`/`{{artifactUrl}}` → GitHub blob URLs.
+  Byte-for-byte the historical behaviour.
+- **`server`** — the docs are externalized to
+  `$STATE_DIR/build-assets/<owner>/<repo>/<issueKey>/`, never committed. The
+  executor stages the store's docs into the workspace before each phase and
+  harvests changed docs back afterwards (`stageArtifactsIn`/`harvestArtifactsOut`
+  in `src/engine/agent-executor.ts`), the dir is git-excluded as a backstop,
+  prompts gate their doc commit behind `{{#if !externalizeArtifacts}}`, and
+  `{{artifactUrl}}` resolves to a dashboard deep link
+  (`/admin/?tab=artifacts&repo=…&key=…&doc=…`). The admin API exposes the store
+  read-only at `/admin/api/artifacts[/:owner/:repo/:key[/:doc]]`.
+
+Unknown `LASTLIGHT_BUILD_ASSETS` values log a warning and fall back to the
+file/default location.
+
 ### State and paths
 
 | Var | Purpose | Default |
@@ -157,6 +188,7 @@ Unknown `LASTLIGHT_SANDBOX` values log a warning and fall back to
 | `STATE_DIR` | root for all persistent state | `./data` |
 | `DB_PATH` | SQLite file | `$STATE_DIR/lastlight.db` |
 | `LASTLIGHT_SESSIONS_DIR` | JSONL session envelopes (dashboard reads here) | `$STATE_DIR/agent-sessions` |
+| `BUILD_ASSETS_DIR` | server-mode build-asset store root | `$STATE_DIR/build-assets` |
 | `WORKFLOW_DIR` | YAML workflow definitions | `./workflows` |
 | `WEBHOOK_PORT` / `PORT` | webhook listener port | `8644` |
 
@@ -250,6 +282,9 @@ $STATE_DIR/
 │   └── app.pem            mode-600 copy of the GitHub App PEM
 ├── agent-sessions/        JSONL envelopes, one file per agent session.
 │                          Dashboard reads from here.
+├── build-assets/          server-mode build handoff docs (when
+│                          buildAssets.location = server):
+│                          <owner>/<repo>/<issueKey>/*.md
 └── proxy/                 generated egress firewall configs
     ├── nginx-strict.conf
     ├── nginx-open.conf
