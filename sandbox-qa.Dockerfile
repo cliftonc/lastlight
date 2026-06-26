@@ -64,6 +64,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # recording (webm) into a titled, trimmed, size-capped mp4. Baked at build time
 # — the strict egress allowlist blocks runtime downloads, and compose runs fully
 # offline. No Remotion / headless-render toolchain: the demo path is ffmpeg-only.
+#
+# Lock the contract compose-demo.sh depends on: the `drawtext` filter (title
+# card + BEFORE/AFTER labels) and at least one Liberation font. Debian's ffmpeg
+# ships drawtext (libfreetype) and fonts-liberation provides the TTFs, but assert
+# it here so a future base/apt change can't silently produce an image that runs
+# ffmpeg yet drops every text overlay. `grep -c` drains the output (no SIGPIPE).
+RUN test "$(ffmpeg -hide_banner -filters 2>/dev/null | grep -c drawtext)" -ge 1 \
+ && fc-list | grep -qi liberation \
+ && echo "sandbox-qa: ffmpeg drawtext + Liberation fonts present"
 
 # Install Playwright + Chromium into FIXED, world-readable paths so the non-root
 # `agent` user (UID 10001, from the base image) can launch the browser.

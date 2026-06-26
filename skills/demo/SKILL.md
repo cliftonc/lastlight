@@ -95,14 +95,34 @@ node <browser-qa-dir>/scripts/agent-browser.mjs run flow.json \
 # → writes /tmp/demo-cap/session.webm, reports {"video":"…/session.webm", …}
 ```
 
-Pick the viewport to match the layout so the clip isn't letterboxed:
-`1280x720` for `single`; `~960x1000` per panel for `side-by-side` (set it in the
-flow's `viewport`).
+Pick the viewport to match the layout so the clip isn't letterboxed (the
+compositor renders at **1920×1080** by default): `1920x1080` for `single`;
+`~960x1000` per panel for `side-by-side` (set it in the flow's `viewport`).
+Recording at the output resolution keeps UI text crisp instead of upscaled.
 
-**Before/after comparison:** check out and run each branch in turn (the
-`building` skill), recording the **same** scripted interaction against each —
-`session-before.webm` (base branch) and `session-after.webm` (PR head). Only the
-behaviour should differ.
+**Before/after comparison:** record the **same** scripted interaction against
+each branch — `session-after.webm` (PR head) and `session-before.webm` (base
+branch). Only the behaviour should differ.
+
+When the harness triggered this on a PR, your workspace is **already checked out
+at the PR head** — record the *after* from that current checkout first (no
+re-checkout). Then get the *before* from the base branch. The pre-clone is
+shallow + single-branch, so fetch the base **by ref** (the prompt passes its
+name) rather than trusting a local branch name, which may be a synthesized
+`lastlight/N-slug` that actually points at the default branch:
+
+```bash
+git fetch --depth 1 origin <baseBranch>
+git checkout -B <baseBranch>-base FETCH_HEAD   # re-install deps + restart the dev-server after switching
+```
+
+**Verify the checkout did what you think before you composite:** read the
+disambiguating element on *both* recordings (the driver's `text`/`assertText`).
+It MUST be present in *after* and absent in *before*. If both look identical, the
+checkout is wrong (a stale/fictional branch, deps not rebuilt, or a dev-server
+still serving the old branch) — STOP and fix it. Never ship a side-by-side that
+shows no difference and call it a before/after; that is the failure this skill
+exists to prevent.
 
 ## Compose the video
 
@@ -114,34 +134,40 @@ Composite the raw recording(s) into the final mp4 with the bundled wrapper:
   --output <artifact-dir>/demo.mp4 \
   --title "PR #42 — Add dark mode toggle" \
   --subtitle "Toggling persists the theme across reloads" \
-  --layout single --speed 1.5 --target-size-mb 5 \
+  --layout single --speed 1.5 \
   /tmp/demo-cap/session.webm
 
-# Before/after comparison
+# Before/after comparison — first clip = left/BEFORE, second = right/AFTER
 <demo-dir>/scripts/compose-demo.sh \
   --output <artifact-dir>/demo.mp4 \
   --title "PR #51 — Fix flicker on load" \
   --layout side-by-side --labels "BEFORE (main)" "AFTER (PR)" \
-  --target-size-mb 5 \
   /tmp/before/session-before.webm /tmp/after/session-after.webm
 ```
 
 Flags: `--title` (required, on the card), `--subtitle`, `--layout
 single|side-by-side`, `--labels A B` (side-by-side), `--speed N`, `--trim
-START:END` (seconds, single layout), `--target-size-mb` (default 5),
-`--width/--height` (default 1280×720), `--title-secs`. The script normalizes,
-lays out, adds the title card, and does a **two-pass** encode to land under the
-size cap (`+faststart`, `yuv420p`). It prints a JSON summary line:
-`{"output":"…","resolution":"1280x720","duration":"38.4","size_mb":3.1}`.
+START:END` (seconds, single layout), `--crf` (default 18 — lower = higher
+quality), `--target-size-mb` (default 10), `--width/--height` (default
+1920×1080), `--title-secs`. The script normalizes (lanczos scale), lays out, adds
+the title card, then does a **quality-first single-pass CRF** encode
+(`+faststart`, `yuv420p`); only if that overshoots `--target-size-mb` does it
+fall back to a size-capped two-pass encode. It prints a JSON summary line:
+`{"output":"…","resolution":"1920x1080","duration":"38.4","size_mb":3.1}`.
 
 ## Guardrails — self-check before reporting
 
 Confirm the output with `ffprobe` (the script's summary already reports these):
 
-- **Resolution** matches the requested size (default 1920-free 1280×720).
-- **Duration** is sane — not 0s, within a watchable band (~15–90s).
-- **Size ≤ 5 MB** so GitHub embeds it inline (25 MB hard limit). If over, re-run
-  with a lower `--target-size-mb` or a higher `--speed`.
+- **Resolution** matches the requested size (default 1920×1080).
+- **Duration** is sane — not 0s, within a watchable band (~15–90s). Don't crank
+  `--speed` so high (or so low) that the clip becomes a sub-second flash or a
+  near-static crawl; the agent that shipped a 0.2s recording at `--speed 0.05`
+  proved nothing.
+- **Size ≤ 10 MB** so GitHub embeds it inline (25 MB hard limit). The CRF encode
+  usually lands far under this on its own; if it's over, the script auto-falls
+  back to a size-capped encode, but you can also lower `--target-size-mb`, raise
+  `--crf`, or raise `--speed`.
 
 If the recording is too short to be meaningful (a couple of seconds), go back
 and add interaction steps — don't ship a clip that proves nothing.

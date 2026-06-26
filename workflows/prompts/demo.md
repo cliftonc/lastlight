@@ -44,11 +44,33 @@ so `doctor` should pass.
 
 ## Workspace + run the app
 
-You are already inside the **{{repo}}** repo at branch {{branch}} — the harness
-pre-cloned it and your cwd is the repo root (no `cd`). Follow the `building`
-skill to install dependencies and start the dev-server in the background; poll
-with `curl` until it answers on `localhost:<port>`. For a before/after demo,
-run each branch in turn and record the same scripted interaction against each.
+You are already inside the **{{repo}}** repo — the harness pre-cloned it and your
+cwd is the repo root (no `cd`){{#if baseBranch}}, **checked out at the PR head
+branch `{{branch}}`**, so the workspace already holds the PR's code: this checkout
+*is* your "after" state{{/if}}. Follow the `building` skill to install
+dependencies and start the dev-server in the background; poll with `curl` until
+it answers on `localhost:<port>`.
+
+{{#if baseBranch}}**This is a PR → record a `side-by-side` before/after.** Record
+the **after** first, straight from the current checkout (`{{branch}}`) — do not
+re-checkout for it. Then record the **before** from the base branch
+`{{baseBranch}}`. The pre-clone is shallow + single-branch, so the base isn't
+present locally yet — fetch it explicitly by ref (never trust an ambiguously
+named local branch):
+
+```
+git fetch --depth 1 origin {{baseBranch}}
+git checkout -B {{baseBranch}}-base FETCH_HEAD
+```
+
+Re-run `building`'s install + restart the dev-server after switching. When you
+composite, the **first** clip is the left/BEFORE panel and the **second** is the
+right/AFTER panel.
+
+**Verify before you ship:** the disambiguating change must actually appear in the
+*after* recording and be absent from the *before* (use the driver's `text`/
+`assertText` to read it on both). If both states look identical, your checkout is
+wrong — STOP and fix it; do not ship a side-by-side that proves nothing.{{/if}}
 
 ## Capture and compose
 

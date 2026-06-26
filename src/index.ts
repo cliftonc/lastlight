@@ -268,9 +268,17 @@ async function main() {
     if (!prePopulateBranch && typeof ctxBranch === "string" && ctxBranch && workflowName === "pr-fix") {
       prePopulateBranch = ctxBranch;
     }
+    // PR-scoped read workflows that benefit from a workspace pre-checked-out at
+    // the PR's *real* head ref. `demo` is the load-bearing case: it synthesizes
+    // a `lastlight/N-<title-slug>` branch (see resolveRunBranch) that does NOT
+    // exist on the remote, so prePopulateWorkspace's missing-branch fallback
+    // silently clones the *default* branch — making a before/after demo's
+    // "after" identical to "before" (both end up on main). Resolving the head
+    // ref here pins the workspace to the actual PR code.
+    const PR_HEADREF_PREPOPULATE = new Set(["pr-review", "demo"]);
     if (
       !prePopulateBranch &&
-      workflowName === "pr-review" &&
+      PR_HEADREF_PREPOPULATE.has(workflowName) &&
       typeof prNumber === "number" &&
       github &&
       owner &&
@@ -279,13 +287,18 @@ async function main() {
       try {
         const pr = await github.getPullRequest(owner, repo, prNumber);
         prePopulateBranch = pr.head.ref;
+        // Surface the base ref so a before/after demo can fetch + check out the
+        // baseline (the read-only pre-clone is shallow + single-branch at the
+        // head ref, so `origin/<base>` isn't present until the agent fetches it).
+        if (pr.base?.ref) extra.baseBranch = pr.base.ref;
         console.log(
-          `[dispatch] pr-review: pre-populating workspace at ${owner}/${repo}@${prePopulateBranch}`,
+          `[dispatch] ${workflowName}: pre-populating workspace at ${owner}/${repo}@${prePopulateBranch} ` +
+          `(base ${pr.base?.ref ?? "?"})`,
         );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(
-          `[dispatch] pr-review: could not resolve PR head ref (${msg}); ` +
+          `[dispatch] ${workflowName}: could not resolve PR head ref (${msg}); ` +
           `agent will need to clone via MCP`,
         );
       }
