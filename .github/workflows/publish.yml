@@ -1,9 +1,12 @@
 name: Publish to npm
 
+# Publishing is gated to a GitHub Release: cutting a release (which carries the
+# v* tag) is the deliberate trigger, so a bare tag push never publishes on its
+# own. Flow: `npm version <patch|minor|major>` → push main + the tag → create a
+# Release on that tag → this runs.
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 permissions:
   id-token: write
@@ -13,7 +16,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # For a release event, default checkout resolves to the release's tag.
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - uses: actions/setup-node@v6
         with:
