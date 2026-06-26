@@ -69,6 +69,13 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const WAIT_TIMEOUT = 10_000; // sane default for waitFor / assertText probes
+// When recording, hold the page open briefly after the last step before closing
+// the context (which flushes the .webm). A bare goto→waitFor→text flow finishes
+// in ~250 ms — too short for Playwright's video to capture a *painted* frame, so
+// the clip can come out blank (the /demo before/after's "before" panel did).
+// Settling lets late paints + async data ("Loading…") resolve and guarantees a
+// watchable tail. Override with --record-settle-ms / LASTLIGHT_RECORD_SETTLE_MS.
+const RECORD_SETTLE_MS = Number(process.env.LASTLIGHT_RECORD_SETTLE_MS) || 1500;
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -300,6 +307,14 @@ async function run(flowPath, baseUrlArg, outDirArg, recordDirArg) {
     // the context to close, which flushes the .webm to disk. A save failure is a
     // reported finding, not a fatal run error.
     if (doRecord) {
+      // Settle before closing: let late paints + async data resolve and ensure
+      // the .webm has a watchable, non-blank tail (see RECORD_SETTLE_MS).
+      if (RECORD_SETTLE_MS > 0) {
+        await page
+          .waitForLoadState('networkidle', { timeout: RECORD_SETTLE_MS })
+          .catch(() => {});
+        await page.waitForTimeout(RECORD_SETTLE_MS).catch(() => {});
+      }
       const video = page.video();
       await context.close();
       if (video) {

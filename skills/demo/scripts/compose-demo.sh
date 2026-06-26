@@ -132,8 +132,10 @@ build_panel() {
   vf+=",pad=${PW}:${PH}:(ow-iw)/2:(oh-ih)/2:color=black"
   vf+=",fps=30,format=yuv420p,setsar=1"
   if [[ -n "$labelfile" && "$HAS_DRAWTEXT" == "1" ]]; then
-    vf+=",drawtext=${FONTARG}:textfile=${labelfile}:x=(w-text_w)/2:y=h-th-24"
-    vf+=":fontsize=26:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=12"
+    # Anchor labels to the TOP of the panel. At the bottom they're hidden behind
+    # the browser/GitHub video player's control bar (scrubber + play button).
+    vf+=",drawtext=${FONTARG}:textfile=${labelfile}:x=(w-text_w)/2:y=28"
+    vf+=":fontsize=34:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=14"
   fi
   # `${arr[@]+"${arr[@]}"}` expands to nothing when the array is empty without
   # tripping `set -u` (an empty `"${arr[@]}"` errors on bash < 4.4, e.g. macOS).
@@ -153,8 +155,15 @@ build_panel "${CLIPS[0]}" "$WORK/panel0.mp4" "$LABELFILE1" 1
 BODY="$WORK/body.mp4"
 if [[ "$LAYOUT" == "side-by-side" ]]; then
   build_panel "${CLIPS[1]}" "$WORK/panel1.mp4" "$LABELFILE2" 1
+  # Pad the shorter panel by freezing its last frame so both stay aligned for the
+  # full body. Without this, hstack lets the shorter side end early and go
+  # blank/black — which reads as "the before didn't render".
+  D0="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/panel0.mp4" || echo 0)"
+  D1="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/panel1.mp4" || echo 0)"
+  PAD0="$(awk -v a="$D0" -v b="$D1" 'BEGIN{d=b-a; if(d<0)d=0; printf "%.3f", d}')"
+  PAD1="$(awk -v a="$D0" -v b="$D1" 'BEGIN{d=a-b; if(d<0)d=0; printf "%.3f", d}')"
   ffmpeg -y -loglevel error -i "$WORK/panel0.mp4" -i "$WORK/panel1.mp4" \
-    -filter_complex "[0:v][1:v]hstack=inputs=2,format=yuv420p,setsar=1[v]" \
+    -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${PAD0}[p0];[1:v]tpad=stop_mode=clone:stop_duration=${PAD1}[p1];[p0][p1]hstack=inputs=2,format=yuv420p,setsar=1[v]" \
     -map "[v]" -an -c:v libx264 -crf "$CRF" -preset medium "$BODY"
 else
   BODY="$WORK/panel0.mp4"
