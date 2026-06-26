@@ -386,8 +386,9 @@ lastlight setup                        # first-run wizard (asks: client | server
 # resolved from --home → LASTLIGHT_HOME → ~/.lastlight serverHome → ~/lastlight.
 lastlight server setup                 # scaffold/adopt the working dir (clone core + overlay)
 lastlight server start|stop|restart [service]   # docker compose up -d / stop|down / restart
-lastlight server update                # deploy.sh-equivalent: pull core+overlay, build,
-                                        # up -d --remove-orphans, restart sidecars, health-check
+lastlight server update                # the canonical deploy: pull core+overlay, build
+                                        # (agent + sandbox + sandbox-qa), up -d --remove-orphans,
+                                        # restart sidecars, health-check
                                         # [--no-core --no-overlay --no-build --yes]
 lastlight server status                # compose ps + core/overlay version drift
 
@@ -569,54 +570,61 @@ holds `config.yaml` + asset overrides + `secrets/.env` + `secrets/*.pem`).
 
 ### Redeploy a code change
 
+Deploys are driven by the **`lastlight` CLI**, installed globally on the host
+and run as the `lastlight` user (with `LASTLIGHT_HOME=/home/lastlight/lastlight`,
+which is also `~lastlight/lastlight`, so the default resolves):
+
 ```bash
-ssh <production-server> /home/lastlight/deploy.sh
+ssh <production-server>
+sudo -u lastlight -i lastlight server update
 ```
 
-`/home/lastlight/deploy.sh` is the single source of truth. It:
+`lastlight server update` (`src/cli-server.ts`) is the single source of truth. It:
 
-1. `git pull` in `/home/lastlight/lastlight` (this repo, `main`).
-2. Pulls/clones the `instance/` overlay as the `lastlight` user (its read-only
-   deploy key, `git@github-instance:cliftonc/lastlight-instance.git`) and
-   symlinks `instance/docker-compose.override.yml` into the project root.
-3. `docker compose build agent sandbox` then `docker compose up -d
-   --remove-orphans` (recreates only what changed — the `agent` service plus
-   the egress-firewall sidecars).
-4. Force-restarts the egress sidecars (`coredns-strict`, `coredns-open`,
-   `nginx-egress-strict`, `nginx-egress-open`, and `otel-collector`) so they
+1. `git pull --ff-only` the core repo (`/home/lastlight/lastlight`, `main`).
+2. `git pull` the `instance/` overlay as the `lastlight` user (its read-only
+   deploy key, `git@github-instance:cliftonc/lastlight-instance.git`; clones it
+   if missing) and symlinks `instance/docker-compose.override.yml` into the
+   project root.
+3. `docker compose build agent sandbox --build-arg GIT_SHA=<HEAD>` (stamps the
+   image so `GET /admin/api/server/info` + the dashboard drift banner work),
+   then a non-fatal `docker compose build sandbox-qa` (browser-QA image; skips
+   gracefully on failure).
+4. `docker compose up -d --remove-orphans` (recreates only what changed).
+5. Force-restarts the egress sidecars (`coredns-strict`, `coredns-open`,
+   `nginx-egress-strict`, `nginx-egress-open`, `otel-collector`) so they
    re-read any regenerated nginx/coredns/collector configs.
-5. Health-checks `http://127.0.0.1:8644/health`.
+6. Health-checks `http://127.0.0.1:8644/health`, with live progress throughout.
 
-So a normal deploy is: **commit + push to `main`, then run `deploy.sh` on the
-host.** Code changes (anything under `src/`, `workflows/`, `skills/`,
-`agent-context/`, `config/default.yaml`) need the full `deploy.sh` (image
+The CLI is the control plane — npm-versioned and **separate from the agent
+image it builds**, so it survives the agent container recreating itself.
+`server start|stop|restart|status` cover the rest of the lifecycle, and
+`server status` (plus the dashboard's drift banner, `GET /server/info`) reports
+when core/overlay are behind.
+
+So a normal deploy is: **commit + push to `main`, then run `lastlight server
+update` on the host.** Code changes (anything under `src/`, `workflows/`,
+`skills/`, `agent-context/`, `config/default.yaml`) need the full update (image
 rebuild). Deployment-only config (the `instance/` overlay) can instead be
 edited + committed to the `lastlight-instance` repo and applied with just
-`docker compose restart agent` — no image rebuild. (Caveat: *removing* an
-`.env` var needs `docker compose up -d agent` / `lastlight server start agent`,
-not a restart — env_file vars are injected at container creation.)
+`lastlight server restart agent` — no image rebuild. (Caveat: *removing* an
+`.env` var needs a recreate, `lastlight server start agent`, not a restart —
+env_file vars are injected at container creation.)
 
-**`lastlight server update` is the CLI equivalent of `deploy.sh`.** Installed
-globally and run on the host (as the `lastlight` user, with
-`LASTLIGHT_HOME=/home/lastlight/lastlight`), it reproduces the same flow — pull
-core + overlay, `docker compose build agent sandbox` (stamping `GIT_SHA`), `up
--d --remove-orphans`, restart the egress sidecars, health-check — with live
-progress, plus `server start|stop|restart|status` for the rest of the
-lifecycle. The CLI is the control plane (npm-versioned, separate from the
-agent image it builds), so it survives the agent container recreating itself.
-`server status` and the dashboard's drift banner (`GET /server/info`) report
-when core/overlay are behind. `deploy.sh` remains the canonical reference and
-fallback.
+> The host repo must be owned by the `lastlight` user (`chown -R
+> lastlight:lastlight /home/lastlight/lastlight`) so the as-`lastlight` git pull
+> can write `.git/objects`. There is no longer a root-run `deploy.sh` to drift
+> that ownership back.
 
 ### Operate / debug
 
 ```bash
 ssh <production-server>
-cd /home/lastlight/lastlight
-docker compose ps                  # service health
-docker compose logs -f agent       # live harness logs
-docker compose restart agent       # after a config.yaml or .env add/edit
-docker compose up -d agent         # after REMOVING an .env var (recreate)
+sudo -u lastlight -i bash         # become the lastlight user
+lastlight server status            # compose state + core/overlay drift
+lastlight server logs agent --follow   # live harness logs
+lastlight server restart agent     # after a config.yaml or .env add/edit
+lastlight server start agent       # after REMOVING an .env var (recreate)
 ```
 
 ## Sub-folder docs

@@ -4,6 +4,7 @@ import {
   stopArgv,
   restartArgv,
   buildArgv,
+  buildQaArgv,
   upArgv,
   restartSidecarsArgv,
   parseLsRemoteSha,
@@ -29,6 +30,10 @@ describe("cli-server argv builders", () => {
   it("build: stamps GIT_SHA when present, omits when empty", () => {
     expect(buildArgv("abc123")).toEqual(["build", "agent", "sandbox", "--build-arg", "GIT_SHA=abc123"]);
     expect(buildArgv("")).toEqual(["build", "agent", "sandbox"]);
+  });
+
+  it("build qa: browser-QA sandbox image (built after the base)", () => {
+    expect(buildQaArgv()).toEqual(["build", "sandbox-qa"]);
   });
 
   it("up: recreates with --remove-orphans (matches deploy.sh)", () => {

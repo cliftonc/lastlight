@@ -71,6 +71,12 @@ export function buildArgv(gitSha: string): string[] {
   return args;
 }
 
+/** `docker compose build` args for the browser-QA sandbox image. Built after
+ *  the base sandbox (it's FROM lastlight-sandbox:latest) and non-fatally. */
+export function buildQaArgv(): string[] {
+  return ["build", "sandbox-qa"];
+}
+
 /** `docker compose up -d --remove-orphans` for an update. */
 export function upArgv(): string[] {
   return ["up", "-d", "--remove-orphans"];
@@ -365,6 +371,14 @@ export async function serverUpdate(opts: UpdateOpts): Promise<void> {
   if (doBuild) {
     const sha = (await captureSoft("git", ["rev-parse", "HEAD"], home)) ?? "";
     await composeRun(home, "Build images", buildArgv(sha));
+    // Browser-QA sandbox (FROM lastlight-sandbox:latest) — build after the base
+    // image, and non-fatally: a failure just means browser-QA phases skip
+    // (graceful degradation) rather than blocking the whole deploy.
+    try {
+      await composeRun(home, "Build browser-QA sandbox", buildQaArgv());
+    } catch (err) {
+      p.log.warn(`sandbox-qa build failed — browser QA will skip until rebuilt: ${(err as Error).message}`);
+    }
   }
 
   await composeRun(home, "Recreate services", upArgv());
