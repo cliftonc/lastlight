@@ -392,7 +392,17 @@ lastlight server update                # the canonical deploy: pull core+overlay
                                         # (agent + sandbox + sandbox-qa), up -d --remove-orphans,
                                         # restart sidecars, health-check
                                         # [--no-core --no-overlay --no-build --yes]
-lastlight server status                # compose ps + core/overlay version drift
+lastlight server status                # compose ps + core/overlay version drift +
+                                        # forked-asset overrides (shadows default / added)
+
+# Fork built-in assets into the instance/ overlay (HOST-LOCAL; src/fork-cli.ts).
+# Copies the chosen built-ins into instance/ so they shadow the defaults by
+# logical name (overlay wins at startup). Resolution: explicit --home wins;
+# else cwd if it's an overlay/checkout; else the server home.
+lastlight fork                         # list forkable workflows + agent-context (marks forked)
+lastlight fork <workflow>              # workflow YAML + every prompt + skill its phases reference
+lastlight fork agent-context [file]    # all agent-context/*.md (soul/rules/security), or one file
+                                        # [--home dir] [--force to overwrite existing]
 
 # Local dev with Docker sandbox isolation
 ./scripts/dev-local.sh                 # builds opencode.json + secrets

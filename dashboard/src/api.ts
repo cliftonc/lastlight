@@ -65,6 +65,20 @@ export interface ConfigBundle {
   sources: Record<string, unknown>;
 }
 
+export type OverlayAssetType = "workflow" | "cron" | "prompt" | "skill" | "agent-context";
+
+export interface OverlayAsset {
+  type: OverlayAssetType;
+  name: string;
+  /** True when the overlay shadows a same-named built-in; false when it adds a new one. */
+  shadowsDefault: boolean;
+}
+
+export interface OverridesBundle {
+  overlayDir: string | null;
+  overrides: OverlayAsset[];
+}
+
 export interface WorkflowRun {
   id: string;
   workflowName: string;
@@ -549,6 +563,7 @@ export const api = {
       { method: "DELETE" },
     ),
   config: () => req<ConfigBundle>("/config"),
+  overrides: () => req<OverridesBundle>("/overrides"),
 };
 
 export interface CronInfo {

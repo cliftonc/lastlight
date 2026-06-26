@@ -19,6 +19,7 @@ import {
 import { authMiddleware, createToken, verifyToken } from "./auth.js";
 import { Cron } from "croner";
 import type { CronScheduler } from "../cron/scheduler.js";
+import { enumerateOverlayAssets } from "../overlay-assets.js";
 import {
   getCronWorkflows,
   getWorkflow,
@@ -148,6 +149,11 @@ export interface AdminConfig {
   adminPassword: string;
   adminSecret: string;
   publicConfig?: PublicConfigBundle;
+  /** Built-in asset root (the lastlight checkout). Used to compute which
+   *  overlay assets shadow a default vs add a new one (Config → Overrides). */
+  builtInRoot?: string;
+  /** Active deployment overlay root (`$LASTLIGHT_OVERLAY_DIR`), if any. */
+  overlayDir?: string;
   /** Optional callback to actively resume a paused workflow after dashboard approval */
   resumeWorkflow?: (workflowRun: WorkflowRun, sender: string) => Promise<void>;
   /**
@@ -392,6 +398,17 @@ export function createAdminRoutes(
   app.use("/*", authMiddleware(authEnabled, config.adminSecret));
 
   app.get("/config", (c) => c.json(config.publicConfig || { default: {}, overlay: null, merged: {}, sources: {} }));
+
+  // Forked/overridden assets the deployment overlay supplies — workflows,
+  // prompts, skills, agent-context — each tagged as shadowing a built-in or a
+  // fresh addition. Powers the Config → Overrides pane. Shares the enumerator
+  // with `lastlight server status`.
+  app.get("/overrides", (c) =>
+    c.json({
+      overlayDir: config.overlayDir ?? null,
+      overrides: enumerateOverlayAssets({ coreRoot: config.builtInRoot, overlayRoot: config.overlayDir }),
+    }),
+  );
 
   // Auth endpoints
   app.get("/auth-required", (c) => {

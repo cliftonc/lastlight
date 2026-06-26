@@ -41,6 +41,8 @@ const BOOLEAN_FLAGS = new Set([
   "no-core", "no-overlay", "no-build", "yes",
   // `setup` mode selectors (skip the interactive client/server prompt)
   "client", "server",
+  // `fork` — overwrite existing overlay assets
+  "force",
 ]);
 
 interface ParsedArgs {
@@ -206,6 +208,13 @@ ${chalk.bold("Server")} (host-local — run on the server; manages the docker st
                                      [--no-core] [--no-overlay] [--no-build] [--yes]
   lastlight server status            Compose state + core/overlay version drift
   ${chalk.dim("Working dir resolves from --home, then LASTLIGHT_HOME, then ~/.lastlight, then ~/lastlight.")}
+
+${chalk.bold("Fork")} (host-local — copy built-in assets into the deployment overlay)
+  lastlight fork                     List forkable workflows + agent-context (marks what's forked)
+  lastlight fork <workflow>          Copy a workflow + its prompts + skills into instance/
+  lastlight fork agent-context       Copy soul.md / rules.md / security.md into instance/
+  lastlight fork agent-context <f>   Copy a single agent-context file (e.g. soul.md)
+                                     [--home dir] [--force to overwrite existing]
 
 ${chalk.bold("Other")}
   lastlight setup                    First-run wizard — asks client (login) or server (stack)
@@ -882,10 +891,23 @@ async function cmdSetup(): Promise<void> {
   }
   if (mode === "client") return cmdLogin();
   // Server: the full first-run config wizard (secrets, keys, managed repos).
-  // For a fresh host with no checkout yet, `lastlight server setup` clones the
-  // working dir first; `server start|update|status` then manage the stack.
   const { runSetup } = await import("./setup.js");
   await runSetup();
+}
+
+// ── fork (host-local) ──────────────────────────────────────────────────────
+
+/**
+ * `lastlight fork [target]` — copy a built-in workflow (plus its prompts +
+ * skills) or the agent-context files (soul.md and friends) into the deployment
+ * overlay so they can be edited per-deployment. Host-local: operates on files
+ * in the working dir (resolved via --home / LASTLIGHT_HOME / serverHome), not
+ * over HTTP. See src/fork-cli.ts.
+ */
+async function cmdFork(): Promise<void> {
+  const home = typeof flags.home === "string" ? flags.home : undefined;
+  const { fork } = await import("./fork-cli.js");
+  await fork(positionals.slice(1), { home, force: flags.force === true });
 }
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
@@ -916,6 +938,7 @@ async function main() {
       return;
     }
     case "approvals": return cmdApprovals();
+    case "fork": return cmdFork();
     case "server": return cmdServer();
     case "stats": return cmdStats();
     case "chat": return cmdChat();

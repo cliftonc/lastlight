@@ -24,6 +24,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { resolveServerHome, saveServerHome } from "./cli-config.js";
 import { detectGh, scaffoldOverlayFiles, bootstrapOverlayRepo } from "./overlay-bootstrap.js";
+import { enumerateOverlayAssets, type OverlayAsset } from "./overlay-assets.js";
 
 const exec = promisify(execFile);
 
@@ -420,10 +421,11 @@ export async function serverUpdate(opts: UpdateOpts): Promise<void> {
   p.outro(chalk.green("Update complete."));
 }
 
-/** `lastlight server status` — compose state + local version drift. */
+/** `lastlight server status` — compose state + local version drift + overrides. */
 export async function serverStatus(opts: ServerOpts): Promise<{
   home: string;
   drift: { core: RepoDrift; overlay: RepoDrift };
+  overrides: OverlayAsset[];
 }> {
   const home = requireHome(opts);
   await composeRun(home, "Compose state", ["ps"]);
@@ -439,5 +441,23 @@ export async function serverStatus(opts: ServerOpts): Promise<{
   if (drift.core.behind || drift.overlay.behind) {
     console.log(chalk.yellow(`\nUpdate available — run: ${chalk.cyan("lastlight server update")}`));
   }
-  return { home, drift };
+
+  // Forked/overridden assets the overlay supplies (workflows, prompts, skills,
+  // agent-context). Shared with the dashboard's Config → Overrides pane.
+  const overrides = enumerateOverlayAssets({ coreRoot: home, overlayRoot: path.join(home, "instance") });
+  console.log();
+  console.log(chalk.bold("Overrides"));
+  if (overrides.length === 0) {
+    console.log(chalk.dim("  none — the overlay forks no built-in assets"));
+  } else {
+    const order: OverlayAsset["type"][] = ["workflow", "cron", "prompt", "skill", "agent-context"];
+    for (const type of order) {
+      for (const a of overrides.filter((o) => o.type === type)) {
+        const tag = a.shadowsDefault ? chalk.yellow("shadows default") : chalk.green("added");
+        console.log(`  ${chalk.bold(type.padEnd(13))} ${a.name.padEnd(28)} ${tag}`);
+      }
+    }
+  }
+
+  return { home, drift, overrides };
 }

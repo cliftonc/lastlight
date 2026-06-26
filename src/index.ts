@@ -601,6 +601,8 @@ async function main() {
       adminPassword: process.env.ADMIN_PASSWORD ?? "",
       adminSecret: process.env.ADMIN_SECRET ?? "lastlight-dev-secret",
       publicConfig: config.publicConfig,
+      builtInRoot: config.builtInRoot,
+      overlayDir: config.overlayDir,
       slackOAuthClientId: process.env.SLACK_OAUTH_CLIENT_ID,
       slackOAuthClientSecret: process.env.SLACK_OAUTH_CLIENT_SECRET,
       slackOAuthRedirectUri: process.env.SLACK_OAUTH_REDIRECT_URI,

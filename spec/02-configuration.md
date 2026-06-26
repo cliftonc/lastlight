@@ -268,6 +268,17 @@ production `deploy.sh` flow (pull core + overlay → build → `up -d
 --remove-orphans` → restart egress sidecars → health-check). These run on the
 server, unlike the rest of the CLI which targets a remote instance over HTTP.
 
+`lastlight fork <workflow>` (host-local, `src/fork-cli.ts`) copies a built-in
+workflow YAML plus every prompt and skill its phases reference into the
+`instance/` overlay so they can be edited per-deployment (the overlay wins by
+logical name at startup). `lastlight fork agent-context [file]` does the same
+for the persona files (`soul.md` / `rules.md` / `security.md`). The forked
+assets are then surfaced as overrides: `lastlight server status` prints an
+**Overrides** section (each asset tagged *shadows default* or *added*) and the
+dashboard's Config tab gains an **Overrides** pane reading
+`GET /admin/api/overrides` — both backed by the shared
+`enumerateOverlayAssets` enumerator (`src/overlay-assets.ts`).
+
 ## Secrets layout
 
 The GitHub App PEM is the only secret with a non-env home. Layout
