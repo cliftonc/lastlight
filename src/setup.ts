@@ -24,6 +24,7 @@ import { execSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { OVERLAY_GITIGNORE, detectGh, bootstrapOverlayRepo } from "./overlay-bootstrap.js";
+import { serverUpdate } from "./cli-server.js";
 
 // ── Brand colors ───────────────────────────────────────────────────────────
 
@@ -702,25 +703,9 @@ function writeConfig(config: SetupConfig): void {
   );
 }
 
-/** Detect whether to use `docker compose` (v2) or `docker-compose` (v1/colima). */
-function composeCmd(): string {
-  try {
-    execSync("docker compose version", { stdio: "ignore" });
-    return "docker compose";
-  } catch {
-    try {
-      execSync("docker-compose version", { stdio: "ignore" });
-      return "docker-compose";
-    } catch {
-      return "docker compose"; // fall through — will error with a clear message
-    }
-  }
-}
 
 async function dockerBuildAndLaunch(): Promise<void> {
   p.log.step(gold("Docker"));
-  const dc = composeCmd();
-  p.log.info(dim(`Using: ${dc}`));
 
   const wantLaunch = required(
     await p.confirm({
@@ -730,35 +715,17 @@ async function dockerBuildAndLaunch(): Promise<void> {
   );
 
   if (!wantLaunch) {
-    p.log.info("When ready, run:\n" +
-      dim(`  ${dc} --profile build-only build sandbox\n`) +
-      dim(`  ${dc} up -d`));
+    p.log.info("When ready, run: " + teal("lastlight server start"));
     return;
   }
 
-  const s = p.spinner();
-
-  s.start("Building sandbox image...");
-  try {
-    execSync(`${dc} --profile build-only build sandbox`, {
-      stdio: "pipe",
-    });
-    s.stop("Sandbox image built.");
-  } catch {
-    s.stop("Sandbox build failed.");
-    p.log.error("Check Docker Compose v2 is installed.");
-    process.exit(1);
-  }
-
-  s.start("Starting services...");
-  try {
-    execSync(`${dc} up -d`, { stdio: "pipe" });
-    s.stop("Services started.");
-  } catch {
-    s.stop("Failed to start services.");
-    p.log.error("Check docker compose logs for details.");
-    process.exit(1);
-  }
+  // Delegate to the canonical deploy flow (`lastlight server update`) instead
+  // of re-implementing build/launch here. It builds the agent + sandbox +
+  // sandbox-qa images, brings the stack up, restarts the egress sidecars, and
+  // health-checks — all with inherited stdio so the user sees live progress
+  // (docker build layers) rather than a silent spinner. The checkout is already
+  // current and the overlay was just written, so skip the git pulls.
+  await serverUpdate({ home: process.cwd(), core: false, overlay: false, build: true });
 }
 
 function printSummary(domain: string, webhookSecret: string): void {
