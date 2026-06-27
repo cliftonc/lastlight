@@ -40,6 +40,36 @@ export interface RunInstanceOptions {
   /** Default workflow when the instance doesn't name one. */
   defaultWorkflow?: string;
   keepWorkspace?: boolean;
+  /**
+   * When `false`, this call does NOT touch `process.env` — the caller has
+   * already installed the eval's static-token env around the whole batch (see
+   * {@link applyEvalEnv}). Required for running instances concurrently in one
+   * process: per-run env splicing would race, but a single stable baseline
+   * (identical fake token for every run) is safe. Defaults to `true` so a
+   * standalone `runInstance` still self-manages its env.
+   */
+  manageEnv?: boolean;
+}
+
+const EVAL_ENV_KEYS = ["GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID", "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_API_URL"];
+
+/**
+ * Install the eval's static-token GitHub env and return a restore fn:
+ *   - unset the App creds so no real installation token is ever minted, and
+ *   - set a dummy `GITHUB_TOKEN`/`GH_TOKEN` so the GitHub extension loads in
+ *     static-token mode (its Octokit is pointed at the fake server via
+ *     `githubApiBaseUrl`).
+ * Every eval run wants the SAME values, so the parallel batch installs this
+ * once up front (stable baseline) and each `runInstance` skips its own env work
+ * via `manageEnv: false`.
+ */
+export function applyEvalEnv(): () => void {
+  const saved = snapshotEnv(EVAL_ENV_KEYS);
+  delete process.env.GITHUB_APP_ID;
+  delete process.env.GITHUB_APP_INSTALLATION_ID;
+  process.env.GITHUB_TOKEN = "eval-fake-token";
+  process.env.GH_TOKEN = "eval-fake-token";
+  return () => restoreEnv(saved);
 }
 
 function splitRepo(repo: string): { owner: string; name: string } {
@@ -72,12 +102,10 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
   });
 
   // Static-token mode: no App creds (so no real mint), a dummy token so the
-  // GitHub extension loads, and point its Octokit at the fake.
-  const savedEnv = snapshotEnv(["GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID", "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_API_URL"]);
-  delete process.env.GITHUB_APP_ID;
-  delete process.env.GITHUB_APP_INSTALLATION_ID;
-  process.env.GITHUB_TOKEN = "eval-fake-token";
-  process.env.GH_TOKEN = "eval-fake-token";
+  // GitHub extension loads, and point its Octokit at the fake. In a parallel
+  // batch the caller installs this once (manageEnv: false) so concurrent runs
+  // share one stable baseline instead of racing per-run env splices.
+  const restoreEvalEnv = opts.manageEnv === false ? () => {} : applyEvalEnv();
 
   const result: InstanceResult = {
     instance_id: inst.instance_id,
@@ -182,7 +210,7 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
   } finally {
     result.durationMs = Date.now() - start;
     await fake.close();
-    restoreEnv(savedEnv);
+    restoreEvalEnv();
     if (!opts.keepWorkspace && !opts.stateDir) {
       rmSync(stateDir, { recursive: true, force: true });
     }

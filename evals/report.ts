@@ -33,7 +33,8 @@ export interface ModelSummary {
   errors: number;
 }
 
-export function summarize(results: InstanceResult[]): Scorecard {
+/** Per-model aggregation over a set of results (one tier or all of them). */
+export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
   const byModel = new Map<string, InstanceResult[]>();
   for (const r of results) {
     const list = byModel.get(r.model) ?? [];
@@ -44,7 +45,7 @@ export function summarize(results: InstanceResult[]): Scorecard {
   const models: ModelSummary[] = [];
   for (const [model, list] of byModel) {
     const codeFix = list.filter((r) => r.resolved !== undefined);
-    const behavioral = list.filter((r) => r.behavioral !== undefined);
+    const behavioral = list.filter((r) => r.behavioral !== undefined && !r.error);
     const durations = list.map((r) => r.durationMs).sort((a, b) => a - b);
     models.push({
       model,
@@ -60,8 +61,11 @@ export function summarize(results: InstanceResult[]): Scorecard {
       errors: list.filter((r) => r.error).length,
     });
   }
+  return models;
+}
 
-  return { models, results };
+export function summarize(results: InstanceResult[]): Scorecard {
+  return { models: summarizeModels(results), results };
 }
 
 export function renderTable(card: Scorecard, labels: Record<string, string> = {}): string {

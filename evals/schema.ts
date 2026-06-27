@@ -95,6 +95,8 @@ export interface PhaseMetric {
 export interface InstanceResult {
   instance_id: string;
   model: string;
+  /** Which tier this instance belongs to (triage / code-fix). */
+  tier?: string;
   /** Workflow completed without a hard failure. */
   workflowSucceeded: boolean;
   /** Execution grade (code-fix): all FAIL_TO_PASS green + all PASS_TO_PASS green. */

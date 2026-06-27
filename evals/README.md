@@ -30,22 +30,34 @@ instance (SWE-bench shape)
 ## Run it
 
 ```bash
-# triage tier (cheap, fast), single default model
+# no tier args → interactively pick which tiers to run (one or all).
+# Non-interactive (CI / piped) falls back to the cheap triage default.
 npm run eval
 
-# choose tiers
+# name tiers explicitly to skip the prompt
 npm run eval -- triage
-npm run eval -- code-fix
-npm run eval -- triage code-fix
+npm run eval -- code-fix            # the full build cycle (heavy)
+npm run eval -- triage code-fix     # both → combined tabbed report
 
-# cross-vendor comparison (OpenAI + Anthropic + open source) — see models.json
+# cross-vendor comparison (OpenAI + Anthropic + open source) — see models.json.
+# Families (OpenAI / Anthropic / Fireworks) run in PARALLEL; serial within a
+# family. Force serial with --serial.
 npm run eval:compare
-npm run eval:compare -- code-fix
+npm run eval:compare -- triage code-fix
 
 # ad-hoc model set / focus one instance
 EVAL_MODELS="openai/gpt-5.5,anthropic/claude-sonnet-4-6" npm run eval
 EVAL_INSTANCE=off-by-one npm run eval -- code-fix
+
+# don't auto-open the browser (also implied when CI is set)
+npm run eval -- triage --no-open
 ```
+
+The runner opens `index.html` in your browser as it starts and **rewrites it
+after every run** — the page auto-refreshes (keeping the active tab + scroll),
+so you watch the scorecard fill in live. The report is one document with a tab
+per tier (triage / code-fix); each tab leads with a model-comparison table
+(inline bar charts, ★ = best in column) over the per-instance detail.
 
 Needs a provider key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
 `FIREWORKS_API_KEY` / `OPENROUTER_API_KEY`) in the environment or repo-root

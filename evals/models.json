@@ -11,7 +11,6 @@
     { "id": "anthropic/claude-haiku-4-5", "label": "Claude Haiku 4.5", "provider": "Anthropic", "envKey": "ANTHROPIC_API_KEY" },
 
     { "id": "fireworks/accounts/fireworks/models/glm-5p2", "label": "GLM-5.2", "provider": "Fireworks (open)", "envKey": "FIREWORKS_API_KEY" },
-    { "id": "fireworks/accounts/fireworks/models/glm-5p1", "label": "GLM-5.1", "provider": "Fireworks (open)", "envKey": "FIREWORKS_API_KEY" },
     { "id": "fireworks/accounts/fireworks/models/deepseek-v4-pro", "label": "DeepSeek V4 Pro", "provider": "Fireworks (open)", "envKey": "FIREWORKS_API_KEY" },
     { "id": "fireworks/accounts/fireworks/models/gpt-oss-120b", "label": "GPT-OSS 120B", "provider": "Fireworks (open)", "envKey": "FIREWORKS_API_KEY" }
   ]

@@ -93,12 +93,36 @@ When pointing the harness at a new real workflow, check:
   rather than masking it.
 - Register the tier in `run.ts` (`TIERS`) with its default workflow.
 
+## Parallelism (across provider families)
+
+`run.ts` runs provider families (OpenAI / Anthropic / Fireworks — keyed by each
+model's `envKey`) **concurrently**, serial within a family (so one provider's
+rate limit is never hammered). Per-run workspaces were always isolated (a fresh
+`mkdtemp` stateDir + a private fake-GitHub port each), so the *only* blocker to
+in-process concurrency was shared `process.env`. The fix:
+
+- **Hoist the GitHub env once per batch.** `applyEvalEnv()` installs the
+  static-token env (`GITHUB_TOKEN=eval-fake-token`, App vars unset) ONCE around
+  the whole run; every `runInstance` is called with `manageEnv: false` so it
+  doesn't splice/restore env itself. Every eval run wants the *same* values, so
+  a single stable baseline is race-free where per-run splicing would not be.
+- **No `process.chdir`.** The `sandbox:"none"` executor threads a per-run `cwd`
+  to agentic-pi + child processes; it never changes the process-wide cwd. (If
+  that ever changes, in-process concurrency breaks.)
+- **`console` is silenced once** for the parallel batch — the per-run `quiet()`
+  swap is not concurrency-safe (nested save/restore), so parallel mode drops
+  `console.*` for the batch instead. The clack spinner is unaffected (it writes
+  via `process.stdout.write`).
+- **Live HTML writes don't race** despite concurrency: `summarize`/`writeHtml`
+  run synchronously to completion within one event-loop turn, so concurrent
+  family loops never interleave a write (and the temp-file+rename stays atomic).
+
+Force serial with `--serial`; single-family runs (e.g. the default single
+model) are serial anyway and keep the per-run spinner + captured logs.
+
 ## Known sharp edges
 
 - The agent can pick the **wrong owner/repo** for GitHub calls on tiny synthetic
   fixtures (it has no real remote to infer from). That's a model/fixture-tuning
   matter, not a harness bug — surfaces as `behavioral✗` (no PR). Stronger models
   fare better; this is the kind of thing the eval is meant to reveal.
-- The harness patches `process.env` (GITHUB_*, etc.) for the duration of a run
-  and restores it in `finally`. Keep runs serial; don't parallelize instances in
-  one process or the env splices race.
