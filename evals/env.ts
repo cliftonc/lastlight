@@ -80,3 +80,34 @@ export function modelLabels(): Record<string, string> {
   for (const m of modelsConfig().compare) if (m.label) out[m.id] = m.label;
   return out;
 }
+
+/** Provider family (env-key) inferred from a `provider/model` id prefix. */
+export function familyForId(id: string): string {
+  const provider = id.split("/")[0]?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    fireworks: "FIREWORKS_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    deepseek: "DEEPSEEK_API_KEY",
+  };
+  return map[provider] ?? "default";
+}
+
+/**
+ * Resolve a user-supplied model token (from `--model`) to a concrete entry.
+ * Matches a models.json `compare` id exactly, else a case-insensitive substring
+ * of its id or label (so `--model haiku` works); failing that, treats the token
+ * as a raw `provider/model` id and infers the family from its prefix. Not
+ * key-gated — `--model` is an explicit request, so we run it even if the key
+ * check would otherwise skip it (the provider call surfaces a missing key).
+ */
+export function resolveModel(token: string): ModelEntry & { family: string } {
+  const all = modelsConfig().compare;
+  const v = token.toLowerCase();
+  const hit =
+    all.find((m) => m.id === token) ??
+    all.find((m) => m.id.toLowerCase().includes(v) || m.label?.toLowerCase().includes(v));
+  if (hit) return { ...hit, family: hit.envKey ?? familyForId(hit.id) };
+  return { id: token, family: familyForId(token) };
+}

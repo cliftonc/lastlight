@@ -33,6 +33,63 @@ export interface ModelSummary {
   errors: number;
 }
 
+/**
+ * Fold N trials of ONE case (same model + instance) into a single result:
+ *   - binary verdicts (behavioral / resolved) are WORST-case — true only if
+ *     every non-errored trial passed (a reliability measure), with the pass
+ *     count kept alongside for variance.
+ *   - cost / tokens / latency are the MEAN across non-errored trials.
+ * A single trial is returned unchanged. If every trial errored, the aggregate
+ * carries that error.
+ */
+export function aggregateTrials(trials: InstanceResult[]): InstanceResult {
+  if (trials.length === 1) return trials[0];
+  const base = trials[0];
+  const ok = trials.filter((t) => !t.error);
+  if (!ok.length) {
+    return { ...base, trials: 0, trialErrors: trials.length, error: base.error ?? "all trials errored" };
+  }
+
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  const out: InstanceResult = {
+    ...base,
+    error: undefined,
+    inputTokens: Math.round(mean(ok.map((t) => t.inputTokens))),
+    outputTokens: Math.round(mean(ok.map((t) => t.outputTokens))),
+    costUsd: mean(ok.map((t) => t.costUsd)),
+    durationMs: Math.round(mean(ok.map((t) => t.durationMs))),
+    githubMutations: Math.round(mean(ok.map((t) => t.githubMutations ?? 0))),
+    trials: ok.length,
+    trialErrors: trials.length - ok.length,
+  };
+
+  // behavioral: worst-case ok, checks AND'd by name, keep a failing detail.
+  if (ok.some((t) => t.behavioral)) {
+    const passes = ok.filter((t) => t.behavioral?.ok).length;
+    const names = [...new Set(ok.flatMap((t) => t.behavioral?.checks.map((c) => c.name) ?? []))];
+    const checks = names.map((name) => {
+      const perTrial = ok.map((t) => t.behavioral?.checks.find((c) => c.name === name));
+      const failing = perTrial.find((c) => c && !c.ok);
+      return { name, ok: perTrial.every((c) => c?.ok), detail: failing?.detail };
+    });
+    out.behavioral = { ok: passes === ok.length, checks };
+    out.behavioralPass = passes;
+  }
+
+  // resolved: worst-case; keep a failing trial's test breakdown + a patch.
+  if (ok.some((t) => t.resolved !== undefined)) {
+    const passes = ok.filter((t) => t.resolved).length;
+    const rep = ok.find((t) => !t.resolved) ?? ok[0];
+    out.resolved = passes === ok.length;
+    out.resolvedPass = passes;
+    out.failToPass = rep.failToPass;
+    out.passToPass = rep.passToPass;
+    out.model_patch = (ok.find((t) => t.resolved) ?? ok[0]).model_patch;
+  }
+
+  return out;
+}
+
 /** Per-model aggregation over a set of results (one tier or all of them). */
 export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
   const byModel = new Map<string, InstanceResult[]>();

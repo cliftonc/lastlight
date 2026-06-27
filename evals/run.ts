@@ -25,9 +25,9 @@ import { spawn } from "node:child_process";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 
-import { loadDotEnv, hasProviderKey, evalModels, compareModels, modelLabels } from "./env.js";
+import { loadDotEnv, hasProviderKey, evalModels, compareModels, modelLabels, resolveModel } from "./env.js";
 import { runInstance, applyEvalEnv } from "./run-instance.js";
-import { summarize, renderTable, writeArtifacts } from "./report.js";
+import { summarize, renderTable, writeArtifacts, aggregateTrials } from "./report.js";
 import { writeHtml, type HtmlMeta } from "./html-report.js";
 import type { SweBenchInstance, InstanceResult } from "./schema.js";
 
@@ -100,17 +100,49 @@ function silenceConsole(): () => void {
   return () => Object.assign(console, { log, warn, error, info });
 }
 
-/** Colored one-line verdict for a finished run. */
+/** Colored one-line verdict for a finished run (with N/N pass count if N>1). */
 function verdictLine(tierName: string, inst: SweBenchInstance, r: InstanceResult): string {
   const head = `${chalk.cyan(tierName)}/${inst.instance_id}`;
   if (r.error) return `${head}  ${chalk.red("harness error")}`;
+  const count = (pass?: number) => (pass !== undefined && r.trials ? chalk.dim(` ${pass}/${r.trials}`) : "");
   const parts: string[] = [];
-  if (r.resolved !== undefined) parts.push(r.resolved ? chalk.green("resolved") : chalk.red("unresolved"));
-  if (r.behavioral) parts.push(r.behavioral.ok ? chalk.green("behavioral ✓") : chalk.red("behavioral ✗"));
+  if (r.resolved !== undefined)
+    parts.push((r.resolved ? chalk.green("resolved") : chalk.red("unresolved")) + count(r.resolvedPass));
+  if (r.behavioral)
+    parts.push((r.behavioral.ok ? chalk.green("behavioral ✓") : chalk.red("behavioral ✗")) + count(r.behavioralPass));
   parts.push(chalk.dim(`$${r.costUsd.toFixed(4)}`));
   parts.push(chalk.dim(fmtMs(r.durationMs)));
   return `${head}  ${parts.join("  ")}`;
 }
+
+/** Parse an integer CLI flag (`--name N` or `--name=N`) or `EVAL_NAME` env. */
+function intFlag(name: string, def: number): number {
+  const argv = process.argv;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === `--${name}`) {
+      const n = parseInt(argv[i + 1] ?? "", 10);
+      if (n > 0) return n;
+    }
+    const m = argv[i].match(new RegExp(`^--${name}=(\\d+)$`));
+    if (m) return parseInt(m[1], 10);
+  }
+  const env = parseInt(process.env[`EVAL_${name.toUpperCase()}`] ?? "", 10);
+  return env > 0 ? env : def;
+}
+
+/** Parse a string CLI flag (`--name V` or `--name=V`) or `EVAL_NAME` env. */
+function strFlag(name: string): string | undefined {
+  const argv = process.argv;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === `--${name}` && argv[i + 1] !== undefined) return argv[i + 1];
+    const m = argv[i].match(new RegExp(`^--${name}=(.+)$`));
+    if (m) return m[1];
+  }
+  return process.env[`EVAL_${name.toUpperCase()}`];
+}
+
+/** CLI flags that take a following value (so it isn't read as a tier name). */
+const VALUE_FLAGS = new Set(["--runs", "--model", "--models"]);
 
 interface Tier {
   name: string;
@@ -145,7 +177,18 @@ async function main(): Promise<number> {
 
   const compare = process.argv.includes("--compare");
   const noOpen = process.argv.includes("--no-open") || !!process.env.CI;
-  const requested = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+  const runs = intFlag("runs", 1);
+
+  // Positional tier names — skip flags AND the values that follow value-flags.
+  const argv = process.argv.slice(2);
+  const requested: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (VALUE_FLAGS.has(argv[i])) {
+      i++; // its value isn't a tier
+      continue;
+    }
+    if (!argv[i].startsWith("-")) requested.push(argv[i]);
+  }
 
   // Tiers come from argv when given; otherwise ask interactively (one or all).
   // Non-interactive (CI / piped stdin) falls back to the cheap triage default
@@ -178,12 +221,26 @@ async function main(): Promise<number> {
     if (!TIERS[t]) p.log.warn(`Unknown tier "${t}". Known: ${Object.keys(TIERS).join(", ")}`);
   }
 
-  // Single-model run by default; `--compare` fans out across models.json's set
-  // (only the ones whose provider key is present). Each entry carries its
-  // provider family (the env-key) so we can parallelize across providers.
-  const entries: { id: string; family: string }[] = compare
-    ? compareModels().map((m) => ({ id: m.id, family: m.envKey ?? m.provider ?? "default" }))
-    : evalModels().map((id) => ({ id, family: "default" }));
+  // Model selection precedence:
+  //   1. --model / --models (or EVAL_MODEL[S]) — an explicit list, fuzzy-matched
+  //      against models.json; lets you test one model quickly.
+  //   2. --compare — the full cross-vendor set (key-gated).
+  //   3. default single model from models.json.
+  // Each entry carries its provider family (env-key) for parallel grouping.
+  const modelArg = strFlag("model") ?? strFlag("models");
+  const mode = modelArg ? "select" : compare ? "compare" : "single";
+  const entries: { id: string; family: string }[] = modelArg
+    ? modelArg
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((tok) => {
+          const r = resolveModel(tok);
+          return { id: r.id, family: r.family };
+        })
+    : compare
+      ? compareModels().map((m) => ({ id: m.id, family: m.envKey ?? m.provider ?? "default" }))
+      : evalModels().map((id) => ({ id, family: "default" }));
   if (!entries.length) {
     p.log.error(
       "No comparison models available — set provider keys (OPENAI_API_KEY / ANTHROPIC_API_KEY /\n" +
@@ -242,20 +299,27 @@ async function main(): Promise<number> {
     models: entries.map((e) => labels[e.id] ?? e.id),
     tiers,
     labels,
+    runs,
   };
 
   p.note(
-    `${chalk.bold("mode")}    ${compare ? "compare" : "single"}${
+    `${chalk.bold("mode")}    ${mode}${
       parallel ? chalk.dim(` (parallel · ${byFamily.size} families)`) : ""
     }\n` +
       `${chalk.bold("models")}  ${entries.map((e) => labels[e.id] ?? e.id).join(", ")}\n` +
       `${chalk.bold("tiers")}   ${tiers.join(", ")}\n` +
-      `${chalk.bold("runs")}    ${work.length}`,
+      `${chalk.bold("cases")}   ${work.length}${
+        runs > 1
+          ? chalk.dim(` × ${runs} trials = ${work.length * runs} runs · worst-case verdict, mean cost`)
+          : ""
+      }`,
     "plan",
   );
 
+  // `total` counts individual trials so live progress advances per model call.
+  const total = work.length * runs;
+
   // Open the report immediately (live placeholder) so it fills in as we go.
-  const total = work.length;
   writeHtml(resultsDir, summarize([]), { ...htmlBase, generatedAt: new Date().toISOString(), live: true, progress: `0/${total}` });
   const htmlFile = join(resultsDir, "index.html");
   if (!noOpen) {
@@ -277,6 +341,25 @@ async function main(): Promise<number> {
       progress: `${completed}/${total}`,
     });
 
+  // Run one case `runs` times and fold the trials into a single result
+  // (worst-case verdict, mean metrics). `onTrial` ticks per model call.
+  const runItem = async (w: WorkItem, onTrial: () => void): Promise<InstanceResult> => {
+    const trials: InstanceResult[] = [];
+    for (let t = 0; t < runs; t++) {
+      const r = await runInstance(w.inst, {
+        model: w.model,
+        datasetDir: w.datasetDir,
+        defaultWorkflow: w.defaultWorkflow,
+        manageEnv: false,
+      });
+      r.tier = w.tierName;
+      trials.push(r);
+      completed++;
+      onTrial();
+    }
+    return aggregateTrials(trials);
+  };
+
   // Install the eval's static-token env ONCE for the whole batch so concurrent
   // runs share one stable baseline (manageEnv:false on every runInstance).
   const restoreEvalEnv = applyEvalEnv();
@@ -284,7 +367,7 @@ async function main(): Promise<number> {
     if (parallel) {
       // Per-family progress for the aggregate spinner line.
       const fam = new Map<string, { done: number; total: number }>();
-      for (const [f, items] of byFamily) fam.set(f, { done: 0, total: items.length });
+      for (const [f, items] of byFamily) fam.set(f, { done: 0, total: items.length * runs });
       const status = () => {
         const segs = [...fam].map(([f, c]) => {
           const done = c.done === c.total ? chalk.green(`${c.done}/${c.total}`) : `${c.done}/${c.total}`;
@@ -300,20 +383,14 @@ async function main(): Promise<number> {
         await Promise.all(
           [...byFamily].map(async ([f, items]) => {
             for (const w of items) {
-              const result = await runInstance(w.inst, {
-                model: w.model,
-                datasetDir: w.datasetDir,
-                defaultWorkflow: w.defaultWorkflow,
-                manageEnv: false,
+              const result = await runItem(w, () => {
+                fam.get(f)!.done++;
+                s.message(status());
               });
-              result.tier = w.tierName;
               all.push(result);
               if (result.error) harnessErrors++;
-              completed++;
-              fam.get(f)!.done++;
               const mark = result.error ? chalk.red("✗") : chalk.green("✓");
               verdicts.push(`${mark} ${chalk.dim(familyLabel(f))}  ${verdictLine(w.tierName, w.inst, result)}`);
-              s.message(status());
               refresh();
             }
           }),
@@ -324,23 +401,25 @@ async function main(): Promise<number> {
       s.stop(`${chalk.dim(`${completed}/${total}`)} ${chalk.green("done")}`);
       p.log.message(verdicts.join("\n"));
     } else {
-      // Serial: one spinner per run with a live verdict line + captured logs.
+      // Serial: one spinner per case (updates per trial) + a verdict line.
       for (let i = 0; i < work.length; i++) {
-        const { tierName, defaultWorkflow, datasetDir, model, inst } = work[i];
-        const n = i + 1;
+        const w = work[i];
         const s = p.spinner();
-        s.start(`${chalk.dim(`[${n}/${total}]`)} ${chalk.cyan(tierName)}/${inst.instance_id}  ${chalk.dim(labels[model] ?? model)}`);
+        const head = `${chalk.dim(`[${i + 1}/${work.length}]`)} ${chalk.cyan(w.tierName)}/${w.inst.instance_id}  ${chalk.dim(labels[w.model] ?? w.model)}`;
+        s.start(head);
 
+        let t = 0;
         const { value: result, logs } = await quiet(() =>
-          runInstance(inst, { model, datasetDir, defaultWorkflow, manageEnv: false }),
+          runItem(w, () => {
+            t++;
+            if (runs > 1) s.message(`${head}  ${chalk.dim(`trial ${t}/${runs}`)}`);
+          }),
         );
-        result.tier = tierName;
         all.push(result);
         if (result.error) harnessErrors++;
-        completed++;
 
         const mark = result.error ? chalk.red("✗") : chalk.green("✓");
-        s.stop(`${chalk.dim(`[${n}/${total}]`)} ${mark} ${verdictLine(tierName, inst, result)}`);
+        s.stop(`${chalk.dim(`[${i + 1}/${work.length}]`)} ${mark} ${verdictLine(w.tierName, w.inst, result)}`);
         if (result.error) {
           p.log.error(chalk.dim(result.error));
           const tail = logs.split("\n").filter(Boolean).slice(-12).join("\n");
@@ -361,10 +440,11 @@ async function main(): Promise<number> {
   p.note(renderTable(card, labels), "scorecard");
   p.log.success(`Artifacts → ${chalk.cyan(resultsDir)}/{scorecard.json,predictions.jsonl,index.html}`);
 
+  const ran = runs > 1 ? `${completed} runs (${all.length} cases × ${runs})` : `${all.length} runs`;
   if (harnessErrors > 0) {
-    p.outro(chalk.yellow(`done — ${harnessErrors} harness error${harnessErrors === 1 ? "" : "s"} (see above)`));
+    p.outro(chalk.yellow(`done — ${ran}, ${harnessErrors} harness error${harnessErrors === 1 ? "" : "s"} (see above)`));
   } else {
-    p.outro(chalk.green(`done — ${all.length} runs, report at ${html}`));
+    p.outro(chalk.green(`done — ${ran}, report at ${html}`));
   }
 
   // Non-zero ONLY on harness failure — model quality is the measurement.

@@ -26,6 +26,9 @@ export interface HtmlMeta {
   live?: boolean;
   /** Optional progress text shown in the live badge (e.g. "7/30"). */
   progress?: string;
+  /** Trials per case (`--runs N`). When >1, verdicts are worst-case and a
+   * per-case pass-count (e.g. "2/3") is shown. */
+  runs?: number;
 }
 
 const esc = (s: unknown): string =>
@@ -134,17 +137,22 @@ function checksHtml(r: InstanceResult): string {
 
 function detailRows(results: InstanceResult[], tier: string, labels: Record<string, string>): string {
   const showCodeFix = tier === "code-fix";
+  // "2/3" pass-count when a case aggregates multiple trials (worst-case verdict).
+  const frac = (pass?: number, n?: number) =>
+    pass !== undefined && n && n > 1 ? ` <span class="frac">${pass}/${n}</span>` : "";
   return results
     .map((r) => {
       const resolved =
-        r.resolved === undefined ? pill("na", "—") : r.resolved ? pill("pass", "resolved") : pill("fail", "unresolved");
-      const beh = r.error
-        ? pill("fail", "error")
-        : r.behavioral
-          ? r.behavioral.ok
-            ? pill("pass", "ok")
-            : pill("fail", "miss")
-          : pill("na", "—");
+        (r.resolved === undefined ? pill("na", "—") : r.resolved ? pill("pass", "resolved") : pill("fail", "unresolved")) +
+        frac(r.resolvedPass, r.trials);
+      const beh =
+        (r.error
+          ? pill("fail", "error")
+          : r.behavioral
+            ? r.behavioral.ok
+              ? pill("pass", "ok")
+              : pill("fail", "miss")
+            : pill("na", "—")) + (r.error ? "" : frac(r.behavioralPass, r.trials));
       return `
       <tr>
         <td class="mono">${esc(r.instance_id)}</td>
@@ -263,6 +271,7 @@ ${meta.live ? '<meta http-equiv="refresh" content="3" />' : ""}
   .pill.pass { background:rgba(63,185,80,0.14); color:var(--pass); }
   .pill.fail { background:rgba(229,83,75,0.14); color:var(--fail); }
   .pill.na { background:var(--navy); color:var(--text-muted); }
+  .frac { font-family:var(--mono); font-size:11px; color:var(--text-muted); }
   .checks { line-height:2; }
   .chip { display:inline-block; font-family:var(--mono); font-size:10.5px; padding:2px 7px; border-radius:5px; margin:0 4px 4px 0; border:1px solid var(--border); }
   .chip.ok { color:var(--pass); border-color:rgba(63,185,80,0.4); }
@@ -284,7 +293,11 @@ ${meta.live ? '<meta http-equiv="refresh" content="3" />' : ""}
       <div class="meta">
         <b>${esc(useTiers.join(" + "))}</b> &nbsp;·&nbsp;
         models: <b>${esc(meta.models.join(", "))}</b> &nbsp;·&nbsp;
-        ${esc(card.results.length)} runs &nbsp;·&nbsp;
+        ${esc(card.results.length)} cases${
+          meta.runs && meta.runs > 1
+            ? ` &nbsp;·&nbsp; <b>${esc(meta.runs)}×</b> per case <span class="muted">(worst-case verdict · mean cost)</span>`
+            : ""
+        } &nbsp;·&nbsp;
         ${esc(meta.generatedAt)}
       </div>
     </header>

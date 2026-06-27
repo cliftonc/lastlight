@@ -45,7 +45,17 @@ npm run eval -- triage code-fix     # both → combined tabbed report
 npm run eval:compare
 npm run eval:compare -- triage code-fix
 
-# ad-hoc model set / focus one instance
+# pick ONE model to test (fuzzy-matched against models.json id/label)
+npm run eval -- triage --model haiku
+npm run eval -- triage --model openai/gpt-5.5
+npm run eval -- triage --model glm,deepseek   # a comma-list also works
+
+# repeat each case N times; verdicts are WORST-case (must pass all N),
+# cost/tokens/latency are the MEAN. Surfaces model reliability/variance.
+npm run eval -- triage --runs 3
+npm run eval:compare -- triage --runs 3
+
+# ad-hoc model set / focus one instance (env equivalents of --model)
 EVAL_MODELS="openai/gpt-5.5,anthropic/claude-sonnet-4-6" npm run eval
 EVAL_INSTANCE=off-by-one npm run eval -- code-fix
 

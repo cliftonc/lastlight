@@ -105,6 +105,14 @@ export interface InstanceResult {
   passToPass?: { id: string; pass: boolean }[];
   /** Behavioral grade: did the workflow take the expected GitHub actions? */
   behavioral?: { ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] };
+  /** When `--runs N` (N>1): how many non-errored trials this result aggregates,
+   * and how many of them passed each verdict. The binary `behavioral.ok` /
+   * `resolved` above are WORST-case (true only if every trial passed); these
+   * counts expose the variance. Absent for single-run (N=1) results. */
+  trials?: number;
+  trialErrors?: number;
+  behavioralPass?: number;
+  resolvedPass?: number;
   /** Count of mutating GitHub calls the workflow made against the fake server.
    * A mechanism signal: >0 proves the real github_* tools reached the mock. */
   githubMutations?: number;
