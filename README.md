@@ -61,7 +61,8 @@ lastlight-evals run --overlay .
 That's the loop: edit `evals/datasets/` with your own issues/repos (and
 `workflows/` with your own workflows), then re-run. `init` gives you a
 self-contained, version-controllable repo that **shadows** the built-in
-workflows/skills and datasets by name — see [overlays](#your-own-workflows--datasets-overlays).
+workflows/skills and datasets by name — see [overlays](#your-own-workflows--datasets-overlays)
+and the [configuration docs](https://lastlight.dev/docs/configuration/).
 
 **Just kicking the tires?** Skip `init` and run the shipped samples directly:
 
@@ -172,14 +173,18 @@ scoring poorly is the measurement, not a build failure.
 
 An **overlay** is a directory (often its own repo, like `lastlight-instance`)
 that carries its own `workflows/` / `skills/` / `agent-context/` (which shadow
-the core built-ins by name) and its own `evals/datasets/`. One flag wires both:
+the core built-ins by name) and its own `evals/datasets/`. It's the same
+deployment-overlay mechanism the production harness uses — see the [Last Light
+configuration docs](https://lastlight.dev/docs/configuration/) for the full
+story. One flag wires both:
 
 ```bash
 lastlight-evals run --overlay ~/work/lastlight-instance     # or LASTLIGHT_OVERLAY_DIR
 ```
 
-- Overlay **workflows/skills** are layered over core via core's asset overlay
-  (same mechanism the production harness uses).
+- Overlay **workflows/skills** are layered over core via core's [asset
+  overlay](https://lastlight.dev/docs/configuration/) (same mechanism the
+  production harness uses).
 - Overlay **datasets** are discovered at `<overlay>/evals/datasets/<tier>/`, and
   shadow built-in tiers of the same name.
 - An overlay **`evals/models.json`** is picked up automatically (or pass
