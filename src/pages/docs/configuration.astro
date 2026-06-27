@@ -391,10 +391,22 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td>Bot User OAuth Token (<code>xoxb-...</code>). Presence of this var enables the Slack connector.</td>
 			</tr>
 			<tr>
-				<td><code>SLACK_APP_TOKEN</code></td>
-				<td>Yes (if bot token set)</td>
+				<td><code>SLACK_MODE</code></td>
+				<td>No</td>
+				<td>auto</td>
+				<td>Receive transport: <code>webhook</code> (HTTP Events API) or <code>socket</code> (Socket Mode). Auto-detected when unset: <code>webhook</code> if <code>SLACK_SIGNING_SECRET</code> is set, else <code>socket</code>.</td>
+			</tr>
+			<tr>
+				<td><code>SLACK_SIGNING_SECRET</code></td>
+				<td>Yes (webhook mode)</td>
 				<td>—</td>
-				<td>App-Level Token (<code>xapp-...</code>) for Socket Mode.</td>
+				<td>Events API signing secret. Slack POSTs events to <code>/webhooks/slack</code>; delivery is retried (at-least-once).</td>
+			</tr>
+			<tr>
+				<td><code>SLACK_APP_TOKEN</code></td>
+				<td>Yes (socket mode)</td>
+				<td>—</td>
+				<td>App-Level Token (<code>xapp-...</code>) for the Socket Mode dev fallback.</td>
 			</tr>
 			<tr>
 				<td><code>SLACK_ALLOWED_USERS</code></td>

@@ -86,7 +86,9 @@ Missing or malformed PEM exits `78`.
 | Var | Required for | Default |
 |---|---|---|
 | `SLACK_BOT_TOKEN` | Slack at all | — |
-| `SLACK_APP_TOKEN` | required if bot token set (Socket Mode) | — |
+| `SLACK_MODE` | receive transport: `webhook` or `socket` | auto: `webhook` if `SLACK_SIGNING_SECRET` set, else `socket` |
+| `SLACK_SIGNING_SECRET` | required for `webhook` mode (Events API signature) | — |
+| `SLACK_APP_TOKEN` | required for `socket` mode (Socket Mode) | — |
 | `SLACK_ALLOWED_USERS` | allowlist (comma-separated user IDs) | empty = all allowed |
 | `SLACK_DELIVERY_CHANNEL` / `SLACK_HOME_CHANNEL` | cron report destination | none |
 | `SLACK_OAUTH_CLIENT_ID` / `SLACK_OAUTH_CLIENT_SECRET` / `SLACK_OAUTH_REDIRECT_URI` | "Login with Slack" for dashboard | none |

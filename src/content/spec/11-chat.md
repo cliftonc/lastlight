@@ -36,8 +36,26 @@ interface ChatRunnerConfig {
 ```
 
 The runner is constructed once at [Harness](/spec/01-harness) boot
-(`src/index.ts:103–111`) and lives for the lifetime of the process. Each
-inbound Slack message becomes one `turn()` call.
+(`src/index.ts:103–111`) and lives for the lifetime of the process.
+
+### Per-session batching (ChatCoordinator)
+
+Messaging-sourced turns are serialized and batched per session by the
+`ChatCoordinator` (`src/engine/chat-coordinator.ts`), wired into
+`DispatchDeps.chatCoordinator`. The first message in an idle session starts a
+turn immediately; any messages that arrive *while that turn is in flight* are
+queued and, once it finishes, drained together as a **single** combined
+follow-up turn (newline-joined into one prompt, one executions row, one reply
+threaded under the latest message). So a rapid `A B C D E` burst produces a
+reply to `A` and then one combined reply for `B…E`, rather than five separate
+turns. Different sessions run in parallel; the same session strictly in order.
+
+This is the only non-wasteful option: neither runtime can inject context into a
+running agent (pi-ai is a stateless completion client whose only mid-flight
+primitive is `AbortSignal`), so new input is handled by finishing the current
+turn and running the queue, not by steering or aborting. The synchronous CLI
+`/api/chat` path (`envelope.source === "cli"`) bypasses the coordinator and runs
+inline so its caller still gets the reply on the same request.
 
 ## pi-ai vs agentic-pi
 

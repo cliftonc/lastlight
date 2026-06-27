@@ -21,7 +21,7 @@ only thing that exists, every other layer is just a function it calls.
 |---|---|---|
 | In | Environment | All [Configuration](/spec/02-configuration) — env vars, secrets paths, model/variant overrides |
 | In | Disk | `STATE_DIR/lastlight.db`, `STATE_DIR/secrets/app.pem`, prior workflow_runs rows |
-| In | Network | GitHub webhooks (HTTPS), Slack Socket Mode (WebSocket), admin dashboard HTTP, CLI POSTs |
+| In | Network | GitHub webhooks (HTTPS), Slack events (HTTP webhook by default; Socket Mode WebSocket as a dev fallback), admin dashboard HTTP, CLI POSTs |
 | In | OS | `SIGINT`, `SIGTERM` |
 | Out | Disk | Updated SQLite rows, JSONL event logs, regenerated egress firewall configs |
 | Out | Network | GitHub API calls, Slack replies, dashboard HTML/JSON |
@@ -64,8 +64,9 @@ differ.
 10. **Connector registry** — instantiate empty, then conditionally register:
     - **GitHub webhook connector** — requires both `webhookSecret` AND
       `githubApp` config. Exposes a Hono app (the HTTP server). (`390–397`.)
-    - **Slack connector** — requires `SLACK_BOT_TOKEN`; no HTTP server
-      needed (Socket Mode). (`400–418`.)
+    - **Slack connector** — requires `SLACK_BOT_TOKEN`. In `webhook` mode
+      (default) it mounts `/webhooks/slack` on the GitHub connector's Hono
+      app; in `socket` mode it needs no HTTP server (Socket Mode). (`400–418`.)
 11. **Cron scheduler** — construct with the DB + a fan-out callback that
     invokes `dispatchWorkflow()` per managed repo. (`424–435`.)
 12. **Admin dashboard** — only if the GitHub webhook connector exists.
@@ -85,8 +86,9 @@ differ.
     webhooks: only scheduled crons (health, security). Without: also the
     polling crons that scan for new issues/PRs. (`1126–1137`.)
 16. **`registry.startAll()`** — finally start every registered connector.
-    Webhooks start accepting requests; Slack opens the Socket Mode
-    connection. (`1138–1141`.)
+    Webhooks start accepting requests (including `/webhooks/slack` in Slack
+    webhook mode); in Slack socket mode the connector opens its Socket Mode
+    connection instead. (`1138–1141`.)
 17. **`resumeOrphanedWorkflows()`** — scan `workflow_runs` for rows in
     `running` state from a previous lifetime, mark their stale executions
     failed, and re-dispatch each so the runner picks up at its last
