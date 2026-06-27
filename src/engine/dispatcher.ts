@@ -698,6 +698,10 @@ async function handleChat(
   const message = context.message as string;
   const sender = context.sender as string;
 
+  // Re-assert the thinking indicator for this turn (a batched burst can drain
+  // as several turns; the per-arrival indicator is cleared by the first reply).
+  envelope.typing?.().catch(() => {});
+
   await runChatTurn(deps, { sessionId: messagingSessionId, message, sender, reply: envelope.reply });
   return { kind: "handled", handler: "chat" };
 }

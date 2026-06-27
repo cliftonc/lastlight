@@ -34,6 +34,13 @@ export interface EventEnvelope {
   raw: unknown;
   /** Reply on the same platform/thread */
   reply: (msg: string) => Promise<void>;
+  /**
+   * Re-assert a "thinking" indicator for this thread, if the platform has one.
+   * Called at the start of each turn so a batched burst that drains as multiple
+   * turns shows the indicator for every turn — the per-arrival show is cleared
+   * by the first turn's reply. No-op for sources without an indicator (CLI).
+   */
+  typing?: () => Promise<void>;
   /** Timestamp of the event */
   timestamp: Date;
 }

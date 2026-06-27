@@ -106,6 +106,11 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
       }
     };
 
+    // Re-show the thinking indicator at the start of each turn. The per-arrival
+    // showTyping above is cleared by the first turn's reply, so without this a
+    // burst that drains as a second batch would process with no indicator.
+    const typing = () => this.showTyping(channelId, messageId, replyThreadId);
+
     // Build EventEnvelope
     const envelope: EventEnvelope = {
       id: `${this.name}-${messageId}`,
@@ -122,6 +127,7 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
         threadId: replyThreadId,
       },
       reply,
+      typing,
       timestamp: new Date(),
     };
 
