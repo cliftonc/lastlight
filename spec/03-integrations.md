@@ -1,7 +1,7 @@
 ---
 title: "Integrations"
 order: 3
-description: "Every event source: GitHub App webhooks, Slack Bolt/Socket Mode, the CLI, the built-in cron scheduler, and admin-dashboard triggers. The connector contract, authentication, normalization, and reply path for each."
+description: "Every event source: GitHub App webhooks, Slack (HTTP Events API webhook, Socket Mode dev fallback), the CLI, the built-in cron scheduler, and admin-dashboard triggers. The connector contract, authentication, normalization, and reply path for each."
 ---
 
 ## Purpose
@@ -16,7 +16,7 @@ inside the [Sandbox](/spec/09-sandbox) and never produce inbound events.
 There are five sources:
 
 1. **GitHub App webhook** — issues, PRs, comments, reviews
-2. **Slack** (Bolt + Socket Mode) — chat threads
+2. **Slack** (HTTP Events API webhook, default; Socket Mode dev fallback) — chat threads
 3. **CLI** — ad-hoc dispatch via the running harness
 4. **Cron** — scheduled workflow runs
 5. **Admin dashboard** — operator-initiated dispatch and resume
@@ -63,16 +63,16 @@ session management, allowlist enforcement, and message chunking.
 If `WEBHOOK_SECRET` is empty (allowed but warned during boot), signature
 verification is disabled. Production deployments must set it.
 
-## 2. Slack (Bolt + Socket Mode)
+## 2. Slack (HTTP Events API, default; Socket Mode dev fallback)
 
 | | |
 |---|---|
-| **Transport** | WebSocket connection initiated by Bolt to Slack's Socket Mode endpoint. No public URL needed. (`src/connectors/slack/connector.ts:57`) |
-| **Auth** | `botToken` + `appToken` validated by Bolt SDK at construction. The user-level `SLACK_ALLOWED_USERS` allowlist is enforced in `MessagingConnector.handleIncomingMessage()` (`base.ts:50–54`) *before* envelope construction. |
-| **Normalize** | `MessagingConnector.handleIncomingMessage()` (`base.ts:47–121`). Slack-specific mention stripping via `stripBotMention()` (line 124). Session info (channel id, thread id, platform user id) goes into `envelope.raw`, not into top-level fields. |
-| **Event types** | `message` only. All Slack inbound traffic — DMs and `app_mention` in channels — normalizes to this one type. |
-| **Filtered out** | Bot messages and non-text subtypes (edits, deletes) at `connector.ts:134–139`. Channel messages that aren't mentions or thread replies. |
-| **Reply** | `reply(msg)` calls `sendMessage(channelId, threadId, chunk)` per chunk; long messages are chunked to respect Slack's ~3000-char limit. Replies post into the originating thread when one exists. (`base.ts:89–99`) GitHub-Flavored-Markdown tables in replies are converted to aligned monospace code blocks (`src/connectors/slack/mrkdwn.ts`), since Slack mrkdwn has no table syntax. |
+| **Transport** | `SLACK_MODE=webhook` (default): Slack POSTs events to `POST /webhooks/slack` on the shared Hono app (the same server as the GitHub webhook). At-least-once — Slack retries failed deliveries. `SLACK_MODE=socket` (dev fallback): a Bolt WebSocket to Slack's Socket Mode endpoint, no public URL, but at-most-once (can silently drop messages under bursts). Sending uses a `WebClient` in both modes. (`src/connectors/slack/connector.ts`) |
+| **Auth** | webhook: HMAC-SHA256 over `v0:{timestamp}:{body}` with `SLACK_SIGNING_SECRET`, header `X-Slack-Signature`, timing-safe compare + a 5-minute timestamp replay window (`verifySlackSignature`); the `url_verification` handshake is answered and retries are deduped by `event_id`. socket: `botToken` + `appToken` validated by Bolt. The user-level `SLACK_ALLOWED_USERS` allowlist is enforced in `MessagingConnector.handleIncomingMessage()` *before* envelope construction. |
+| **Normalize** | Both transports feed the same `onMessageEvent` / `onAppMention` handlers → `MessagingConnector.handleIncomingMessage()`. Slack-specific mention stripping via `stripBotMention()`. Session info (channel id, thread id, platform user id) goes into `envelope.raw`, not into top-level fields. |
+| **Event types** | `message` only. All Slack inbound traffic — DMs (`message.im`) and `app_mention` in channels — normalizes to this one type. |
+| **Filtered out** | Bot messages and non-text subtypes (edits, deletes); every inbound is logged (`[slack] inbound msg …`) *before* filtering so drops are diagnosable. Channel messages that aren't mentions or thread replies. |
+| **Reply** | `reply(msg)` calls `sendMessage(channelId, threadId, chunk)` per chunk; long messages are chunked to respect Slack's ~3000-char limit. Replies post into the originating thread when one exists. GitHub-Flavored-Markdown tables in replies are converted to aligned monospace code blocks (`src/connectors/slack/mrkdwn.ts`), since Slack mrkdwn has no table syntax. |
 
 The chat skill running on top of Slack messages is *not* a connector
 concern — see [Chat](/spec/11-chat).

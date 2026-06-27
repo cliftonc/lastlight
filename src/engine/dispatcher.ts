@@ -4,6 +4,7 @@ import type { SessionManager } from "../connectors/index.js";
 import type { StateDb } from "../state/db.js";
 import type { GitHubClient } from "./github.js";
 import type { ChatResult } from "./chat.js";
+import type { ChatCoordinator } from "./chat-coordinator.js";
 import { routeEvent, type Route, type RouterDeps } from "./router.js";
 import { runDashboardUrl } from "../notify/model.js";
 
@@ -37,6 +38,13 @@ export interface DispatchDeps {
   dispatchWorkflow: DispatchWorkflowFn;
   sessionManager: SessionManager;
   runChat: RunChatFn;
+  /**
+   * Optional per-session chat batcher. When present, messaging-sourced chat
+   * turns (everything except the synchronous CLI `/api/chat` path) are routed
+   * through it so messages that arrive mid-turn queue and drain as one
+   * combined follow-up. Absent in unit tests, which take the inline path.
+   */
+  chatCoordinator?: ChatCoordinator;
   route?: (envelope: EventEnvelope, deps: RouterDeps) => Promise<Route>;
   reviewPostsCheck: boolean;
   publicUrl?: string;
@@ -683,6 +691,12 @@ async function handleApprovalResponse(
  * in dashboard stats, runs the in-process turn, persists the minted agent
  * session id for resume on the next turn, and replies. Failures still record a
  * finish row and apologize rather than going silent.
+ *
+ * Messaging-sourced chat (Slack etc.) is routed through `chatCoordinator` when
+ * one is wired, so messages that arrive while a turn is in flight queue and
+ * drain together as one combined follow-up turn. The synchronous CLI
+ * `/api/chat` path (and unit tests, which inject no coordinator) take the
+ * inline path so the caller still gets its reply on the same await.
  */
 async function handleChat(
   envelope: EventEnvelope,
@@ -693,8 +707,35 @@ async function handleChat(
   const message = context.message as string;
   const sender = context.sender as string;
 
+  if (deps.chatCoordinator && envelope.source !== "cli") {
+    deps.chatCoordinator.submit({
+      sessionId: messagingSessionId,
+      message,
+      sender,
+      reply: envelope.reply,
+    });
+    return { kind: "handled", handler: "chat" };
+  }
+
+  await runChatTurn(deps, { sessionId: messagingSessionId, message, sender, reply: envelope.reply });
+  return { kind: "handled", handler: "chat" };
+}
+
+/**
+ * Run one chat turn end-to-end: record the execution, run the model, persist a
+ * freshly-minted agent session id for resume, and post the reply (apologizing
+ * on failure). Shared by the inline `handleChat` path and the ChatCoordinator,
+ * so batched turns get identical execution/telemetry recording. `message` may
+ * be a single message or a newline-combined batch.
+ */
+export async function runChatTurn(
+  deps: DispatchDeps,
+  args: { sessionId: string; message: string; sender: string; reply: (msg: string) => Promise<void> },
+): Promise<void> {
+  const { sessionId, message, sender, reply } = args;
+
   // First message has no agent session → fresh; later messages resume.
-  const resumeAgentSessionId = deps.sessionManager.getSession(messagingSessionId)?.agentSessionId ?? undefined;
+  const resumeAgentSessionId = deps.sessionManager.getSession(sessionId)?.agentSessionId ?? undefined;
 
   // triggerId is the messaging-session id, so a whole Slack thread groups
   // together with `GROUP BY trigger_id`.
@@ -702,16 +743,16 @@ async function handleChat(
   deps.db.executions.recordStart({
     id: executionId,
     triggerType: "chat",
-    triggerId: messagingSessionId,
+    triggerId: sessionId,
     skill: "chat",
     startedAt: new Date().toISOString(),
   });
 
   try {
-    const result = await deps.runChat(message, messagingSessionId, sender, resumeAgentSessionId);
+    const result = await deps.runChat(message, sessionId, sender, resumeAgentSessionId);
 
     if (result.agentSessionId && result.agentSessionId !== resumeAgentSessionId) {
-      deps.sessionManager.setAgentSessionId(messagingSessionId, result.agentSessionId);
+      deps.sessionManager.setAgentSessionId(sessionId, result.agentSessionId);
     }
 
     deps.db.executions.recordFinish(executionId, {
@@ -730,13 +771,11 @@ async function handleChat(
       stopReason: result.stopReason,
     });
 
-    await envelope.reply(result.text);
+    await reply(result.text);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[dispatch] Chat error:`, msg);
     deps.db.executions.recordFinish(executionId, { success: false, error: msg, durationMs: 0 });
-    await envelope.reply("Sorry, I encountered an error. Please try again.");
+    await reply("Sorry, I encountered an error. Please try again.");
   }
-
-  return { kind: "handled", handler: "chat" };
 }

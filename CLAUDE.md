@@ -63,7 +63,8 @@ src/
   connectors/           Platform abstraction — every event source emits an
                         EventEnvelope so the engine never sees raw payloads.
     github-webhook.ts   GitHub App webhook → EventEnvelope.
-    slack/              Slack Socket Mode + mrkdwn formatter.
+    slack/              Slack connector (HTTP Events API webhook, default;
+                        Socket Mode dev fallback) + mrkdwn formatter.
     messaging/          Base class for all messaging platforms
                         (slack now, discord later). Owns SessionManager — the
                         per-thread conversation store.
@@ -551,8 +552,16 @@ Admin dashboard:
 
 Slack (optional):
 
-- `SLACK_BOT_TOKEN` (xoxb-…), `SLACK_APP_TOKEN` (xapp-…) — enables the
-  messaging connector + chat skill (also gates the `opencode serve` spawn)
+- `SLACK_BOT_TOKEN` (xoxb-…) — enables the messaging connector + chat skill.
+- `SLACK_MODE` — `webhook` (default/prod, reliable HTTP Events API) or
+  `socket` (dev fallback, Socket Mode). Auto-detected when unset: `webhook`
+  if `SLACK_SIGNING_SECRET` is present, else `socket`. So shipping the code
+  without the secret leaves an existing Socket-Mode instance on `socket`.
+- `SLACK_SIGNING_SECRET` — Events API request-signing secret. Required for
+  `webhook` mode. Slack POSTs events to `/webhooks/slack` on the shared HTTP
+  server (the same Hono app as the GitHub webhook); webhook delivery is
+  at-least-once (Slack retries), unlike Socket Mode which can drop messages.
+- `SLACK_APP_TOKEN` (xapp-…) — app-level token; required only for `socket` mode.
 - `SLACK_DELIVERY_CHANNEL` — channel id for cron reports
 - `SLACK_ALLOWED_USERS` — comma-separated user ids allowlist
 - `SLACK_OAUTH_CLIENT_ID`, `SLACK_OAUTH_CLIENT_SECRET`,

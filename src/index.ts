@@ -3,7 +3,8 @@ import { resolve } from "path";
 import { randomUUID } from "crypto";
 import { loadConfig, resolveModel, resolveVariant } from "./config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
-import { dispatch, type DispatchDeps } from "./engine/dispatcher.js";
+import { dispatch, runChatTurn, type DispatchDeps } from "./engine/dispatcher.js";
+import { ChatCoordinator } from "./engine/chat-coordinator.js";
 import { CHAT_SYSTEM_SUFFIX, handleChatMessage, loadAgentContext } from "./engine/chat.js";
 import { configureWorkflowAssets, validateAssets, getWorkflow } from "./workflows/loader.js";
 import { ChatRunner } from "./engine/chat-runner.js";
@@ -571,7 +572,11 @@ async function main() {
     slackConnector = new SlackConnector(
       {
         botToken: config.slack.botToken,
+        mode: config.slack.mode,
         appToken: config.slack.appToken,
+        signingSecret: config.slack.signingSecret,
+        // Webhook mode mounts /webhooks/slack on the shared HTTP server.
+        honoApp: githubConnector?.honoApp,
         allowedUsers: config.slack.allowedUsers,
         deliveryChannel: config.slack.deliveryChannel,
         botIdentifier: "", // Will be resolved from Slack API on connect
@@ -774,6 +779,15 @@ async function main() {
     reviewPostsCheck: config.reviewPostsCheck,
     publicUrl: config.publicUrl,
   };
+
+  // Per-session chat batcher. Messaging-sourced turns (Slack) route through it
+  // so messages typed while the agent is mid-turn queue and drain together as
+  // one combined follow-up. The CLI `/api/chat` path stays inline+synchronous
+  // (envelope.source === "cli" bypasses the coordinator in handleChat).
+  dispatchDeps.chatCoordinator = new ChatCoordinator({
+    runTurn: (sessionId, message, sender, reply) =>
+      runChatTurn(dispatchDeps, { sessionId, message, sender, reply }),
+  });
 
   // One chat turn over HTTP — `lastlight chat` without a messaging platform.
   // Routes through the SAME dispatcher seam Slack uses (forcing the chat

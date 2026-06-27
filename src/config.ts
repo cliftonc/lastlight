@@ -29,9 +29,21 @@ function loadDotEnv(path: string): void {
   }
 }
 
+/** How the Slack connector receives events. */
+export type SlackMode = "webhook" | "socket";
+
 export interface SlackConfig {
   botToken: string;
-  appToken: string;
+  /**
+   * `webhook` — HTTP Events API (default, reliable at-least-once delivery,
+   * needs `signingSecret` + the shared HTTP server). `socket` — Socket Mode
+   * (dev fallback, needs `appToken`, at-most-once so it can drop messages).
+   */
+  mode: SlackMode;
+  /** Socket Mode app-level token (xapp-…). Required only when mode === "socket". */
+  appToken?: string;
+  /** Events API signing secret. Required only when mode === "webhook". */
+  signingSecret?: string;
   allowedUsers: string[];
   deliveryChannel?: string;
 }
@@ -304,12 +316,33 @@ export function loadConfig(): LastLightConfig {
     : undefined;
 
   const slack = process.env.SLACK_BOT_TOKEN
-    ? {
-        botToken: process.env.SLACK_BOT_TOKEN,
-        appToken: requireEnv("SLACK_APP_TOKEN"),
-        allowedUsers: (process.env.SLACK_ALLOWED_USERS || "").split(",").filter(Boolean),
-        deliveryChannel: process.env.SLACK_DELIVERY_CHANNEL || process.env.SLACK_HOME_CHANNEL || undefined,
-      }
+    ? ((): SlackConfig => {
+        // Mode resolution: an explicit SLACK_MODE always wins. Otherwise
+        // auto-detect — prefer webhook (the reliable path) the moment a signing
+        // secret is configured, else fall back to socket. This keeps a plain
+        // SLACK_APP_TOKEN deployment on Socket Mode until the operator opts into
+        // webhooks by adding SLACK_SIGNING_SECRET, so simply shipping this code
+        // never breaks an existing Socket-Mode instance.
+        const explicit = (process.env.SLACK_MODE || "").trim().toLowerCase();
+        const mode: SlackMode =
+          explicit === "socket" ? "socket"
+          : explicit === "webhook" ? "webhook"
+          : process.env.SLACK_SIGNING_SECRET ? "webhook" : "socket";
+        if (mode === "webhook" && !process.env.SLACK_SIGNING_SECRET) {
+          throw new Error("SLACK_MODE=webhook requires SLACK_SIGNING_SECRET");
+        }
+        if (mode === "socket" && !process.env.SLACK_APP_TOKEN) {
+          throw new Error("SLACK_MODE=socket requires SLACK_APP_TOKEN (or set SLACK_SIGNING_SECRET to use webhook mode)");
+        }
+        return {
+          botToken: process.env.SLACK_BOT_TOKEN!,
+          mode,
+          appToken: process.env.SLACK_APP_TOKEN || undefined,
+          signingSecret: process.env.SLACK_SIGNING_SECRET || undefined,
+          allowedUsers: (process.env.SLACK_ALLOWED_USERS || "").split(",").filter(Boolean),
+          deliveryChannel: process.env.SLACK_DELIVERY_CHANNEL || process.env.SLACK_HOME_CHANNEL || undefined,
+        };
+      })()
     : undefined;
 
   const config: LastLightConfig = {
