@@ -39,20 +39,63 @@ instance (SWE-bench shape)
 > (the base-URL mock, static-token mode, the no-clone seeding trick, the
 > asset-bootstrap footgun, the metrics drain).
 
-## Install
+## Get started
 
-Published on npm. Needs **Node 24+** and a provider API key.
+Needs **Node 24+** and a provider API key. The fastest path is
+**`init`** — it scaffolds *your own* evals workspace (your workflows + your
+datasets, seeded from the built-in samples) and optionally creates a private
+GitHub repo for it:
 
 ```bash
-npm install -g lastlight-evals    # or run ad-hoc with: npx lastlight-evals
+npm install -g lastlight-evals
+export OPENAI_API_KEY=...                # or ANTHROPIC_ / FIREWORKS_ / OPENROUTER_
+
+# 1. Scaffold your workspace (offers to `git init` + `gh repo create`).
+lastlight-evals init my-evals
+cd my-evals
+
+# 2. Run it — drives the real workflows against your datasets, prints a scorecard.
+lastlight-evals run --overlay .
 ```
 
-Installing pulls in `lastlight` (and `agentic-pi`). `lastlight-evals` is a thin
-CLI on top of the `lastlight` package: it imports `getWorkflow`, `runWorkflow`,
-`ExecutorConfig`, and `TemplateContext` from core's public `lastlight/evals`
-entry point, plus the `gh`-repo bootstrap helpers used by `init`. Core ships its
-`workflows/`, `skills/`, and `agent-context/` inside the package, so the evals
-run the exact same assets production does — that's the whole point.
+That's the loop: edit `evals/datasets/` with your own issues/repos (and
+`workflows/` with your own workflows), then re-run. `init` gives you a
+self-contained, version-controllable repo that **shadows** the built-in
+workflows/skills and datasets by name — see [overlays](#your-own-workflows--datasets-overlays).
+
+**Just kicking the tires?** Skip `init` and run the shipped samples directly:
+
+```bash
+npm install -g lastlight-evals
+lastlight-evals run triage               # or: npx lastlight-evals run triage
+```
+
+> Installing pulls in `lastlight` (and `agentic-pi`). `lastlight-evals` is a thin
+> CLI on the `lastlight` package — it runs core's published `workflows/`,
+> `skills/`, and `agent-context/`, so the evals exercise the **exact same assets
+> production does**.
+
+### Configuration (`.env`)
+
+The only thing you must provide is a **model provider key**. Set it in the
+environment, or drop a `.env` file in the directory you run from (the runner
+loads it automatically — KEY=VALUE lines, no quotes needed):
+
+```bash
+# .env — at least ONE of these. Set keys only for the providers you want to eval.
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+FIREWORKS_API_KEY=fw-...          # GLM / DeepSeek / GPT-OSS (open models)
+OPENROUTER_API_KEY=sk-or-...
+```
+
+- The default run uses one model (`default` in `models.json`); `--compare` fans
+  out across the `compare` set, **running only the models whose key is present**
+  — so set the keys for the providers you care about and the rest are skipped.
+- **No GitHub credentials are needed** — GitHub is mocked end to end. The harness
+  sets a dummy `GITHUB_TOKEN` internally; don't put a real one in `.env`.
+- An `init`-scaffolded repo already gitignores `.env`, so your keys never get
+  committed.
 
 ## What a run does
 
