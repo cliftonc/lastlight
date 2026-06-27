@@ -70,7 +70,9 @@ export async function runOnce(
   // token before the sandbox boots — the token is one of the env values
   // we hand to the VM. Building the extension is cheap (no LLM, no IO
   // except reading the PEM); failures surface as a warning, not an exit.
-  const github = loadGitHubExtension(config.profile);
+  const github = loadGitHubExtension(config.profile, {
+    baseUrl: config.githubApiBaseUrl ?? process.env.GITHUB_API_URL,
+  });
 
   // Loud about misconfigurations (partial App creds, unreadable PEM) — the
   // user almost certainly meant for GitHub to work. Silent about benign

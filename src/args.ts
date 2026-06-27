@@ -13,6 +13,12 @@ export interface RunConfig {
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   /** GitHub tool profile. Phase 2 will use this. */
   profile?: string;
+  /**
+   * Override the GitHub REST API base URL for the built-in `github_*` tools
+   * (Octokit's `baseUrl`). Test/eval escape hatch — point at a fake GitHub
+   * server. Falls back to `GITHUB_API_URL`. Production leaves it unset.
+   */
+  githubApiBaseUrl?: string;
   /** Working directory for the agent. Default: process.cwd(). */
   cwd: string;
   /** Whether to persist the session to disk. Default: true (Pi's default). */

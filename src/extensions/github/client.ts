@@ -34,16 +34,29 @@ function omitFalsy<T extends Record<string, unknown>>(opts: T | undefined): Part
   return out;
 }
 
+export interface GitHubClientOptions {
+  /**
+   * Override the GitHub REST API base URL (Octokit's `baseUrl`). Defaults to
+   * `https://api.github.com`. Test/eval escape hatch: point the built-in
+   * GitHub tools at a fake GitHub server so a real workflow can run with its
+   * `github_*` calls mocked. Production leaves this unset.
+   */
+  baseUrl?: string;
+}
+
 export class GitHubClient {
   private _octokit: Octokit | null = null;
   private _tokenUsed: string | null = null;
+  private readonly baseUrl?: string;
 
-  constructor(private readonly auth: GitHubAuth) {}
+  constructor(private readonly auth: GitHubAuth, opts: GitHubClientOptions = {}) {
+    this.baseUrl = opts.baseUrl;
+  }
 
   async octokit(): Promise<Octokit> {
     const token = await this.auth.getToken();
     if (token !== this._tokenUsed) {
-      this._octokit = new Octokit({ auth: token });
+      this._octokit = new Octokit({ auth: token, ...(this.baseUrl ? { baseUrl: this.baseUrl } : {}) });
       this._tokenUsed = token;
     }
     return this._octokit!;

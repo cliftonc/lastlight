@@ -59,7 +59,10 @@ export interface GitHubExtensionResult {
  *   and a message the caller should surface (these are misconfigurations,
  *   not opt-outs).
  */
-export function loadGitHubExtension(profileName?: string): GitHubExtensionResult {
+export function loadGitHubExtension(
+  profileName?: string,
+  opts: { baseUrl?: string } = {},
+): GitHubExtensionResult {
   if (!profileName) {
     return {
       customTools: [],
@@ -87,7 +90,7 @@ export function loadGitHubExtension(profileName?: string): GitHubExtensionResult
   }
 
   const allowed = new Set(PROFILE_TOOLS[profileName]);
-  const allTools = buildGitHubTools(auth);
+  const allTools = buildGitHubTools(auth, { baseUrl: opts.baseUrl });
   const profileTools = allTools.filter((t) => allowed.has(t.name));
 
   return {

@@ -19,7 +19,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import type { GitHubAuth } from "./auth.js";
-import { GitHubClient } from "./client.js";
+import { GitHubClient, type GitHubClientOptions } from "./client.js";
 import { writeCredentialsFile } from "./credentials.js";
 
 interface MaybeHttpError extends Error {
@@ -64,8 +64,8 @@ async function safeRun<T>(fn: () => Promise<T>) {
  * Build the entire GitHub tool set. Caller filters by profile.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function buildGitHubTools(auth: GitHubAuth): ToolDefinition<any>[] {
-  const gh = new GitHubClient(auth);
+export function buildGitHubTools(auth: GitHubAuth, opts: GitHubClientOptions = {}): ToolDefinition<any>[] {
+  const gh = new GitHubClient(auth, opts);
 
   // Helper to keep the defineTool boilerplate tight.
   const tool = <P extends TSchema>(

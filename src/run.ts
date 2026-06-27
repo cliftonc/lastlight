@@ -41,6 +41,14 @@ export interface RunOptions {
   thinking?: ThinkingLevel;
   /** GitHub profile: "read" | "issues-write" | "review-write" | "repo-write". */
   profile?: string;
+  /**
+   * Override the GitHub REST API base URL for the built-in `github_*` tools
+   * (Octokit's `baseUrl`). Test/eval escape hatch: point the real GitHub tools
+   * at a fake GitHub server so a workflow runs unchanged with its `github_*`
+   * calls mocked. Falls back to the `GITHUB_API_URL` env var. Production leaves
+   * this unset (→ `https://api.github.com`).
+   */
+  githubApiBaseUrl?: string;
   /** Sandbox backend. Default: "none". */
   sandbox?: "none" | "gondolin";
   /**
@@ -313,6 +321,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     model: options.model,
     thinking: options.thinking,
     profile: options.profile,
+    githubApiBaseUrl: options.githubApiBaseUrl,
     cwd: options.cwd ?? process.cwd(),
     noSession: options.noSession ?? false,
     sessionDir: options.sessionDir,
