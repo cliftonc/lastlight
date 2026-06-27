@@ -3,13 +3,12 @@ import { defineConfig, configDefaults } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    // Default suite: src unit tests + the deterministic (AI-free) eval-harness
-    // mechanism tests (`evals/**/*.test.ts`). The paid AI eval is a plain
-    // script (`evals/run.ts`, run via `npm run eval`), not a test, so a weak
-    // model never fails the build. `evals/datasets/**` holds fixture *.test.ts
-    // files (held-out tests run inside a seeded workspace) — never collect them.
-    include: ['src/**/*.test.ts', 'evals/**/*.test.ts'],
-    exclude: [...configDefaults.exclude, 'evals/datasets/**'],
+    // Default suite: src unit tests only. The eval HARNESS now lives in the
+    // separate `lastlight-evals` package; core keeps just the slim seam guard
+    // (`src/engine/agent-executor.seam.test.ts`) proving it still forwards
+    // `githubApiBaseUrl` into agentic-pi.
+    include: ['src/**/*.test.ts'],
+    exclude: [...configDefaults.exclude],
     // Force LASTLIGHT_LOCAL_DEV=1 so any test that touches configureGitAuth
     // (or imports a code path that does) skips the `git config --global`
     // writes that would otherwise overwrite the contributor's real git
