@@ -109,6 +109,7 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
     model: opts.model,
     workflowSucceeded: false,
     inputTokens: 0,
+    cachedTokens: 0,
     outputTokens: 0,
     costUsd: 0,
     durationMs: 0,
@@ -199,6 +200,7 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
     await drainSessions(sessionsDir);
     const m = collectMetrics(sessionsDir);
     result.inputTokens = m.inputTokens;
+    result.cachedTokens = m.cachedTokens;
     result.outputTokens = m.outputTokens;
     result.costUsd = m.costUsd;
     result.githubMutations = fake.calls.length;

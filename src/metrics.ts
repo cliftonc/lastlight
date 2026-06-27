@@ -2,8 +2,11 @@
  * Pull per-run token/cost/turn metrics out of the session jsonl the event
  * shim writes (`src/engine/event-shim.ts`). Each phase emits one `result`
  * envelope carrying `total_cost_usd` / `total_input_tokens` /
- * `total_output_tokens`. We sum them across every jsonl under the run's
- * sessions dir. Best-effort: missing files / lines just contribute zero.
+ * `total_output_tokens` (plus `total_cache_read_input_tokens` /
+ * `total_cache_creation_input_tokens`, which we sum into `cachedTokens` —
+ * Anthropic bills most of its prompt as cached, so omitting it made input
+ * collapse to ~zero). We sum them across every jsonl under the run's sessions
+ * dir. Best-effort: missing files / lines just contribute zero.
  */
 
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
@@ -11,6 +14,11 @@ import { join } from "node:path";
 
 export interface RunMetrics {
   inputTokens: number;
+  /** Cached prompt tokens (Anthropic cache read + creation). Reported as its
+   * own total so providers that bill cached input separately (and far cheaper)
+   * are comparable — folding it into `inputTokens` would hide the split and,
+   * for OpenAI-style usage where cached is a subset of input, double-count. */
+  cachedTokens: number;
   outputTokens: number;
   costUsd: number;
 }
@@ -65,7 +73,7 @@ export function collectMetrics(sessionsDir: string): RunMetrics {
   walkJsonl(sessionsDir, files);
 
   const seen = new Set<string>();
-  const metrics: RunMetrics = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const metrics: RunMetrics = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: 0 };
   for (const file of files) {
     if (seen.has(file)) continue;
     seen.add(file);
@@ -75,11 +83,15 @@ export function collectMetrics(sessionsDir: string): RunMetrics {
         const env = JSON.parse(line) as {
           type?: string;
           total_input_tokens?: number;
+          total_cache_read_input_tokens?: number;
+          total_cache_creation_input_tokens?: number;
           total_output_tokens?: number;
           total_cost_usd?: number;
         };
         if (env.type !== "result") continue;
         metrics.inputTokens += env.total_input_tokens ?? 0;
+        metrics.cachedTokens +=
+          (env.total_cache_read_input_tokens ?? 0) + (env.total_cache_creation_input_tokens ?? 0);
         metrics.outputTokens += env.total_output_tokens ?? 0;
         metrics.costUsd += env.total_cost_usd ?? 0;
       } catch {

@@ -27,6 +27,7 @@ export interface ModelSummary {
   behavioralOk: number;
   behavioralTotal: number;
   avgInputTokens: number;
+  avgCachedTokens: number;
   avgOutputTokens: number;
   totalCostUsd: number;
   p50DurationMs: number;
@@ -55,6 +56,7 @@ export function aggregateTrials(trials: InstanceResult[]): InstanceResult {
     ...base,
     error: undefined,
     inputTokens: Math.round(mean(ok.map((t) => t.inputTokens))),
+    cachedTokens: Math.round(mean(ok.map((t) => t.cachedTokens))),
     outputTokens: Math.round(mean(ok.map((t) => t.outputTokens))),
     costUsd: mean(ok.map((t) => t.costUsd)),
     durationMs: Math.round(mean(ok.map((t) => t.durationMs))),
@@ -112,6 +114,7 @@ export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
       behavioralOk: behavioral.filter((r) => r.behavioral?.ok).length,
       behavioralTotal: behavioral.length,
       avgInputTokens: avg(list.map((r) => r.inputTokens)),
+      avgCachedTokens: avg(list.map((r) => r.cachedTokens)),
       avgOutputTokens: avg(list.map((r) => r.outputTokens)),
       totalCostUsd: list.reduce((s, r) => s + r.costUsd, 0),
       p50DurationMs: durations[Math.floor(durations.length / 2)] ?? 0,
@@ -126,13 +129,14 @@ export function summarize(results: InstanceResult[]): Scorecard {
 }
 
 export function renderTable(card: Scorecard, labels: Record<string, string> = {}): string {
-  const header = ["model", "code-fix", "behavioral", "in tok", "out tok", "cost $", "p50", "err"];
+  const header = ["model", "code-fix", "behavioral", "in tok", "cached", "out tok", "cost $", "p50", "err"];
   const rows = card.models.map((m) => [
     labels[m.model] ?? m.model,
     m.codeFixTotal ? `${m.codeFixResolved}/${m.codeFixTotal}` : "—",
     m.behavioralTotal ? `${m.behavioralOk}/${m.behavioralTotal}` : "—",
-    String(Math.round(m.avgInputTokens)),
-    String(Math.round(m.avgOutputTokens)),
+    fmtTokens(m.avgInputTokens),
+    fmtTokens(m.avgCachedTokens),
+    fmtTokens(m.avgOutputTokens),
     m.totalCostUsd.toFixed(4),
     fmtMs(m.p50DurationMs),
     String(m.errors),
@@ -154,6 +158,15 @@ export function writeArtifacts(dir: string, card: Scorecard): void {
 
 function avg(xs: number[]): number {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
+/** Compact token count: <1000 verbatim, else "k" (one decimal under 10k).
+ * Tolerates undefined/NaN (e.g. a scorecard.json predating cached-token
+ * tracking) → "0". */
+export function fmtTokens(n: number): string {
+  const v = Number.isFinite(n) ? n : 0;
+  if (v < 1000) return String(Math.round(v));
+  const k = v / 1000;
+  return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
 }
 function fmtMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;

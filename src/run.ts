@@ -18,7 +18,7 @@
  * `evals/mechanism.test.ts` in the normal `npm test` suite.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -27,7 +27,7 @@ import chalk from "chalk";
 
 import { loadDotEnv, hasProviderKey, evalModels, compareModels, modelLabels, resolveModel, setModelsPath } from "./env.js";
 import { runInstance, applyEvalEnv } from "./run-instance.js";
-import { summarize, writeArtifacts, aggregateTrials } from "./report.js";
+import { summarize, writeArtifacts, aggregateTrials, type Scorecard } from "./report.js";
 import { writeHtml, type HtmlMeta } from "./html-report.js";
 import type { SweBenchInstance, InstanceResult } from "./schema.js";
 import { bootstrapAssets } from "./bootstrap.js";
@@ -502,12 +502,44 @@ async function runEval(): Promise<number> {
   return harnessErrors > 0 ? 1 : 0;
 }
 
-/** Top-level subcommand dispatcher: `run` (default) | `init`. */
+/**
+ * `report <dir>` — re-render `<dir>/index.html` from an existing
+ * `<dir>/scorecard.json`, no models run. Lets you regenerate the HTML after a
+ * report-template change (or to re-skin an old run) without paying for a fresh
+ * eval. Models/tiers/labels are reconstructed from the scorecard itself.
+ */
+function runReport(dir?: string): number {
+  if (!dir) {
+    console.error("usage: lastlight-evals report <results-dir>  (a dir holding scorecard.json)");
+    return 1;
+  }
+  const file = join(dir, "scorecard.json");
+  if (!existsSync(file)) {
+    console.error(`no scorecard.json in ${dir}`);
+    return 1;
+  }
+  const card = JSON.parse(readFileSync(file, "utf8")) as Scorecard;
+  const labels = modelLabels();
+  // Tiers/models come straight off the saved results so the re-render matches
+  // exactly what that run measured (no dependence on current models.json).
+  const tiers = [...new Set(card.results.map((r) => r.tier ?? "triage"))];
+  const models = [...new Set(card.results.map((r) => r.model))].map((m) => labels[m] ?? m);
+  const runs = Math.max(1, ...card.results.map((r) => r.trials ?? 1));
+  const html = writeHtml(dir, card, { models, tiers, labels, runs, generatedAt: new Date().toISOString() });
+  console.log(`Scorecard → ${html}`);
+  return 0;
+}
+
+/** Top-level subcommand dispatcher: `run` (default) | `init` | `report`. */
 async function main(): Promise<number> {
   const sub = process.argv[2];
   if (sub === "init") {
     // `init [dir]` — scaffold a fresh overlay+evals repo.
     return runInit(process.argv[3]);
+  }
+  if (sub === "report") {
+    // `report <dir>` — re-render index.html from a saved scorecard.json.
+    return runReport(process.argv[3]);
   }
   // `run` is the default; allow an explicit leading `run` token too.
   if (sub === "run") process.argv.splice(2, 1);

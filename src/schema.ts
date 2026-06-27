@@ -120,6 +120,9 @@ export interface InstanceResult {
   model_patch?: string;
   /** Aggregate metrics across phases. */
   inputTokens: number;
+  /** Cached prompt tokens (Anthropic cache read + creation), tracked separately
+   * from `inputTokens` — see RunMetrics in metrics.ts. */
+  cachedTokens: number;
   outputTokens: number;
   costUsd: number;
   durationMs: number;

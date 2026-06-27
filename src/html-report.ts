@@ -13,7 +13,7 @@
 import { writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
-import { summarizeModels, type Scorecard, type ModelSummary } from "./report.js";
+import { summarizeModels, fmtTokens, type Scorecard, type ModelSummary } from "./report.js";
 import type { InstanceResult } from "./schema.js";
 
 export interface HtmlMeta {
@@ -117,7 +117,7 @@ function compareTable(models: ModelSummary[], tier: string, labels: Record<strin
         <td class="barcell">${bar(rate, metric.frac(m), "fill-gold", isBestRate)}</td>
         <td class="barcell">${bar(maxCost ? m.totalCostUsd / maxCost : 0, `$${m.totalCostUsd.toFixed(3)}`, "fill-teal", isBestCost)}</td>
         <td class="barcell">${bar(maxLat ? m.p50DurationMs / maxLat : 0, fmtMs(m.p50DurationMs), "fill-orange", isBestLat)}</td>
-        <td class="mono num">${Math.round(m.avgInputTokens)}<span class="muted">/</span>${Math.round(m.avgOutputTokens)}</td>
+        <td class="mono num">${fmtTokens(m.avgInputTokens)}<span class="muted">/</span>${fmtTokens(m.avgCachedTokens)}<span class="muted">/</span>${fmtTokens(m.avgOutputTokens)}</td>
         <td class="mono num ${m.errors ? "fail-fg" : "muted"}">${m.errors}</td>
       </tr>`;
     })
@@ -129,7 +129,7 @@ function compareTable(models: ModelSummary[], tier: string, labels: Record<strin
         <tr>
           <th class="rank">#</th><th>model</th>
           <th>${esc(metric.label)} →</th><th>total cost ↓</th><th>p50 latency ↓</th>
-          <th class="num">avg in/out tok</th><th class="num">err</th>
+          <th class="num">avg in/cached/out tok</th><th class="num">err</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
