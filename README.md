@@ -28,40 +28,50 @@ instance (SWE-bench shape)
 > (the base-URL mock, static-token mode, the no-clone seeding trick, the
 > asset-bootstrap footgun, the metrics drain).
 
-## How it depends on Last Light
+## Install
 
-`lastlight-evals` is a thin CLI on top of the `lastlight` npm package. It imports
-exactly four things from core's public `lastlight/evals` barrel —
-`getWorkflow`, `runWorkflow`, `ExecutorConfig`, `TemplateContext` — plus the
-`gh`-repo bootstrap helpers used by `init`. Core ships its `workflows/`,
-`skills/`, and `agent-context/` in the package, so the evals run the same assets
-core does.
+Published on npm. Needs **Node 24+** and a provider API key.
 
 ```bash
-npm install            # installs `lastlight` (and agentic-pi as a peer)
+npm install -g lastlight-evals    # or run ad-hoc with: npx lastlight-evals
 ```
 
-**Local development against an un-published core.** Until the matching
-`lastlight` version is on npm — or whenever you want to eval your working-tree
-core — link a checkout:
+Installing pulls in `lastlight` (and `agentic-pi`). `lastlight-evals` is a thin
+CLI on top of the `lastlight` package: it imports `getWorkflow`, `runWorkflow`,
+`ExecutorConfig`, and `TemplateContext` from core's public `lastlight/evals`
+entry point, plus the `gh`-repo bootstrap helpers used by `init`. Core ships its
+`workflows/`, `skills/`, and `agent-context/` inside the package, so the evals
+run the exact same assets production does — that's the whole point.
 
-```bash
-cd ../lastlight && npm run build && npm link
-cd ../lastlight-evals && npm link lastlight
-```
+## What a run does
 
-Or set `LASTLIGHT_CORE_DIR=/path/to/lastlight` to point just the **asset roots**
-(workflows/skills/agent-context — the bulk of what `lastlight server update`
-ships) at a checkout without touching the npm dep. (The runner *code* still
-comes from `node_modules/lastlight`; use `npm link` to exercise working-tree
-engine code too.)
+Each eval `instance` (an issue fixture, optionally with a code fixture + held-out
+tests) is taken through the **real** production workflow end to end:
+
+1. An **in-process fake GitHub** starts, seeded with the issue and recording
+   every mutating call the agent makes.
+2. For `code-fix`, the **workspace is seeded** with the fixture repo at its base
+   commit plus a local bare `origin`, so `git push` works fully offline.
+3. The **real workflow YAML** (`issue-triage`, `build`, …) is loaded from
+   `lastlight` and run with `sandbox:"none"`, the agent's `github_*` tools
+   pointed at the fake, and approval gates disabled (so it never pauses).
+4. The result is **graded deterministically** — no LLM judge:
+   - **behavioral** — the recorded GitHub calls (labels, comments, PRs) vs the
+     instance's `expect_github` / `triage_gold`.
+   - **execution** (code-fix) — the held-out tests are applied and run; the case
+     is *resolved* only if every `FAIL_TO_PASS` passes and every `PASS_TO_PASS`
+     stays green (SWE-bench's criterion).
+5. Token usage, cost, and latency are collected per run.
+
+Run multiple models and you get a side-by-side **scorecard** (HTML + JSON)
+ranking them on pass rate, cost, and latency.
 
 ## Run it
 
 ```bash
 # no tier args → interactively pick which tiers to run (one or all).
 # Non-interactive (CI / piped) falls back to the cheapest default.
-lastlight-evals run                     # (or: npm run eval)
+lastlight-evals run
 
 # name tiers explicitly to skip the prompt
 lastlight-evals run triage
