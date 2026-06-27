@@ -1,16 +1,27 @@
 # lastlight-evals
 
-A standalone, **SWE-bench-compatible** eval harness for [Last
-Light](https://github.com/cliftonc/lastlight) workflows. It drives the **real**
-production workflows (`issue-triage`, `build`, …) — their actual prompts and
-skills — against a **mocked GitHub**, grades the result deterministically, and
-prints a model-comparison scorecard. It answers "what do we expect from the
-agent, and which model does it best?"
+### Which model should run your agent? Find out — with receipts.
 
-Nothing here talks to real GitHub. The agent's `github_*` tool calls are served
-by an in-process fake (seeded + recording), and `git push` goes to a local bare
-repo. The only deviations from production are the two we can't do unattended:
-approval gates are disabled and outward side-effects are mocked.
+`lastlight-evals` takes [**Last Light**](https://lastlight.dev)'s *real*
+production workflows — the actual prompts, skills, and agent loop that ship — and
+runs them end to end against a fully mocked GitHub, for whatever models you throw
+at it. No toy benchmarks, no LLM-as-judge: every run is graded **deterministically**
+(did the agent apply the right labels? did the held-out tests turn green?), then
+ranked side by side on **pass rate, cost, and latency**.
+
+The payoff is one scorecard that tells you, for *your* workflows, exactly what
+each model delivers — and what it costs you per run. Swap a model, re-run, see the
+difference. Drop in your own issues and repos and it evaluates *your* agent.
+
+> 🛰️ Part of [**Last Light**](https://lastlight.dev) — the AI agent that triages,
+> reviews, and fixes your GitHub repos.
+> **[lastlight.dev](https://lastlight.dev)** · [Core repo](https://github.com/cliftonc/lastlight) · [Eval repo](https://github.com/cliftonc/lastlight-evals)
+
+It's **SWE-bench-compatible**, and nothing here touches real GitHub: the agent's
+`github_*` tool calls are served by an in-process fake (seeded + recording) and
+`git push` goes to a local bare repo. The only deviations from production are the
+two we can't do unattended — approval gates are disabled and outward side-effects
+are mocked. Everything else is exactly what ships.
 
 ```
 instance (SWE-bench shape)
