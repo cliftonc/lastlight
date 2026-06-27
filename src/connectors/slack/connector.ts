@@ -147,8 +147,19 @@ export class SlackConnector extends MessagingConnector {
   private setupListeners(): void {
     // Handle all message events (DMs, channels, groups)
     this.app.message(async ({ message }) => {
-      // Filter out non-standard message subtypes (edits, deletes, joins, etc.)
       const msg = message as any;
+      // Log EVERY inbound message before any filtering. When a DM looks like
+      // it "dropped" messages, this line tells us whether Slack delivered the
+      // event at all and, if so, why we ignored it (a subtype like
+      // message_changed, a bot_id, or empty text) — versus Slack never
+      // sending it over the socket (no line at all).
+      console.log(
+        `[slack] inbound msg ch=${msg.channel ?? "-"} ts=${msg.ts ?? "-"} ` +
+        `thread_ts=${msg.thread_ts ?? "-"} subtype=${msg.subtype ?? "-"} ` +
+        `bot_id=${msg.bot_id ?? "-"} channel_type=${msg.channel_type ?? "-"} ` +
+        `user=${msg.user ?? "-"} hasText=${msg.text ? "y" : "n"}`,
+      );
+      // Filter out non-standard message subtypes (edits, deletes, joins, etc.)
       if (msg.subtype) return;
       if (!msg.user || !msg.text) return;
       // Ignore bot messages

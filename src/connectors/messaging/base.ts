@@ -64,11 +64,22 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
     const cleanText = this.stripBotMention(text).trim();
     if (!cleanText) return;
 
-    // Thread anchor for status indicators / replies. For a reply inside an
-    // existing thread this is the parent thread ts; for a fresh DM or
-    // top-level mention it's the new message's own ts (which becomes the
-    // root of a brand-new thread).
-    const replyThreadId = threadId || messageId;
+    // Thread anchor for status indicators / replies, and the session key.
+    // For a reply inside an existing thread this is the parent thread ts.
+    //
+    // For a DM with no thread_ts we must NOT default to the message's own
+    // ts — that would mint a fresh thread (and a new session + agent jsonl)
+    // on every top-level message, fragmenting one continuous DM
+    // conversation across many dashboard sessions. Instead, pin it to the
+    // DM's most-recent active session thread so the whole conversation
+    // stays one thread + one session until it goes stale. A fresh DM (no
+    // active session) and channel @mentions still root a new thread on the
+    // message's own ts.
+    let replyThreadId = threadId;
+    if (!replyThreadId && isDM) {
+      replyThreadId = this.sessionManager.findActiveDmThread(this.name, channelId, platformUserId);
+    }
+    replyThreadId = replyThreadId || messageId;
 
     // Show acknowledgment
     this.showTyping(channelId, messageId, replyThreadId).catch(() => {});
@@ -81,9 +92,14 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
       userId: platformUserId,
     });
 
-    // Record the user message
-    this.sessionManager.addMessage(session.id, "user", cleanText, messageId);
-    this.sessionManager.touchSession(session.id);
+    // NOTE: conversation persistence (user + assistant rows in
+    // messaging_messages, plus touchSession) is owned solely by the chat
+    // engine (src/engine/chat-runner.ts), which is the only path common to
+    // every chat surface — Slack here and the CLI /api/chat route, which
+    // never touches this connector. Recording here as well double-wrote
+    // every turn (a clean copy AND chat-runner's untrusted-wrapped copy)
+    // and fed both back into the model's rehydrated history. Build the
+    // session for routing/ids only; let chat-runner do the writes.
 
     // Build the reply callback — sends to same channel/thread
     const reply = async (msg: string) => {
@@ -94,8 +110,6 @@ export abstract class MessagingConnector extends EventEmitter implements Connect
       for (const chunk of chunks) {
         await this.sendMessage(channelId, replyThreadId, chunk);
       }
-      // Record assistant message
-      this.sessionManager.addMessage(session.id, "assistant", msg);
     };
 
     // Build EventEnvelope
