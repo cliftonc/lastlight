@@ -43,6 +43,8 @@ const BOOLEAN_FLAGS = new Set([
   "client", "server",
   // `fork` — overwrite existing overlay assets
   "force",
+  // `skills install` — skip the claude marketplace path, copy skill dirs directly
+  "no-marketplace",
 ]);
 
 interface ParsedArgs {
@@ -215,6 +217,12 @@ ${chalk.bold("Fork")} (host-local — copy built-in assets into the deployment o
   lastlight fork agent-context       Copy soul.md / rules.md / security.md into instance/
   lastlight fork agent-context <f>   Copy a single agent-context file (e.g. soul.md)
                                      [--home dir] [--force to overwrite existing]
+
+${chalk.bold("Skills")} (host-local — install the Last Light Claude Code skills)
+  lastlight skills install           Install the skills into a local Claude Code
+                                     [--scope user|project] [--no-marketplace]
+  lastlight skills list              List bundled skills + where they're installed
+  lastlight skills uninstall         Remove the installed skills [--scope user|project]
 
 ${chalk.bold("Other")}
   lastlight setup                    First-run wizard — asks client (login) or server (stack)
@@ -910,6 +918,23 @@ async function cmdFork(): Promise<void> {
   await fork(positionals.slice(1), { home, force: flags.force === true });
 }
 
+// ── skills (host-local) ──────────────────────────────────────────────────────
+
+/**
+ * `lastlight skills <install|list|uninstall>` — install the Last Light Claude
+ * Code skills into a local Claude Code instance. Operates on local files (and
+ * shells out to the `claude` CLI when present), not over HTTP. See
+ * src/skills-install.ts.
+ */
+async function cmdSkills(): Promise<void> {
+  const scope = flags.scope === "project" ? "project" : "user";
+  const { skills } = await import("./skills-install.js");
+  await skills(positionals.slice(1), {
+    scope,
+    noMarketplace: flags["no-marketplace"] === true,
+  });
+}
+
 // ── dispatch ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -939,6 +964,7 @@ async function main() {
     }
     case "approvals": return cmdApprovals();
     case "fork": return cmdFork();
+    case "skills": return cmdSkills();
     case "server": return cmdServer();
     case "stats": return cmdStats();
     case "chat": return cmdChat();

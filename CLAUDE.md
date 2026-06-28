@@ -186,6 +186,19 @@ agent-context/          *.md files concatenated and prepended as AGENTS.md
                         writes the same content + a chat-persona suffix
                         into its own AGENTS.md.
 
+plugins/                Claude Code plugin (distinct from the internal
+                        skills/ above). plugins/lastlight/ bundles
+                        SKILL.md skills that teach Claude Code to install
+                        and operate Last Light + Last Light Evals
+                        (lastlight-server / -client / -overlay / -evals).
+                        The repo root is also a Claude Code marketplace
+                        (.claude-plugin/marketplace.json). Installed via
+                        `lastlight skills install` (src/skills-install.ts):
+                        prefers `claude plugin marketplace add` of the
+                        bundled path, falls back to copying the skill dirs
+                        into ~/.claude/skills. Shipped in the npm package
+                        (files: .claude-plugin + plugins).
+
 mcp-github-app/         Standalone MCP server exposing GitHub tools to the
                         agent. Uses the GitHub App installation token by
                         default; falls back to a GITHUB_TOKEN env var only
@@ -410,6 +423,13 @@ lastlight fork                         # list forkable workflows + agent-context
 lastlight fork <workflow>              # workflow YAML + every prompt + skill its phases reference
 lastlight fork agent-context [file]    # all agent-context/*.md (soul/rules/security), or one file
                                         # [--home dir] [--force to overwrite existing]
+
+# Install the Last Light Claude Code skills into a local Claude Code (HOST-LOCAL;
+# src/skills-install.ts). Prefers `claude plugin marketplace add` of the bundled
+# plugins/ path; falls back to copying skill dirs into the scope's .claude/skills.
+lastlight skills install               # → ~/.claude/skills (user) [--scope project] [--no-marketplace]
+lastlight skills list                  # bundled skills + where they're installed
+lastlight skills uninstall             # remove them [--scope user|project]
 
 # Local dev with Docker sandbox isolation
 ./scripts/dev-local.sh                 # builds opencode.json + secrets
