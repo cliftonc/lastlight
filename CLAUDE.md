@@ -698,6 +698,41 @@ lastlight server restart agent     # after a config.yaml or .env add/edit
 lastlight server start agent       # after REMOVING an .env var (recreate)
 ```
 
+### Cutting a release (npm + GitHub)
+
+**Only release when the CLI changes** — harness/dashboard/asset/doc changes
+reach prod via `lastlight server update`, not npm (see the npm-release-policy
+note in local agent memory). A release is a version bump + a `vX.Y.Z` tag + a
+GitHub release; npm publish is a separate, optional step (it needs the
+maintainer's 2FA OTP, so an agent usually can't complete it unattended).
+
+Patch for fixes/doc tweaks to the CLI surface; minor for new user-facing
+commands/features. The dance (run on a clean `main`, up to date with origin):
+
+```bash
+npm version patch --no-git-tag-version   # bump package.json + package-lock.json (minor for new features)
+# keep the Claude Code plugin manifest version in lockstep:
+#   edit plugins/lastlight/.claude-plugin/plugin.json "version" to match
+npm run build                            # refresh dist/ (shipped via package `files`; not committed)
+git add package.json package-lock.json plugins/lastlight/.claude-plugin/plugin.json
+git commit -m "chore(release): vX.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z"           # annotated — this repo's git config rejects lightweight tags
+git push origin main --follow-tags       # pushes the release commit AND the tag
+gh release create vX.Y.Z --title "vX.Y.Z — <summary>" --latest --notes "<changelog>"
+#   notes convention: highlights + a compare link, vPREV...vX.Y.Z
+
+# Optional — publish to npm (needs a current 2FA OTP):
+npm publish --otp=<code>
+```
+
+Notes:
+- The version lives in THREE files — `package.json`, `package-lock.json`
+  (both handled by `npm version`), and `plugins/lastlight/.claude-plugin/plugin.json`
+  (manual). Keep all three in sync.
+- For an annotated tag, `git rev-parse vX.Y.Z` returns the tag object SHA, not
+  the commit — use `git rev-parse 'vX.Y.Z^{commit}'` to confirm it points at the
+  release commit.
+
 ## Sub-folder docs
 
 - `src/workflows/CLAUDE.md` — runner internals: phase types, linear vs DAG,
