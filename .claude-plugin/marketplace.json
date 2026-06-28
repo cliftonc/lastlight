@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "lastlight-skills",
+  "description": "Skills for installing, configuring and operating Last Light and Last Light Evals.",
+  "owner": { "name": "Clifton Cunningham" },
+  "plugins": [
+    {
+      "name": "lastlight",
+      "source": "./plugins/lastlight",
+      "description": "Install, configure and operate Last Light (server, client, overlay) and Last Light Evals — driven through the lastlight / lastlight-evals CLIs.",
+      "keywords": ["lastlight", "github-agent", "evals", "devops", "setup"]
+    }
+  ]
+}

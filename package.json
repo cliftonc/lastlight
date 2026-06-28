@@ -24,7 +24,9 @@
     "agent-context",
     "deploy",
     "sandbox.Dockerfile",
-    "docker-compose.yml"
+    "docker-compose.yml",
+    ".claude-plugin",
+    "plugins"
   ],
   "repository": {
     "type": "git",

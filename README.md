@@ -411,6 +411,45 @@ Overlay files are read at startup only; `docker compose restart agent` after cha
 
 ---
 
+## Claude Code skills
+
+Last Light ships a [Claude Code](https://docs.claude.com/en/docs/claude-code)
+**plugin** that teaches Claude Code how to install, configure and operate Last
+Light for you. Install the skills, then in a Claude Code session just ask — e.g.
+*"set up a Last Light server"*, *"connect my CLI to my server"*, *"fork the build
+workflow into my overlay"*, or *"scaffold a Last Light evals workspace"*.
+
+| Skill | Use it when you want to… |
+|-------|--------------------------|
+| `lastlight-server` | Install & configure a Last Light server (agent + docker stack). |
+| `lastlight-client` | Point the `lastlight` CLI at a server and log in. |
+| `lastlight-overlay` | Create a deployment overlay and fork workflows/prompts/skills/persona. |
+| `lastlight-evals` | Scaffold & run a Last Light Evals workspace (datasets, models, comparisons). |
+
+Install them with the CLI (version-matched to the installed `lastlight`, works
+offline — uses the `claude` plugin marketplace when present, else copies the
+skills into `~/.claude/skills`):
+
+```bash
+lastlight skills install                 # → ~/.claude/skills (user scope)
+lastlight skills install --scope project # → ./.claude/skills (this repo only)
+lastlight skills list                    # show bundled skills + where they're installed
+lastlight skills uninstall
+```
+
+Or register the marketplace directly from a checkout of this repo:
+
+```bash
+claude plugin marketplace add ./
+claude plugin install lastlight@lastlight-skills
+```
+
+The skills live under `plugins/lastlight/` (manifest in `.claude-plugin/`). These
+are *Claude Code* skills — distinct from Last Light's internal sandbox skills in
+the top-level `skills/` dir.
+
+---
+
 ## Architecture
 
 ```
