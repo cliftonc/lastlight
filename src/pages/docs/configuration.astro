@@ -170,7 +170,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td><code>LASTLIGHT_SANDBOX</code></td>
 				<td>No</td>
 				<td><code>gondolin</code></td>
-				<td>Workflow sandbox backend. <code>gondolin</code> (default) runs each phase in a QEMU micro-VM (HVF on macOS, KVM on Linux — no Docker needed). <code>docker</code> runs each phase in a sibling Docker container (requires the <code>lastlight-sandbox:latest</code> image). <code>none</code> runs in-process with no isolation — dev only.</td>
+				<td>Workflow sandbox backend. <code>gondolin</code> (default) runs each phase in a QEMU micro-VM (HVF on macOS, KVM on Linux — no Docker needed). <code>docker</code> runs each phase in a sibling Docker container (requires the <code>lastlight-sandbox:latest</code> image). <code>smol</code> (experimental) runs each phase in a smolvm micro-VM via the <code>smolvm</code> CLI — stronger isolation, native per-host egress; local-only, needs a host hypervisor. <code>none</code> runs in-process with no isolation — dev only.</td>
 			</tr>
 			<tr>
 				<td><code>MAX_TURNS</code></td>
@@ -242,6 +242,18 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td>No</td>
 				<td><code>lastlight_agent-data</code></td>
 				<td>Used only when <code>LASTLIGHT_SANDBOX=docker</code>. Either a Docker named volume or a host path (starts with <code>/</code>, <code>./</code>, <code>../</code>, <code>~</code>) bind-mounted as <code>/data</code> in each sandbox.</td>
+			</tr>
+			<tr>
+				<td><code>SMOLVM_BIN</code></td>
+				<td>No</td>
+				<td><code>smolvm</code></td>
+				<td>Used only when <code>LASTLIGHT_SANDBOX=smol</code>. Path to the <code>smolvm</code> CLI.</td>
+			</tr>
+			<tr>
+				<td><code>SMOLVM_IMAGE</code></td>
+				<td>No</td>
+				<td><code>lastlight-sandbox:latest</code></td>
+				<td>Used only when <code>LASTLIGHT_SANDBOX=smol</code>. An OCI image reference, or a local <code>docker save</code> archive (<code>./img.tar</code>) / rootfs dir — the archive form loads offline (no registry), so the locally-built sandbox image works under the strict egress allowlist.</td>
 			</tr>
 			<tr>
 				<td><code>LASTLIGHT_LOCAL_DEV</code></td>
