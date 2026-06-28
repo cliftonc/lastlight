@@ -45,10 +45,37 @@ instance (SWE-bench shape)
 
 ## Get started
 
-Needs **Node 24+** and a provider API key. The fastest path is
-**`init`** — it scaffolds *your own* evals workspace (your workflows + your
-datasets, seeded from the built-in samples) and optionally creates a private
-GitHub repo for it:
+Needs **Node 24+** and a provider API key.
+
+### Easiest: let the Last Light agent skill set up *your own* workspace
+
+Want to eval **your own** deployment — your workflows, your agent persona, your
+config — not just the shipped samples? If you drive
+[Last Light](https://lastlight.dev) from an agent (e.g. Claude Code), install its
+skills once and then just *ask* — no flags to remember:
+
+```bash
+lastlight skills install            # installs the Last Light agent skills
+```
+
+Then, in a **new empty folder**, tell your agent (point it at *your* instance
+overlay repo):
+
+> *Let's set up an evals workspace here, using my existing Last Light instance
+> config in `cliftonc/lastlight-instance`.*
+
+The `lastlight-evals` skill scaffolds the workspace, clones your overlay into
+`instance/`, seeds the sample datasets, and wires it all up — under the hood it
+runs `lastlight-evals init . --clone cliftonc/lastlight-instance`, after which a
+bare `lastlight-evals run` "just works" (it auto-detects `./instance` as the
+overlay and `./evals/datasets`). Now you're evaluating *your* agent against the
+models you care about. Prefer to drive it by hand? Keep reading.
+
+### Manual: scaffold with `init`
+
+The fastest CLI path is **`init`** — it scaffolds *your own* evals workspace
+(your workflows + your datasets, seeded from the built-in samples) and optionally
+creates a private GitHub repo for it:
 
 ```bash
 npm install -g lastlight-evals
@@ -194,7 +221,12 @@ lastlight-evals run --overlay ~/work/lastlight-instance     # or LASTLIGHT_OVERL
 - An overlay **`evals/models.json`** is picked up automatically (or pass
   `--models-file`).
 
-### `lastlight-evals init [dir]` — scaffold a fresh overlay+evals repo
+### `lastlight-evals init [dir]` — scaffold an evals workspace
+
+Two shapes, depending on whether you already have a deployment overlay repo:
+
+**Plain** — a self-contained overlay+evals repo (its own `workflows/` `skills/`
+`agent-context/` + `evals/`):
 
 ```bash
 lastlight-evals init my-evals
@@ -205,6 +237,21 @@ Scaffolds `workflows/` `skills/` `agent-context/` (empty, to fill in),
 `evals/datasets/` + `evals/models.json` (seeded from the shipped samples),
 `config.yaml`, and a `.gitignore`/`README`, then offers to `git init` + create a
 private GitHub repo via `gh` (reusing core's `lastlight server setup` flow).
+
+**Separate** (`--clone`) — the recommended shape when you already have a
+deployment overlay (e.g. `lastlight-instance`) and want to eval **its** config.
+The overlay is cloned into `<dir>/instance/` (its own git checkout, git-ignored)
+with the evals at the workspace root; a bare run auto-detects both, no flags:
+
+```bash
+lastlight-evals init my-evals --clone cliftonc/lastlight-instance
+cd my-evals && lastlight-evals run        # auto: overlay ./instance + ./evals/datasets
+```
+
+This is exactly what the [`lastlight-evals` agent skill](#easiest-let-the-last-light-agent-skill-set-up-your-own-workspace)
+does for you. Update the overlay later with `cd instance && git pull`; your evals
+stay out of the deployment repo. Run `lastlight-evals init --help` for all flags
+(`--yes`, `--no-git`, …).
 
 ## Datasets & tiers
 
