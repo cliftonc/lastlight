@@ -13,23 +13,31 @@ import { smolAvailable } from "#src/sandbox/smol.js";
  * real workflow runner — no AI, no mocks. The smol-backend analogue of
  * command-exec.integration.test.ts.
  *
- * Opt-in + self-gating: runs only when `RUN_SMOL_IT=1` AND the smolvm CLI is
- * installed, so the default `npx vitest run` (and CI without smolvm) skip it
- * instantly. To run (Apple Silicon / Linux KVM host):
+ * Opt-in + self-gating: runs only when `RUN_SMOL_IT=1`, the smolvm CLI is
+ * installed, AND `SMOLVM_IMAGE` points at a bootable VM image. The default
+ * `npx vitest run` (and CI without smolvm) skip it instantly. SMOLVM_IMAGE is
+ * required because the default OCI ref (lastlight-sandbox:latest) isn't loaded
+ * into smolvm's offline store — without an image the VM can't boot, so the run
+ * would fail rather than test anything. We skip (not fail) when it's absent.
+ * To run (Apple Silicon / Linux KVM host):
  *
  *   curl -sSL https://smolmachines.com/install.sh | sh   # install smolvm
  *   smolvm serve &                                        # start the daemon
- *   docker compose --profile build-only build sandbox     # build the image…
- *   # …then make lastlight-sandbox:latest available to smolvm's store
- *   #   (see the spike plan — OCI import), or point SMOLVM_IMAGE at one that
- *   #   has agentic-pi + node + git baked in.
- *   RUN_SMOL_IT=1 npx vitest run src/sandbox/smol.integration.test.ts
+ *   docker compose --profile build-only build sandbox     # build the image
+ *   docker save lastlight-sandbox:latest -o /tmp/smol-img.tar   # export it
+ *   # …point SMOLVM_IMAGE at that archive (loads offline under the strict
+ *   #   allowlist), or any image with agentic-pi + node + git baked in.
+ *   RUN_SMOL_IT=1 SMOLVM_IMAGE=/tmp/smol-img.tar \
+ *     npx vitest run tests/sandbox/smol.integration.test.ts
  *
  * Each command phase boots + tears down its own micro-VM, so these are slow —
  * hence the long per-test timeout.
  */
 
-const RUN = process.env.RUN_SMOL_IT === "1" && smolAvailable();
+const RUN =
+  process.env.RUN_SMOL_IT === "1" &&
+  !!process.env.SMOLVM_IMAGE &&
+  smolAvailable();
 
 const TIMEOUT = 180_000;
 
