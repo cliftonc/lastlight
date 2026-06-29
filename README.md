@@ -2,7 +2,7 @@
 
 ### Which model should run your agent? Find out — with receipts.
 
-[![Last Light eval scorecard — 9 models compared on pass rate, cost, and latency](docs/scorecard.png)](https://evals.lastlight.dev/)
+[![Last Light eval scorecard — 9 models compared on pass rate, cost, and latency](docs/scorecard-v2.png)](https://evals.lastlight.dev/)
 
 > **[▶ Explore the live scorecard](https://evals.lastlight.dev/)** — interactive, with per-instance detail. (Above: code-fix tier across 9 models.)
 
