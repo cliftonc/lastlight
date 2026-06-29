@@ -94,6 +94,13 @@ Vocabulary pinned during the `/grilling` of the sandbox-seam deepening
 into one orchestrator behind a named port). Describes the agreed target shape;
 the implementation PR uses these names.
 
+The framing decision underneath all of these: Last Light is
+**agent-in-sandbox**, not **tools-in-sandbox**. The port isolates the *whole
+agent run* — the runtime and every tool it calls — not individual tool calls
+dispatched out from a host-resident agent. Prefer "agent-in-sandbox" when
+naming the model; _avoid_ describing the backends as "sandboxing the agent's
+tools" (the agent isn't on the host). See [ADR-0001](docs/adr/0001-agent-in-sandbox.md).
+
 - **Sandbox** — the **port** every backend implements: `provision() →
   { hostWorkspaceDir, agentCwd }`, `runAgent(taskId, prompt, opts, onEvent)`,
   `runCommand(taskId, command, opts)`, `dispose()`. The port **owns

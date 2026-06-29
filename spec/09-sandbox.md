@@ -16,6 +16,22 @@ the agent can actually reason.
 The [Chat](/spec/11-chat) path does *not* go through this layer — it
 runs in-process. Everything else does.
 
+## Execution model: agent inside the boundary
+
+Last Light puts the **entire agent process inside the isolation
+boundary** — the `agentic-pi` runtime, its reasoning, and every tool it
+calls (`bash`, `read`, `edit`, `write`, network egress) all run on the
+inside. The harness mints a downscoped token and forwards provider keys
+*into* the sandbox; the sandbox enforces default-deny egress from the
+outside. This is deliberately **not** the tools-in-sandbox model, where
+the agent runs on the host and only its write-capable tool calls are
+marshalled out (e.g. via `docker exec`). Wrapping the runtime instead of
+each tool keeps containment structural: there is no host-side code path
+an agent tool could escape through, so a `read`-profile triage run cannot
+reach the host even if a prompt injection convinces it to try. See
+[ADR-0001](https://github.com/cliftonc/lastlight/blob/main/docs/adr/0001-agent-in-sandbox.md)
+for the decision and the rejected alternative.
+
 ## Public contract
 
 ```ts
@@ -414,6 +430,12 @@ Per-phase model and variant overrides resolve through
   choose container, VM, or unikernel — but the *contract* is the
   same: default-deny network, scoped token, isolated FS. Don't drop
   any of those by accident.
+- **The whole agent goes in the box, not just its tools.** A reimpl
+  that runs the agent on the host and marshals individual tool calls
+  out to a sandbox (the tools-in-sandbox model) re-creates the
+  host/container seam this design avoids — every tool then has to
+  remember to route through the executor, and one that forgets gets
+  host access. Wrap the runtime, not each tool. See ADR-0001.
 - **Don't rely on HTTP_PROXY env vars.** Most SDKs ignore them. SNI
   peek + DNS sinkhole is what works generally; if you can do real
   TLS termination, do that — but only after exhausting the cheaper
