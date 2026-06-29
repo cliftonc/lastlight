@@ -54,6 +54,7 @@
     "agentic-pi": "^0.2.11",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.4",
+    "wrangler": "^4.105.0"
   }
 }
