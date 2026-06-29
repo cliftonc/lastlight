@@ -4,7 +4,7 @@
 
 [![Last Light eval scorecard — 9 models compared on pass rate, cost, and latency](docs/scorecard.png)](https://cliftonc.github.io/lastlight-evals/)
 
-> **[▶ Explore the live scorecard](https://cliftonc.github.io/lastlight-evals/)** — interactive, with per-instance detail. (Above: triage tier across 9 models.)
+> **[▶ Explore the live scorecard](https://cliftonc.github.io/lastlight-evals/)** — interactive, with per-instance detail. (Above: code-fix tier across 9 models.)
 
 `lastlight-evals` takes [**Last Light**](https://lastlight.dev)'s *real*
 production workflows — the actual prompts, skills, and agent loop that ship — and
