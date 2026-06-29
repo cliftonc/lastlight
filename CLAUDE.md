@@ -19,36 +19,56 @@ entry; `lastlight-evals run` / `lastlight-evals init` are the two subcommands.
 
 ```bash
 npm install            # installs lastlight (core) + agentic-pi
-npm run build          # tsc → dist/ (bin: dist/run.js)
+npm run build          # build:harness (tsc → dist/, bin: dist/run.js) + build:dashboard (Vite → dashboard/dist)
 npm test               # vitest — the AI-free mechanism.test.ts only
-npx tsc --noEmit       # typecheck
+npm run typecheck      # tsc --noEmit (harness) + dashboard tsc --noEmit
+npm run dev:dashboard  # Vite HMR for the SPA; proxies /api + /data to a running `serve` (port 4319)
 
 # Dev (tsx, no build):
 npx tsx src/run.ts run triage          # one tier
 npx tsx src/run.ts run --compare       # cross-vendor (key-gated, see models.json)
+npx tsx src/run.ts serve               # browse past runs in the dashboard
 npx tsx src/run.ts init /tmp/my-evals  # scaffold an overlay+evals repo
 
 # Installed:
 lastlight-evals run [tier...] [--model X] [--runs N] [--overlay DIR] [--datasets DIR]
+lastlight-evals serve [--port N]       # dashboard over ./eval-results
 ```
 
+The dashboard is a separate Vite app under `dashboard/` (its own `package.json`).
+`npm run build` builds it and `dashboard/dist` ships in the package, so an
+installed CLI serves the SPA with no Vite at runtime. `npm install` at the repo
+root does NOT install the dashboard's deps — `npm run build` (→ `build:dashboard`)
+runs `npm --prefix dashboard install` for you.
+
 Needs a provider key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `FIREWORKS_API_KEY`
-/ `OPENROUTER_API_KEY`) in env or a cwd `.env`. Output → `./eval-results/<tiers>/`
-(`index.html` + `scorecard.json` + `predictions.jsonl`). The runner exits
-non-zero ONLY on harness error — a weak model scoring badly is the measurement.
+/ `OPENROUTER_API_KEY`) in env or a cwd `.env`. Each run lands in its OWN folder
+→ `./eval-results/<tiers>/<runId>/` (`scorecard.json` + `predictions.jsonl`;
+`runId` = `<timestamp>-<git-sha>`), so runs accumulate instead of overwriting.
+**The report is a JSON-driven SPA, not generated HTML** — the harness only ever
+writes `scorecard.json` (atomically, live-updated during a run). `run` starts a
+tiny local server (`src/serve.ts`) and opens `http://localhost:PORT` deep-linked
+at the run; `lastlight-evals serve` re-opens that dashboard to browse every past
+run (overview = runs newest-first + per-model trend sparklines, per-run = the
+model-comparison scorecard + per-instance rows). The dashboard SPA lives in
+`dashboard/` (Vite + React + Tailwind/daisyUI + TanStack Query) and ships
+prebuilt as `dashboard/dist`. The runner exits non-zero ONLY on harness error —
+a weak model scoring badly is the measurement.
 
 ## Where things live
 
 | File | Role |
 |---|---|
-| `src/run.ts` | CLI entry + subcommand dispatch (`run` / `init`); work-list, parallelism, live HTML. |
+| `src/run.ts` | CLI entry + subcommand dispatch (`run` / `init` / `serve`); work-list, parallelism, live JSON writes, auto-serve. |
 | `src/run-instance.ts` | Runs ONE instance through the real workflow (the only file importing `lastlight/evals`). |
 | `src/bootstrap.ts` | `bootstrapAssets()` — wires core's asset roots. MUST run before any workflow access. |
 | `src/discovery.ts` | Multi-root tier discovery (`tier.json` → `defaultWorkflow`). |
 | `src/init.ts` | `init` — scaffold + `gh repo create` an overlay+evals repo. |
 | `src/fake-github.ts` | In-process fake GitHub REST API (seeds fixtures, records mutations). |
 | `src/seed.ts` / `src/grade.ts` / `src/metrics.ts` | Workspace seeding / deterministic grading / token-cost roll-up. |
-| `src/report.ts` / `src/html-report.ts` | Scorecard + JSON/JSONL artifacts / self-contained HTML. |
+| `src/report.ts` | Scorecard roll-up + JSON/JSONL artifacts + `buildIndex` (filesystem → the SPA's `/api/index`). |
+| `src/serve.ts` | Tiny dependency-free server: `/api/index` (fs scan), `/data/*` (raw artifacts), the SPA + fallback. |
+| `dashboard/` | The JSON-driven dashboard SPA (Vite + React + Tailwind/daisyUI + TanStack Query); ships prebuilt as `dashboard/dist`. |
 | `datasets/<tier>/` | Shipped sample tiers (`instances.json` + `tier.json` [+ `repos/` `tests/`]). |
 | `models.json` | Default + compare model registry. |
 
@@ -212,9 +232,10 @@ in-process concurrency was shared `process.env`. The fix:
   swap is not concurrency-safe (nested save/restore), so parallel mode drops
   `console.*` for the batch instead. The clack spinner is unaffected (it writes
   via `process.stdout.write`).
-- **Live HTML writes don't race** despite concurrency: `summarize`/`writeHtml`
-  run synchronously to completion within one event-loop turn, so concurrent
-  family loops never interleave a write (and the temp-file+rename stays atomic).
+- **Live `scorecard.json` writes don't race** despite concurrency:
+  `summarize`/`writeScorecard` run synchronously to completion within one
+  event-loop turn, so concurrent family loops never interleave a write (and the
+  temp-file+rename keeps a polling dashboard from reading a half-written file).
 
 Force serial with `--serial`; single-family runs (e.g. the default single
 model) are serial anyway and keep the per-run spinner + captured logs.

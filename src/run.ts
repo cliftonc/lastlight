@@ -18,7 +18,7 @@
  * `evals/mechanism.test.ts` in the normal `npm test` suite.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -27,12 +27,20 @@ import chalk from "chalk";
 
 import { loadDotEnv, hasProviderKey, evalModels, compareModels, modelLabels, resolveModel, setModelsPath } from "./env.js";
 import { runInstance, applyEvalEnv } from "./run-instance.js";
-import { summarize, writeArtifacts, aggregateTrials, type Scorecard } from "./report.js";
-import { writeHtml, type HtmlMeta } from "./html-report.js";
+import {
+  summarize,
+  writeArtifacts,
+  writeScorecard,
+  aggregateTrials,
+  type RunMeta,
+  type PendingCase,
+  type Scorecard,
+} from "./report.js";
 import type { SweBenchInstance, InstanceResult } from "./schema.js";
 import { bootstrapAssets } from "./bootstrap.js";
 import { discoverTiers, loadInstances, workflowFor, type Tier } from "./discovery.js";
-import { builtinDatasetsRoot, resultsRoot } from "./paths.js";
+import { builtinDatasetsRoot, tierResultsDir, makeRunId, gitShortSha, resultsRoot, dashboardDistRoot } from "./paths.js";
+import { startServer, type RunningServer } from "./serve.js";
 import { runInit } from "./init.js";
 
 /** Minimal subset of the clack spinner we use. */
@@ -59,9 +67,8 @@ function makeSpinner(): Spinner {
   };
 }
 
-/** Open a file in the OS default browser (best-effort, never throws). */
-function openInBrowser(file: string): void {
-  const url = `file://${file}`;
+/** Open a URL in the OS default browser (best-effort, never throws). */
+function openInBrowser(url: string): void {
   const [cmd, args] =
     process.platform === "darwin"
       ? ["open", [url]]
@@ -111,6 +118,13 @@ function fmtMs(ms: number): string {
 /** Friendly provider-family name from an env-key (OPENAI_API_KEY → "openai"). */
 function familyLabel(envKey: string): string {
   return envKey.replace(/_API_KEY$/i, "").toLowerCase() || "default";
+}
+
+/** Attach run metadata to a scorecard (mutate-and-return; `summarize` hands back
+ * a fresh object each call, so this is safe). */
+function withMeta(card: Scorecard, meta: RunMeta): Scorecard {
+  card.meta = meta;
+  return card;
 }
 
 /**
@@ -352,12 +366,24 @@ async function runEval(): Promise<number> {
   }
   const parallel = !process.argv.includes("--serial") && byFamily.size > 1;
 
-  const resultsDir = join(resultsRoot(), `${tiers.join("+")}${compare ? "-compare" : ""}`);
-  const htmlBase: Omit<HtmlMeta, "live" | "progress" | "generatedAt"> = {
-    models: entries.map((e) => labels[e.id] ?? e.id),
+  // Each run gets its own timestamped subdir under the tier-combo dir, so runs
+  // accumulate instead of overwriting. The dashboard server indexes the whole
+  // tree; the tier dir is the `tiersKey` segment the SPA routes on.
+  const tiersKey = `${tiers.join("+")}${compare ? "-compare" : ""}`;
+  const tierDir = tierResultsDir(tiersKey);
+  const gitSha = gitShortSha();
+  const runId = makeRunId(new Date(), gitSha, tierDir);
+  const resultsDir = join(tierDir, runId);
+  // Run-level metadata stamped into every scorecard write (the dashboard reads
+  // its identity, labels, and live state straight off disk). `live`/`progress`/
+  // `pending`/`generatedAt` are layered on per write.
+  const baseMeta: Omit<RunMeta, "generatedAt"> = {
+    runId,
     tiers,
-    labels,
+    models: entries.map((e) => labels[e.id] ?? e.id),
     runs,
+    gitSha,
+    labels,
   };
 
   p.note(
@@ -377,12 +403,20 @@ async function runEval(): Promise<number> {
   // `total` counts individual trials so live progress advances per model call.
   const total = work.length * runs;
 
-  // Open the report immediately (live placeholder) so it fills in as we go.
-  writeHtml(resultsDir, summarize([]), { ...htmlBase, generatedAt: new Date().toISOString(), live: true, progress: `0/${total}` });
-  const htmlFile = join(resultsDir, "index.html");
+  // Seed an empty live scorecard so the dashboard has something to poll, then
+  // start the server and open the SPA deep-linked at this run. The server is
+  // skipped entirely when not opening (CI / --no-open) — we only write JSON.
+  writeScorecard(resultsDir, withMeta(summarize([]), { ...baseMeta, generatedAt: new Date().toISOString(), live: true, progress: `0/${total}` }));
+  let server: RunningServer | undefined;
   if (!noOpen) {
-    openInBrowser(htmlFile);
-    p.log.info(`Live report → ${chalk.cyan(htmlFile)} ${chalk.dim("(auto-refreshing)")}`);
+    try {
+      server = await startServer({ resultsRoot: resultsRoot(), dashboardRoot: dashboardDistRoot() });
+      const runUrl = `${server.url}/#/${encodeURIComponent(tiersKey)}/${encodeURIComponent(runId)}`;
+      openInBrowser(runUrl);
+      p.log.info(`Live dashboard → ${chalk.cyan(runUrl)}`);
+    } catch (err) {
+      p.log.warn(`Couldn't start the dashboard server (${(err as Error).message}) — writing JSON only.`);
+    }
   }
 
   const all: InstanceResult[] = [];
@@ -393,26 +427,30 @@ async function runEval(): Promise<number> {
   const caseKey = (tier: string, model: string, id: string) => `${tier}|${model}|${id}`;
   const running = new Set<string>();
 
-  // writeHtml/summarize/all.push run synchronously to completion inside one
-  // event-loop turn, so even with concurrent families they never interleave.
+  // writeScorecard/summarize/all.push run synchronously to completion inside one
+  // event-loop turn, so even with concurrent families they never interleave; the
+  // temp-file+rename keeps a polling dashboard from reading a half-written file.
   const refresh = () => {
     const done = new Set(all.map((r) => caseKey(r.tier ?? "", r.model, r.instance_id)));
-    const pending = work
+    const pending: PendingCase[] = work
       .map((w) => ({ w, k: caseKey(w.tierName, w.model, w.inst.instance_id) }))
       .filter(({ k }) => !done.has(k))
       .map(({ w, k }) => ({
         tier: w.tierName,
         model: w.model,
         instance_id: w.inst.instance_id,
-        status: (running.has(k) ? "running" : "pending") as "running" | "pending",
+        status: running.has(k) ? "running" : "pending",
       }));
-    writeHtml(resultsDir, summarize(all), {
-      ...htmlBase,
-      generatedAt: new Date().toISOString(),
-      live: true,
-      progress: `${completed}/${total}`,
-      pending,
-    });
+    writeScorecard(
+      resultsDir,
+      withMeta(summarize(all), {
+        ...baseMeta,
+        generatedAt: new Date().toISOString(),
+        live: true,
+        progress: `${completed}/${total}`,
+        pending,
+      }),
+    );
   };
 
   // Run one case `runs` times and fold the trials into a single result
@@ -516,50 +554,72 @@ async function runEval(): Promise<number> {
     restoreEvalEnv();
   }
 
-  // Final, static report + machine artifacts.
-  const card = summarize(all);
+  // Final, static scorecard + machine artifacts. The run-level metadata is
+  // persisted into scorecard.json so the dashboard can label, order, and (no
+  // longer) live-poll the run without re-deriving from the current config.
+  const generatedAt = new Date().toISOString();
+  const card = withMeta(summarize(all), { ...baseMeta, generatedAt, live: false });
   writeArtifacts(resultsDir, card);
-  const html = writeHtml(resultsDir, card, { ...htmlBase, generatedAt: new Date().toISOString() });
 
-  p.log.success(`Scorecard → ${chalk.cyan(html)}`);
   p.log.success(`Artifacts → ${chalk.cyan(resultsDir)}/{scorecard.json,predictions.jsonl}`);
 
   const ran = runs > 1 ? `${completed} runs (${all.length} cases × ${runs})` : `${all.length} runs`;
-  if (harnessErrors > 0) {
-    p.outro(chalk.yellow(`done — ${ran}, ${harnessErrors} harness error${harnessErrors === 1 ? "" : "s"} (see above)`));
+
+  // Keep the dashboard server alive so the just-finished run stays viewable.
+  // Only block in an interactive terminal — piped/non-TTY callers exit cleanly.
+  if (server && process.stdout.isTTY) {
+    const runUrl = `${server.url}/#/${encodeURIComponent(tiersKey)}/${encodeURIComponent(runId)}`;
+    p.log.success(`Dashboard → ${chalk.cyan(runUrl)} ${chalk.dim("(serving · Ctrl-C to stop)")}`);
+    const tail = harnessErrors > 0 ? chalk.yellow(`done — ${ran}, ${harnessErrors} harness error${harnessErrors === 1 ? "" : "s"} (see above)`) : chalk.green(`done — ${ran}`);
+    p.outro(tail);
+    await waitForSigint();
+    await server.close();
   } else {
-    p.outro(chalk.green(`done — ${ran}, report at ${html}`));
+    if (server) await server.close();
+    if (harnessErrors > 0) {
+      p.outro(chalk.yellow(`done — ${ran}, ${harnessErrors} harness error${harnessErrors === 1 ? "" : "s"} (see above)`));
+    } else {
+      p.outro(chalk.green(`done — ${ran}`));
+    }
   }
 
   // Non-zero ONLY on harness failure — model quality is the measurement.
   return harnessErrors > 0 ? 1 : 0;
 }
 
+/** Resolve on the first SIGINT (Ctrl-C) so `run`/`serve` can keep a server up
+ * for browsing and shut it down cleanly when the user is done. */
+function waitForSigint(): Promise<void> {
+  return new Promise((resolve) => {
+    const onSig = () => {
+      process.off("SIGINT", onSig);
+      resolve();
+    };
+    process.on("SIGINT", onSig);
+  });
+}
+
 /**
- * `report <dir>` — re-render `<dir>/index.html` from an existing
- * `<dir>/scorecard.json`, no models run. Lets you regenerate the HTML after a
- * report-template change (or to re-skin an old run) without paying for a fresh
- * eval. Models/tiers/labels are reconstructed from the scorecard itself.
+ * `serve` — start the dashboard server over `eval-results/` and open it in the
+ * browser to browse every past run (no models run). The same server `run` uses
+ * for the live report; blocks until Ctrl-C. There is no HTML to regenerate any
+ * more — the SPA reads the JSON directly.
  */
-function runReport(dir?: string): number {
-  if (!dir) {
-    console.error("usage: lastlight-evals report <results-dir>  (a dir holding scorecard.json)");
+async function runServe(): Promise<number> {
+  loadDotEnv();
+  const noOpen = process.argv.includes("--no-open");
+  const port = intFlag("port", 0) || undefined;
+  let server: RunningServer;
+  try {
+    server = await startServer({ resultsRoot: resultsRoot(), dashboardRoot: dashboardDistRoot(), port });
+  } catch (err) {
+    console.error(`Couldn't start the dashboard server: ${(err as Error).message}`);
     return 1;
   }
-  const file = join(dir, "scorecard.json");
-  if (!existsSync(file)) {
-    console.error(`no scorecard.json in ${dir}`);
-    return 1;
-  }
-  const card = JSON.parse(readFileSync(file, "utf8")) as Scorecard;
-  const labels = modelLabels();
-  // Tiers/models come straight off the saved results so the re-render matches
-  // exactly what that run measured (no dependence on current models.json).
-  const tiers = [...new Set(card.results.map((r) => r.tier ?? "triage"))];
-  const models = [...new Set(card.results.map((r) => r.model))].map((m) => labels[m] ?? m);
-  const runs = Math.max(1, ...card.results.map((r) => r.trials ?? 1));
-  const html = writeHtml(dir, card, { models, tiers, labels, runs, generatedAt: new Date().toISOString() });
-  console.log(`Scorecard → ${html}`);
+  console.log(`Dashboard → ${server.url}  (serving ${resultsRoot()} · Ctrl-C to stop)`);
+  if (!noOpen) openInBrowser(server.url);
+  await waitForSigint();
+  await server.close();
   return 0;
 }
 
@@ -568,7 +628,7 @@ const USAGE = `lastlight-evals — eval harness for Last Light workflows
 Usage:
   lastlight-evals [run] [tiers...] [options]   Run evals (default command)
   lastlight-evals init [dir] [options]         Scaffold an overlay+evals workspace
-  lastlight-evals report <results-dir>         Re-render index.html from scorecard.json
+  lastlight-evals serve [options]              Browse past runs in the dashboard (no models run)
 
 Run options:
   --overlay <dir>      Layer a deployment's workflows/skills + evals/ over built-ins
@@ -578,12 +638,16 @@ Run options:
   --serial             Force serial execution across provider families
   --datasets <dir>     Extra datasets root to discover tiers from
   --models-file <f>    Use an explicit models.json
-  --no-open            Don't open the HTML report (also implied by CI=1)
+  --no-open            Don't open / auto-serve the dashboard (also implied by CI=1)
+
+Serve options:
+  --port <n>           Preferred port for the dashboard server (default 4319)
+  --no-open            Start the server but don't open a browser
 
 Run \`lastlight-evals init --help\` for init-specific flags.
 GitHub is mocked end-to-end — no real GitHub token is needed, only a provider key.`;
 
-/** Top-level subcommand dispatcher: `run` (default) | `init` | `report`. */
+/** Top-level subcommand dispatcher: `run` (default) | `init` | `serve`. */
 async function main(): Promise<number> {
   const sub = process.argv[2];
   // Top-level help — only when it's not standing in for a `run` tier name.
@@ -595,9 +659,9 @@ async function main(): Promise<number> {
     // `init [dir] [flags]` — scaffold a fresh overlay+evals repo.
     return runInit(process.argv.slice(3));
   }
-  if (sub === "report") {
-    // `report <dir>` — re-render index.html from a saved scorecard.json.
-    return runReport(process.argv[3]);
+  if (sub === "serve") {
+    // `serve` — browse past runs; the live dashboard server, standalone.
+    return runServe();
   }
   // `run` is the default; allow an explicit leading `run` token too.
   if (sub === "run") process.argv.splice(2, 1);

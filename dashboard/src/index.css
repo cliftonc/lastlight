@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  @apply font-sans text-sm text-base-content bg-base-100;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: theme("colors.base-300");
+  border-radius: 5px;
+  border: 2px solid theme("colors.base-100");
+}
+::-webkit-scrollbar-thumb:hover {
+  background: theme("colors.neutral");
+}
+
+/* Pulsing "live" badge — runs still being written. */
+@keyframes ll-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.ll-pulse {
+  animation: ll-pulse 1.4s ease-in-out infinite;
+}

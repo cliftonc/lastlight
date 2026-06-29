@@ -187,13 +187,27 @@ EVAL_INSTANCE=off-by-one lastlight-evals run code-fix
 lastlight-evals run triage --no-open
 ```
 
-The runner opens `index.html` and **rewrites it after every run** (auto-refresh,
-preserving the active tab + scroll), so you watch the scorecard fill in live.
-Output lands under `./eval-results/<tiers>/` (override with `LASTLIGHT_EVALS_OUT`):
+The report is a **JSON-driven dashboard**, not generated HTML — the harness only
+ever writes `scorecard.json`, updating it (atomically) as the run proceeds. The
+runner starts a tiny local server and opens `http://localhost:PORT` deep-linked
+at the run, so you watch the scorecard fill in live (the SPA polls the JSON).
+When the run finishes the server stays up so the dashboard keeps working — press
+`Ctrl-C` to stop it. Each run lands in its **own** timestamped folder, so runs
+accumulate instead of overwriting — `./eval-results/<tiers>/<runId>/` (override
+the root with `LASTLIGHT_EVALS_OUT`), where `runId` is `<timestamp>-<git-sha>`:
 
-- `index.html` — styled scorecard.
-- `scorecard.json` — structured roll-up per model.
+- `scorecard.json` — structured roll-up per model + per-instance results, carrying run `meta`.
 - `predictions.jsonl` — SWE-bench predictions shape.
+
+The dashboard's **overview** lists every run newest-first with a per-model trend
+sparkline and links into each run's full scorecard; the **run view** is the
+model-comparison table plus per-instance rows. To browse past runs anytime
+without running models, start the server on its own:
+
+```bash
+lastlight-evals serve            # opens the dashboard over ./eval-results
+lastlight-evals serve --port 4319
+```
 
 Needs a provider key (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
 `FIREWORKS_API_KEY` / `OPENROUTER_API_KEY`) in the environment or a cwd `.env`.
