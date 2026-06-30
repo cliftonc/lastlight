@@ -24,6 +24,17 @@ export interface ExecutorConfig {
   stateDir?: string;
   /** Directory for agent sandboxes (cloned repos). */
   sandboxDir?: string;
+  /**
+   * Run the agent in a `<workspace>/<repoSubdir>/` SUBDIRECTORY instead of the
+   * workspace root, WITHOUT going through the token-gated `prePopulate`/clone
+   * path. For callers that pre-seed the repo themselves (e.g. the evals harness
+   * in static-token mode): it reproduces production's nested layout — the repo
+   * checkout is a child dir, while `AGENTS.md`/`.lastlight-skills/` stay at the
+   * workspace root, siblings outside the repo's git tree. Ignored when a real
+   * `prePopulate` clone runs (that already nests into `<repo>/`). Use backend
+   * `none` so skills stage at the root rather than under the repo.
+   */
+  repoSubdir?: string;
   /** Where the shim writes dashboard envelope jsonl. */
   sessionsDir?: string;
   /** Workflow sandbox backend (overrides config-level default). */

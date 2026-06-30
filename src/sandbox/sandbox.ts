@@ -153,6 +153,9 @@ export interface SandboxFactoryOpts {
   env: Record<string, string>;
   stateDir: string;
   sandboxDir?: string;
+  /** Run the agent in this `<workspace>/<repoSubdir>/` subdir (pre-seeded by the
+   * caller) instead of the workspace root — see {@link ExecutorConfig.repoSubdir}. */
+  repoSubdir?: string;
   /** Docker image override (the browser-QA image for `sandbox_image: qa`). */
   imageName?: string;
   otel?: OtelConfig;
@@ -415,8 +418,18 @@ class InProcessSandbox implements Sandbox {
     });
     this.hostWorkspaceDir = workDir;
     // When pre-cloned, cwd is the checkout so the agent runs inside the repo
-    // with no `cd` preamble; otherwise the workspace root.
-    this.agentCwd = pre ? join(workDir, pre.repo) : workDir;
+    // with no `cd` preamble; otherwise the workspace root. `repoSubdir` lets a
+    // caller that pre-seeded a `<workspace>/<repo>/` checkout nest the cwd the
+    // same way without a clone (the evals harness) — workDir (the root) stays
+    // hostWorkspaceDir so AGENTS.md/skills remain siblings outside the repo.
+    if (pre) {
+      this.agentCwd = join(workDir, pre.repo);
+    } else if (this.opts.repoSubdir) {
+      this.agentCwd = join(workDir, this.opts.repoSubdir);
+      mkdirSync(this.agentCwd, { recursive: true });
+    } else {
+      this.agentCwd = workDir;
+    }
     return { hostWorkspaceDir: workDir, agentCwd: this.agentCwd };
   }
 

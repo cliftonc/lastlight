@@ -102,6 +102,7 @@ export async function withSandbox<T>(
     env: ctx.env,
     stateDir: ctx.stateDir,
     sandboxDir: ctx.config.sandboxDir,
+    repoSubdir: ctx.config.repoSubdir,
     imageName: ctx.config.sandboxImage === "qa" ? SANDBOX_IMAGE_QA : undefined,
     otel: ctx.config.otel,
   });
