@@ -71,6 +71,42 @@ model-comparison scorecard + per-instance rows). The dashboard SPA lives in
 prebuilt as `dashboard/dist`. The runner exits non-zero ONLY on harness error —
 a weak model scoring badly is the measurement.
 
+## Release dance
+
+`lastlight-evals` is published to npm. Publishing is **gated on a GitHub
+Release** (`.github/workflows/publish.yml` triggers on `release: published`), so
+a bare tag push never publishes on its own — cutting the Release is the
+deliberate trigger. The CI workflow re-runs typecheck + test + build before
+`npm publish --provenance`, but run the gate locally first so a broken release
+never reaches the Release step:
+
+```bash
+# 0. On main, clean tree, in sync with origin. Gate locally:
+npm run typecheck && npm test && npm run build
+
+# 1. Bump version in package.json + package-lock.json (no git tag/commit yet).
+#    patch = refactor/fix, minor = new user-facing capability, major = break.
+npm version patch --no-git-tag-version
+
+# 2. Commit + signed annotated tag (tag.gpgsign is on — the tag is SSH-signed).
+git add package.json package-lock.json
+git commit -m "chore(release): vX.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z"
+
+# 3. Push main + the tag together.
+git push origin main --follow-tags
+
+# 4. Cut the GitHub Release on that tag — THIS is what publishes to npm.
+gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes "…"
+
+# 5. Watch the publish run; confirm npm has the new version.
+gh run list --workflow publish.yml --limit 1
+npm view lastlight-evals version
+```
+
+The release commit is conventionally just the two version-file lines
+(`chore(release): vX.Y.Z`); land the actual change in its own commit first.
+
 ## Where things live
 
 | File | Role |
