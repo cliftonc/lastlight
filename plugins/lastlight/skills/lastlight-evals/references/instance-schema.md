@@ -21,12 +21,18 @@ Datasets are discovered from (overlay > user > built-in): `<overlay>/evals/datas
   // ── SWE-bench core ──
   "instance_id": "triage__my-case",      // unique id
   "repo": "owner/repo",                   // logical; fixture origin is a local bare repo
-  "base_commit": "0000000...",            // code-fix only
+  "base_commit": "0000000...",            // code-fix. UNUSED for vendored fixtures
+                                           // (harness synthesizes one); for a
+                                           // git-source case it's the real SHA
+                                           // checked out at run time.
   "problem_statement": "short issue text",
   "patch": "...",                          // gold patch — reference only, NOT graded
-  "test_patch": "...",                     // held-out tests (code-fix)
-  "FAIL_TO_PASS": ["test id 1"],          // must go red→green (code-fix)
+  "test_patch": "...",                     // held-out tests (code-fix), git-apply form
+  "FAIL_TO_PASS": ["test id 1"],          // must go red→green. Empty ⇒ suite mode
   "PASS_TO_PASS": ["test id 2"],          // must stay green (code-fix)
+  "test_cmd": ["npm", "test"],            // held-out test argv (default: node --test)
+  "setup_cmd": ["npm", "ci"],             // optional install/build before tests (git-source)
+  "head_commit": "abc123...",             // PR head SHA — reference/authoring only
 
   // ── Last Light extensions ──
   "workflow": "issue-triage",             // optional; defaults to the tier's defaultWorkflow
@@ -55,15 +61,26 @@ Append a `SweBenchInstance` to `datasets/triage/instances.json` with `issue`,
 `triage_gold`, and the `expect_github` assertions (e.g. `labels_added`). That's
 it — triage is graded on the triage decision + GitHub mutations.
 
-## Add a code-fix case (three things, keyed by `instance_id`)
+## Two flavors of code-fix case
+
+A code-fix instance gets its repo from **one of two** provenances; the rest of the
+machinery (grading, dashboard) is identical.
+
+**A. Vendored fixture** (three things, keyed by `instance_id`):
 
 1. **`datasets/code-fix/instances.json`** — append the instance with
-   `base_commit`, `FAIL_TO_PASS`, `PASS_TO_PASS`, `issue`, and `expect_github`
-   (e.g. `pr_opened`).
+   `FAIL_TO_PASS`, `PASS_TO_PASS`, `issue`, and `expect_github` (e.g. `pr_opened`).
 2. **`datasets/code-fix/repos/<instance_id>/`** — the fixture repo at the base
    commit (the buggy code *before* the fix; no held-out tests here).
 3. **`datasets/code-fix/tests/<instance_id>/`** — the held-out test files, copied
    into the repo at grade time and run to compute `FAIL_TO_PASS` / `PASS_TO_PASS`.
+
+**B. Git-source (from a real PR)** — set `repo` + a real `base_commit` and a
+`test_patch`; **no** `repos/<id>/` is vendored. At run time the harness clones the
+repo into the gitignored `./.eval-cache/` and checks out `base_commit`. Don't
+hand-build these — use `lastlight-evals add-case --pr <url>` (see
+**`authoring-from-pr.md`**), which fills `base_commit`, `head_commit`,
+`test_patch`, and the verdicts for you.
 
 ## Add a custom tier
 
@@ -78,7 +95,9 @@ and `tests/<id>/`. Discovery auto-finds it — no code change. Run it with
   (`expect_github`)?
 - **Triage:** did the decision match `triage_gold`?
 - **Execution (code-fix):** all `FAIL_TO_PASS` green AND all `PASS_TO_PASS` still
-  green after applying held-out tests.
+  green after applying held-out tests. When the runner emits no TAP test names
+  (a non-`node --test` `test_cmd` and an empty `FAIL_TO_PASS`), grading falls back
+  to **suite mode** — resolved iff the test command exits 0.
 - With `--runs N` (N>1) the binary verdict is **worst-case** (passes only if every
   trial passed); the scorecard also shows per-verdict pass counts to expose
   variance.

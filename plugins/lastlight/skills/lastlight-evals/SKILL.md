@@ -1,7 +1,7 @@
 ---
 name: lastlight-evals
-description: Scaffold, configure and run a Last Light EVALS workspace — the harness that runs Last Light's real workflows against a mocked GitHub and grades them deterministically. Use when the user wants to "set up / scaffold Last Light Evals", "create an evals workspace or instance", "run evals", "compare models", or author new eval cases (triage / code-fix instances). GitHub is mocked, so no real GitHub token is needed — only a model provider API key.
-version: 1.1.0
+description: Scaffold, configure and run a Last Light EVALS workspace — the harness that runs Last Light's real workflows against a mocked GitHub and grades them deterministically. Use when the user wants to "set up / scaffold Last Light Evals", "create an evals workspace or instance", "run evals", "compare models", or author new eval cases — including "create an eval dataset/case from this PR/issue <github url>" (triage / code-fix instances). GitHub is mocked when running, so no real GitHub token is needed — only a model provider API key (the one exception is `add-case`, which reads real PRs/issues via `gh`).
+version: 1.2.0
 tags: [lastlight, evals, benchmark, models, swe-bench]
 ---
 
@@ -120,6 +120,34 @@ Quick shape (paths are relative to the workspace's `evals/` dir):
 - **Custom tier:** a new `evals/datasets/<tier>/` with `tier.json` +
   `instances.json` (+ `repos/` & `tests/` for code-fix-style tiers). Discovery is
   automatic — no code change.
+
+## 6. Author a case from a real GitHub PR or issue
+
+When the user says **"create an eval dataset/case from this PR/issue <url>"**, use
+the `add-case` subcommand — it does the mechanical extraction; you refine the
+fuzzy parts.
+
+```bash
+lastlight-evals add-case --pr <github-pr-url> --dry-run        # propose a code-fix case; don't write
+lastlight-evals add-case --pr <github-pr-url>                  # write into ./datasets (or --datasets/--overlay)
+lastlight-evals add-case --issue <github-issue-url> --dry-run  # propose a triage case
+```
+
+- **From a PR (code-fix):** derives `repo`, `base_commit` (merge-base of base &
+  head) + `head_commit`, the PR's **test** diff as the held-out `test_patch`, and
+  auto-detects `FAIL_TO_PASS` / `PASS_TO_PASS` by running the tests at base (red)
+  vs head (green). Produces a **git-source** case (no `repos/<id>/` vendored): at
+  run time the harness clones the repo into the gitignored `./.eval-cache/` and
+  checks out `base_commit`.
+- **From an issue (triage):** derives the `issue` seed + `problem_statement`, the
+  **labels that were applied** (from the issue events API, with *who* applied each)
+  → `expect_github.labels_added`, `issue_closed` if it was closed, and prints the
+  **reviewer comments** — the raw triage signal. You then assign
+  `triage_gold` (category/state) from those labels per the deployment's taxonomy.
+
+The full flow, what you refine for each, the `test_cmd` / `setup_cmd` options for
+non-`node --test` runners, and the trust/offline caveats are in
+**`references/authoring-from-pr.md`** — read it before authoring.
 
 ## Done when
 
