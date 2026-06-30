@@ -56,6 +56,28 @@ export interface RunMeta {
   progress?: string;
   /** Cases not yet finished (live runs): shown as running/queued rows. */
   pending?: PendingCase[];
+  /** PID of the process writing this scorecard — liveness check for `clean`. */
+  pid?: number;
+  /** ISO timestamp refreshed by the run's heartbeat ticker while in flight. A
+   * `live` run whose heartbeat is stale (or absent — i.e. an older orphaned run)
+   * was killed/crashed: the index treats it as {@link RunMeta.interrupted}. */
+  heartbeat?: string;
+  /** Set when a run was finalized as killed/crashed (by `clean`, or derived at
+   * read time from a stale heartbeat). Distinguishes it from a clean finish. */
+  interrupted?: boolean;
+}
+
+/** A live run's heartbeat must be refreshed within this window to count as
+ * genuinely running; beyond it the writer is presumed dead. Comfortably larger
+ * than the run loop's 20s heartbeat ticker. */
+export const HEARTBEAT_STALE_MS = 90_000;
+
+/** True if a heartbeat timestamp is recent enough that the writer is presumed
+ * alive. Absent/unparseable ⇒ not fresh (older orphaned runs have no heartbeat). */
+export function heartbeatFresh(heartbeat: string | undefined, nowMs: number): boolean {
+  if (!heartbeat) return false;
+  const t = Date.parse(heartbeat);
+  return Number.isFinite(t) && nowMs - t <= HEARTBEAT_STALE_MS;
 }
 
 export interface Scorecard {
@@ -135,6 +157,7 @@ export function aggregateTrials(trials: InstanceResult[]): InstanceResult {
     out.resolvedPass = passes;
     out.failToPass = rep.failToPass;
     out.passToPass = rep.passToPass;
+    out.executionLog = rep.executionLog; // log of the same trial the breakdown came from
     out.model_patch = (ok.find((t) => t.resolved) ?? ok[0]).model_patch;
   }
 
@@ -202,7 +225,11 @@ export function writeScorecard(dir: string, card: Scorecard): string {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "scorecard.json");
   const tmp = join(dir, ".scorecard.json.tmp");
-  writeFileSync(tmp, JSON.stringify(card, null, 2));
+  // Drop the heavy inline `model_patch` from the serialized scorecard — it's
+  // polled live every 1.5s and the diff can be large. predictions.jsonl keeps
+  // it (built from the in-memory card), and the dashboard reads the diff from
+  // each result's `modelPatchFile` (the discrete changes.diff artifact).
+  writeFileSync(tmp, JSON.stringify(card, (k, v) => (k === "model_patch" ? undefined : v), 2));
   renameSync(tmp, file);
   return file;
 }
@@ -248,8 +275,12 @@ export interface IndexRun {
   byTier: TierSummary[];
   /** Trials per case (`--runs N`). */
   runs: number;
-  /** True while the run is still writing (the SPA keeps polling it). */
+  /** True while the run is still writing (the SPA keeps polling it). Derived:
+   * the scorecard's `live` flag AND a fresh heartbeat. */
   live: boolean;
+  /** The run was `live` but its writer died (stale/absent heartbeat) or it was
+   * finalized as interrupted by `clean` — shown as "interrupted", not running. */
+  interrupted: boolean;
   /** Progress text for the live badge (e.g. "7/30"). */
   progress?: string;
   /** Live-run case counts (so the overview can show "running" vs "queued"
@@ -271,8 +302,13 @@ export interface DashboardIndex {
 
 /** Map a parsed scorecard into an {@link IndexRun}. `dir` is the run subdir name
  * ("" for a legacy flat-layout run sitting directly in the tier dir). */
-function indexRun(tierKey: string, dir: string, card: Scorecard): IndexRun {
+function indexRun(tierKey: string, dir: string, card: Scorecard, nowMs: number): IndexRun {
   const meta = card.meta;
+  // A run only counts as live if its heartbeat is fresh; a `live` scorecard with
+  // a stale/absent heartbeat (writer killed or crashed) is an interrupted run.
+  const fresh = heartbeatFresh(meta?.heartbeat, nowMs);
+  const isLive = !!meta?.live && fresh;
+  const isInterrupted = !!meta?.interrupted || (!!meta?.live && !fresh);
   const id = dir || "root";
   const data = dir ? `${dir}/scorecard.json` : "scorecard.json";
   const results = card.results ?? [];
@@ -306,10 +342,12 @@ function indexRun(tierKey: string, dir: string, card: Scorecard): IndexRun {
     labels: meta?.labels ?? {},
     byTier,
     runs: meta?.runs ?? 1,
-    live: !!meta?.live,
+    live: isLive,
+    interrupted: isInterrupted,
     progress: meta?.progress,
-    running: (meta?.pending ?? []).filter((p) => p.status === "running").length,
-    queued: (meta?.pending ?? []).filter((p) => p.status === "pending").length,
+    // No running/queued cases once interrupted — the writer is gone.
+    running: isInterrupted ? 0 : (meta?.pending ?? []).filter((p) => p.status === "running").length,
+    queued: isInterrupted ? 0 : (meta?.pending ?? []).filter((p) => p.status === "pending").length,
   };
 }
 
@@ -323,17 +361,17 @@ const parseCard = (file: string): Scorecard | null => {
 
 /** Scan one tier-combo dir for runs (subdir-per-run, plus a legacy flat run if a
  * scorecard sits directly in the dir), newest first. */
-export function indexTier(resultsRoot: string, key: string): IndexRun[] {
+export function indexTier(resultsRoot: string, key: string, nowMs: number = Date.now()): IndexRun[] {
   const tierDir = join(resultsRoot, key);
   if (!existsSync(tierDir)) return [];
   const runs: IndexRun[] = [];
   for (const ent of readdirSync(tierDir, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
     const card = parseCard(join(tierDir, ent.name, "scorecard.json"));
-    if (card) runs.push(indexRun(key, ent.name, card));
+    if (card) runs.push(indexRun(key, ent.name, card, nowMs));
   }
   const flat = parseCard(join(tierDir, "scorecard.json"));
-  if (flat) runs.push(indexRun(key, "", flat));
+  if (flat) runs.push(indexRun(key, "", flat, nowMs));
   const sortKey = (r: IndexRun) => r.generatedAt || r.runId;
   return runs.sort((a, b) => (sortKey(a) < sortKey(b) ? 1 : sortKey(a) > sortKey(b) ? -1 : 0));
 }
@@ -346,10 +384,11 @@ export function indexTier(resultsRoot: string, key: string): IndexRun[] {
  */
 export function buildIndex(resultsRoot: string, generatedAt: string): DashboardIndex {
   if (!existsSync(resultsRoot)) return { generatedAt, tiers: [] };
+  const nowMs = Date.parse(generatedAt) || Date.now();
   const tiers: IndexTier[] = [];
   for (const ent of readdirSync(resultsRoot, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
-    const runs = indexTier(resultsRoot, ent.name);
+    const runs = indexTier(resultsRoot, ent.name, nowMs);
     if (runs.length) tiers.push({ key: ent.name, runs });
   }
   // Tier-combos with the most recent activity first.

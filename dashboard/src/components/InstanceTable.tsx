@@ -4,6 +4,7 @@ import type { InstanceResult, PendingCase } from "../types";
 import { fmtMs, modelLabel } from "../lib/format";
 import { Chip, Frac, Pill } from "./ui";
 import { SessionModal, type SessionSource } from "./SessionModal";
+import { DiffModal } from "./DiffModal";
 
 /** Per-instance result rows for one tier, plus running/queued rows for a live
  * run. Mirrors the old static report's detail table. */
@@ -29,11 +30,28 @@ export function InstanceTable({
   // The open session viewer (live transcript or a finished case's per-phase
   // logs), or null.
   const [openLog, setOpenLog] = useState<SessionSource | null>(null);
+  // The open diff viewer (code-fix changed files), or null. Kept separate from
+  // `openLog` since the diff modal is two-pane, unlike the single-pane SessionModal.
+  const [openDiff, setOpenDiff] = useState<{ title: string; url: string } | null>(null);
   const sessionUrl = (rel: string) => (scorecardUrl ? scorecardUrl.replace(/scorecard\.json$/, rel) : rel);
   const titleFor = (id: string, model: string) => `${id} · ${modelLabel(labels, model)}`;
+  const hasDiff = (r: InstanceResult) => !!r.modelPatchFile;
+  const openDiffView = (r: InstanceResult) =>
+    setOpenDiff({ title: `${titleFor(r.instance_id, r.model)} · changed files`, url: sessionUrl(r.modelPatchFile!) });
   // Finished case → browse per-trial / per-phase logs.
   const openResult = (r: InstanceResult) =>
     setOpenLog({ kind: "trials", title: titleFor(r.instance_id, r.model), sessions: r.sessions ?? [], baseUrl: scorecardUrl ?? "" });
+  // Code-fix case → the held-out test breakdown + captured test output.
+  const openTests = (r: InstanceResult) =>
+    setOpenLog({
+      kind: "execution",
+      title: `${titleFor(r.instance_id, r.model)} · held-out tests`,
+      logUrl: r.executionLog ? sessionUrl(r.executionLog) : undefined,
+      failToPass: r.failToPass,
+      passToPass: r.passToPass,
+    });
+  const hasTestDetail = (r: InstanceResult) =>
+    !!(r.executionLog || r.failToPass?.length || r.passToPass?.length);
   // Running case → follow the live consolidated transcript.
   const openLive = (rel: string, id: string, model: string) =>
     setOpenLog({ kind: "live", title: titleFor(id, model), url: sessionUrl(rel) });
@@ -83,6 +101,24 @@ export function InstanceTable({
                       <Pill kind="fail">unresolved</Pill>
                     )}
                     {!r.blocked && <Frac pass={r.resolvedPass} trials={r.trials} />}
+                    {hasTestDetail(r) && (
+                      <button
+                        onClick={() => openTests(r)}
+                        className="ml-2 rounded border border-base-300 px-1.5 py-0.5 align-middle font-sans text-2xs text-info hover:border-info hover:text-base-content"
+                        title="View the held-out test results + captured output"
+                      >
+                        tests
+                      </button>
+                    )}
+                    {hasDiff(r) && (
+                      <button
+                        onClick={() => openDiffView(r)}
+                        className="ml-2 rounded border border-base-300 px-1.5 py-0.5 align-middle font-sans text-2xs text-info hover:border-info hover:text-base-content"
+                        title="Browse the files the agent changed (diff)"
+                      >
+                        files
+                      </button>
+                    )}
                   </td>
                 )}
                 <td className="px-3 py-2.5">
@@ -163,6 +199,7 @@ export function InstanceTable({
       </table>
     </div>
     {openLog && <SessionModal source={openLog} onClose={() => setOpenLog(null)} />}
+    {openDiff && <DiffModal title={openDiff.title} url={openDiff.url} onClose={() => setOpenDiff(null)} />}
     </>
   );
 }

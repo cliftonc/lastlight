@@ -31,7 +31,7 @@ import {
 import type { SweBenchInstance, InstanceResult, PhaseSession } from "./schema.js";
 import type { Arm } from "./arm.js";
 import { startFakeGitHub } from "./fake-github.js";
-import { seedWorkspace, seedWorkspaceFromGit, isRealSha } from "./seed.js";
+import { seedWorkspace, seedWorkspaceFromGit, isRealSha, type SeedResult } from "./seed.js";
 import { collectMetrics, drainSessions, readSessionLog, listSessionFiles, concatJsonl } from "./metrics.js";
 import { gradeBehavioral, gradeExecution, gradeTriage } from "./grade.js";
 
@@ -149,14 +149,26 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
     //    fixture dir wins; otherwise a git-source case (real base SHA + real
     //    repo) is checked out from the repo-local cache. Either way the agent
     //    works in a pre-seeded dir with an offline origin — no GitHub clone.
+    // Seed the repo into a `<workspace>/<repo>/` SUBDIRECTORY (production's nested
+    // layout) and tell the executor to run the agent there (`config.repoSubdir`
+    // below). That keeps the workflow scaffolding core stages at the workspace
+    // root — AGENTS.md, .lastlight-skills/ — OUTSIDE the repo's git tree, so the
+    // captured diff (5b') is the repo's change alone. We keep the SeedResult to
+    // diff the agent's final tree against the seeded base (the agent commits +
+    // pushes, so a `git diff HEAD` would be empty — we diff against the base).
+    const repoSubdir = isCodeFix ? name : undefined;
+    let seed: SeedResult | undefined;
     if (isCodeFix) {
       const fixtureDir = opts.datasetDir ? join(opts.datasetDir, "repos", inst.instance_id) : undefined;
       if (fixtureDir && existsSync(fixtureDir)) {
-        seedWorkspace({ stateDir, taskId, fixtureDir, branch });
+        seed = seedWorkspace({ stateDir, taskId, fixtureDir, branch, repoSubdir });
       } else if (isRealSha(inst.base_commit) && /^[^/]+\/[^/]+$/.test(inst.repo)) {
-        seedWorkspaceFromGit({ stateDir, taskId, repo: inst.repo, baseCommit: inst.base_commit, branch });
+        seed = seedWorkspaceFromGit({ stateDir, taskId, repo: inst.repo, baseCommit: inst.base_commit, branch, repoSubdir });
       }
     }
+    // The repo's working dir (the nested subdir when seeded) — where grading and
+    // the diff run. Falls back to the workspace root if nothing was seeded.
+    const repoDir = seed?.workDir ?? join(stateDir, "sandboxes", taskId);
 
     // 3. Real workflow definition + run context.
     const def = getWorkflow(workflowName);
@@ -188,6 +200,11 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       sandbox: "none",
       stateDir,
       sessionsDir,
+      // Run the agent inside the pre-seeded `<workspace>/<repo>/` checkout (only
+      // when we actually seeded one), matching production's nested layout. Core
+      // nests `agentCwd` here without a clone; AGENTS.md/.lastlight-skills stay
+      // at the workspace root, siblings outside the repo.
+      repoSubdir: seed ? repoSubdir : undefined,
       // `config` arms let core pick per phase (this is only the fallback for
       // phases that resolve to nothing — the merged config's `default`); `models`
       // arms force their one id across every step.
@@ -280,6 +297,32 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       }
     }
 
+    // 5b'. Capture the agent's changed files as a unified diff BEFORE grading
+    // touches the tree (gradeExecution copies held-out tests in / `git apply`s
+    // the test patch). Diff against the seeded base — the agent commits its work,
+    // so a `git diff HEAD` would be empty. Always-on for code-fix (independent of
+    // whether tests are configured), so the dashboard can browse what changed.
+    if (isCodeFix && seed) {
+      const patch = gitDiffAgainstBase(repoDir, seed.baseCommit);
+      // Kept in-memory for the SWE-bench predictions.jsonl roll-up.
+      result.model_patch = patch;
+      // Also persist as a DISCRETE artifact beside the trial's logs
+      // (execution.log, session jsonl) — same run-relative path scheme as
+      // `executionLog`. It publishes with the rest of the run tree
+      // (`build-site.ts` copies eval-results/ verbatim) and keeps the
+      // live-polled scorecard.json lean (the heavy diff is stripped from it —
+      // see writeScorecard). The dashboard fetches this file for the viewer.
+      if (patch && trialDir) {
+        try {
+          mkdirSync(trialDir, { recursive: true });
+          writeFileSync(join(trialDir, "changes.diff"), patch);
+          result.modelPatchFile = `${opts.sessionTrialRel ?? trialDir}/changes.diff`;
+        } catch {
+          /* best-effort: a missing file just hides the dashboard "files" button */
+        }
+      }
+    }
+
     // 5a. Behavioral grade (GitHub mutations).
     const behavioralExpect = gradeBehavioral(inst.expect_github, fake, { issueNumber, branch });
     const triage = gradeTriage(inst.triage_gold, fake, issueNumber);
@@ -288,23 +331,39 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       checks: [...behavioralExpect.checks, ...triage.checks],
     };
 
-    // 5b. Execution grade (code-fix only).
-    if (isCodeFix && (inst.FAIL_TO_PASS?.length || inst.test_patch || inst.test_cmd)) {
-      const workDir = join(stateDir, "sandboxes", taskId);
+    // 5b. Execution grade (code-fix only). Two modes:
+    //   - Default (suite): run the repo's own `test_cmd` on the agent's final
+    //     tree, resolved iff it exits 0. Nothing held out, nothing applied.
+    //   - Hold-out (`hold_out_tests`): SWE-bench style — apply the maintainer's
+    //     `test_patch` the agent never saw and grade named FAIL_TO_PASS / PASS_TO_PASS.
+    if (isCodeFix && (inst.test_cmd || inst.test_patch || inst.FAIL_TO_PASS?.length)) {
+      const holdOut = !!inst.hold_out_tests;
       const heldOutDir = opts.datasetDir ? join(opts.datasetDir, "tests", inst.instance_id) : undefined;
       const exec = gradeExecution({
-        workDir,
-        heldOutDir,
-        testPatch: inst.test_patch,
-        failToPass: inst.FAIL_TO_PASS ?? [],
-        passToPass: inst.PASS_TO_PASS ?? [],
+        workDir: repoDir,
+        heldOutDir: holdOut ? heldOutDir : undefined,
+        testPatch: holdOut ? inst.test_patch : undefined,
+        failToPass: holdOut ? inst.FAIL_TO_PASS ?? [] : [],
+        passToPass: holdOut ? inst.PASS_TO_PASS ?? [] : [],
         testCmd: inst.test_cmd,
         setupCmd: inst.setup_cmd,
       });
       result.resolved = exec.resolved;
       result.failToPass = exec.failToPass;
       result.passToPass = exec.passToPass;
-      result.model_patch = gitDiff(workDir);
+      // (model_patch is captured in 5b' above, before grading mutates the tree.)
+      // Persist the held-out test output (setup log + TAP) so the dashboard can
+      // show WHY a case was (un)resolved, not just the verdict. Lives beside the
+      // trial's session logs, referenced by the same run-relative path scheme.
+      if (trialDir) {
+        try {
+          mkdirSync(trialDir, { recursive: true });
+          writeFileSync(join(trialDir, "execution.log"), exec.raw ?? "");
+          result.executionLog = `${opts.sessionTrialRel ?? trialDir}/execution.log`;
+        } catch {
+          /* best-effort: a missing log just hides the dashboard link */
+        }
+      }
     }
 
     // 5c. Metrics. Drain the fire-and-forget session flush first so the final
@@ -394,10 +453,32 @@ function restoreEnv(snap: Record<string, string | undefined>): void {
   }
 }
 
-function gitDiff(workDir: string): string | undefined {
+/**
+ * Unified diff of the agent's final tree vs the seeded `base` commit — capturing
+ * committed, uncommitted AND new/deleted files. Run inside the repo subdir, so
+ * workflow scaffolding (AGENTS.md, .lastlight-skills/) at the workspace root is
+ * naturally out of scope, and `git add -A` honours the repo's ignores (incl. the
+ * harness's `node_modules` exclude from {@link seedWorkspace}) — so the diff is
+ * the repo's own change alone. Staged into a throwaway index (`GIT_INDEX_FILE`)
+ * so the repo's real index is untouched and the later `gradeExecution`
+ * `git apply` still works.
+ */
+export function gitDiffAgainstBase(workDir: string, base: string): string | undefined {
+  const tmpIndex = join(workDir, ".git", `eval-index-${process.pid}`);
+  const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
   try {
-    return execFileSync("git", ["diff", "HEAD"], { cwd: workDir, stdio: ["ignore", "pipe", "ignore"] }).toString();
+    execFileSync("git", ["read-tree", base], { cwd: workDir, env, stdio: "ignore" });
+    execFileSync("git", ["add", "-A"], { cwd: workDir, env, stdio: "ignore" });
+    const out = execFileSync("git", ["diff", "--cached", base], {
+      cwd: workDir,
+      env,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+    return out || undefined;
   } catch {
     return undefined;
+  } finally {
+    rmSync(tmpIndex, { force: true });
   }
 }

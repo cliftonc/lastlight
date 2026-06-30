@@ -4,6 +4,7 @@ import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolPair } from "./ToolPair";
 import { MetaMessage } from "./MetaMessage";
+import { SkillsMessage } from "./SkillsMessage";
 
 interface Props {
   item: TimelineItemT;
@@ -13,6 +14,7 @@ interface Props {
 export function TimelineItem({ item, isNew }: Props) {
   if (isToolPair(item)) return <ToolPair pair={item} isNew={isNew} />;
   const m = item.message;
+  if (m.type === "system" && m.metadata?.kind === "skills") return <SkillsMessage msg={m} isNew={isNew} />;
   if (m.type === "user") return <UserMessage msg={m} isNew={isNew} />;
   if (m.type === "assistant") return <AssistantMessage msg={m} isNew={isNew} />;
   if (m.type === "tool_result" || m.type === "tool_use") {

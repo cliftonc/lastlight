@@ -45,6 +45,7 @@ import { builtinDatasetsRoot, tierResultsDir, makeRunId, gitShortSha, resultsRoo
 import { startServer, type RunningServer } from "./serve.js";
 import { runInit } from "./init.js";
 import { runAddCase } from "./add-case.js";
+import { runClean } from "./clean.js";
 import { ensureRepoCache, isRealSha } from "./seed.js";
 
 /** Minimal subset of the clack spinner we use. */
@@ -205,7 +206,7 @@ function strFlagAll(name: string): string[] {
 }
 
 /** CLI flags that take a following value (so it isn't read as a tier name). */
-const VALUE_FLAGS = new Set(["--runs", "--model", "--models", "--mode", "--overlay", "--datasets", "--models-file"]);
+const VALUE_FLAGS = new Set(["--runs", "--model", "--models", "--mode", "--overlay", "--datasets", "--models-file", "--instance"]);
 
 async function runEval(): Promise<number> {
   loadDotEnv();
@@ -415,17 +416,31 @@ async function runEval(): Promise<number> {
     inst: SweBenchInstance;
   }
 
+  // Optional instance filter: `--instance <id[,id2]>` or the `EVAL_INSTANCE` env
+  // (the authoring docs point users at the latter to smoke-test a single new
+  // case). Comma-separated, exact `instance_id` match.
+  const instanceFilter = (strFlag("instance") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   // Instances per tier, resolved ONCE — the case set is identical across arms
   // (arms vary only the model selection / assets, never the cases).
   const tierInstances = new Map<string, SweBenchInstance[]>();
   for (const tierName of tiers) {
     const tier: Tier = discovered.get(tierName)!;
-    const instances = loadInstances(tier);
+    const all = loadInstances(tier);
+    const instances = instanceFilter.length ? all.filter((i) => instanceFilter.includes(i.instance_id)) : all;
     if (!instances.length) {
-      p.log.warn(`tier "${tierName}": no instances at ${tier.instancesPath} — skipping`);
+      const why = instanceFilter.length ? ` matching --instance ${instanceFilter.join(",")}` : ` at ${tier.instancesPath}`;
+      p.log.warn(`tier "${tierName}": no instances${why} — skipping`);
       continue;
     }
     tierInstances.set(tierName, instances);
+  }
+  if (instanceFilter.length && tierInstances.size === 0) {
+    p.log.error(`No instances matched --instance ${instanceFilter.join(",")} in tier(s) ${tiers.join(", ")}.`);
+    return 1;
   }
 
   // Resolve the work-list up front so we can show deterministic progress. Arms
@@ -566,7 +581,14 @@ async function runEval(): Promise<number> {
   for (const tier of tiers) {
     writeScorecard(
       resultsDirFor(tier),
-      withMeta(summarize([]), { ...baseMetaFor(tier), generatedAt: new Date().toISOString(), live: true, progress: `0/${total}` }),
+      withMeta(summarize([]), {
+        ...baseMetaFor(tier),
+        generatedAt: new Date().toISOString(),
+        live: true,
+        pid: process.pid,
+        heartbeat: new Date().toISOString(),
+        progress: `0/${total}`,
+      }),
     );
   }
   let server: RunningServer | undefined;
@@ -624,6 +646,11 @@ async function runEval(): Promise<number> {
           ...baseMetaFor(tier),
           generatedAt: now,
           live: true,
+          // Liveness signals: a `live` run whose heartbeat goes stale (writer
+          // killed/crashed) is shown as interrupted, not running. The ticker
+          // below refreshes this even during a long single phase.
+          pid: process.pid,
+          heartbeat: now,
           progress: `${tierResults.length}/${tierCases}`,
           pending,
         }),
@@ -666,6 +693,12 @@ async function runEval(): Promise<number> {
   // Install the eval's static-token env ONCE for the whole batch so concurrent
   // runs share one stable baseline (manageEnv:false on every runInstance).
   const restoreEvalEnv = applyEvalEnv();
+  // Heartbeat: re-stamp the live scorecard every 20s so a long-running single
+  // phase keeps its `heartbeat` fresh; if the process dies the stamp goes stale
+  // and the index reclassifies the run as interrupted. `unref` so the timer
+  // never keeps the process alive on its own.
+  const heartbeat = setInterval(() => refresh(), 20_000);
+  heartbeat.unref?.();
   try {
     if (parallel) {
       // Per-family progress for the aggregate spinner line.
@@ -753,6 +786,7 @@ async function runEval(): Promise<number> {
       }
     }
   } finally {
+    clearInterval(heartbeat);
     restoreEvalEnv();
   }
 
@@ -852,6 +886,7 @@ Usage:
   lastlight-evals init [dir] [options]         Scaffold an overlay+evals workspace
   lastlight-evals add-case --pr|--issue <url>  Author an eval case from a GitHub PR/issue
   lastlight-evals serve [options]              Browse past runs in the dashboard (no models run)
+  lastlight-evals clean [options]              Finalize killed/crashed runs stuck showing "running"
   lastlight-evals --version                    Print the evals + lastlight versions
 
 Run options:
@@ -864,6 +899,7 @@ Run options:
   --model <m[,m2]>     models: model(s) to run (fuzzy-matched against models.json).
                        config: override each config's default model.
   --compare            Cross-vendor set (only models whose provider key is present)
+  --instance <id[,id]> Only run these instance_id(s) (or set EVAL_INSTANCE). Exact match.
   --runs <n>           Repeat each case n× (worst-case verdict, mean metrics)
   --serial             Force serial execution across provider families
   --datasets <dir>     Extra datasets root to discover tiers from
@@ -902,12 +938,31 @@ async function main(): Promise<number> {
     // `add-case --pr|--issue <url> [flags]` — scaffold an instance from GitHub.
     return runAddCase(process.argv.slice(3));
   }
+  if (sub === "clean") {
+    // `clean [--delete] [--older-than] [--dry-run]` — finalize killed/crashed runs.
+    return runClean(process.argv.slice(3));
+  }
+  // `--help`/`-h` ANYWHERE must print usage and run nothing. The early check above
+  // only catches it as the first token; `run --help` / `serve --help` / `<tier>
+  // --help` reach here, so guard the run/serve paths too. (`init`/`add-case` print
+  // their own, more specific help internally.)
+  const wantsHelp = process.argv.includes("--help") || process.argv.includes("-h");
   if (sub === "serve") {
     // `serve` — browse past runs; the live dashboard server, standalone.
+    if (wantsHelp) {
+      console.log(USAGE);
+      return 0;
+    }
     return runServe();
   }
   // `run` is the default; allow an explicit leading `run` token too.
   if (sub === "run") process.argv.splice(2, 1);
+  if (wantsHelp) {
+    console.log(versionLine());
+    console.log();
+    console.log(USAGE);
+    return 0;
+  }
   return runEval();
 }
 

@@ -123,5 +123,27 @@ export function unwrapLine(raw: Record<string, unknown>): Message[] {
     ];
   }
 
+  // Skill-loading status the agent runtime emits per phase. Normally "system
+  // noise", but it's the one place the transcript shows which workflow skills got
+  // staged — surface it as a compact timeline chip. We keep the count + the
+  // STAGED workflow skills (those bundled under `.lastlight-skills/`, as opposed
+  // to the user's global `~/.agents/skills`).
+  if (type === "system" && raw.subtype === "skills_status") {
+    const skills = Array.isArray(raw.skills) ? (raw.skills as Array<Record<string, unknown>>) : [];
+    const staged = skills
+      .filter((s) => typeof s.source === "string" && (s.source as string).includes(".lastlight-skills"))
+      .map((s) => String(s.name));
+    return [
+      {
+        role: "system",
+        subtype: "skills_status",
+        status: typeof raw.status === "string" ? raw.status : undefined,
+        discovered: typeof raw.discovered === "number" ? raw.discovered : skills.length,
+        staged,
+        timestamp,
+      } as Message,
+    ];
+  }
+
   return [];
 }

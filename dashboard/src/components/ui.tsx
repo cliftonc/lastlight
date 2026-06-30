@@ -109,8 +109,9 @@ export function Sparkline({ rates }: { rates: number[] }) {
   );
 }
 
-/** Live-run status badge. Three distinct states (a tier can be live but already
+/** Live-run status badge. Distinct states (a tier can be live but already
  * finished while the overall run continues elsewhere):
+ *   - interrupted → grey, static (was live but the writer died — killed/crashed)
  *   - running → green, pulsing, with progress
  *   - queued  → amber, hollow, static
  *   - done (live but no running/queued cases) → nothing (renders as finished). */
@@ -119,12 +120,19 @@ export function LiveBadge({
   className = "",
   size = "xs",
 }: {
-  run: { live?: boolean; running?: number; queued?: number; progress?: string };
+  run: { live?: boolean; interrupted?: boolean; running?: number; queued?: number; progress?: string };
   className?: string;
   size?: "xs" | "sm";
 }) {
-  if (!run.live) return null;
   const sz = size === "sm" ? "text-sm" : "text-2xs";
+  if (run.interrupted) {
+    return (
+      <span className={`whitespace-nowrap font-semibold text-base-content/50 ${sz} ${className}`} title="The run was killed or crashed mid-flight. Run `lastlight-evals clean` to tidy it up.">
+        ⊘ interrupted{run.progress ? ` ${run.progress}` : ""}
+      </span>
+    );
+  }
+  if (!run.live) return null;
   if (run.running && run.running > 0) {
     return (
       <span className={`ll-pulse whitespace-nowrap font-semibold text-success ${sz} ${className}`}>

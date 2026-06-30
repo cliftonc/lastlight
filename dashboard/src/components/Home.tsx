@@ -28,7 +28,9 @@ export function Home({ tiers }: { tiers: IndexTier[] }) {
       <div className="mb-9 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {tiers.map((t) => {
           const latest = t.runs[0];
-          const liveRun = t.runs.find((r) => r.live);
+          // Prefer a genuinely-live run for the card badge; otherwise surface an
+          // interrupted one so a killed/crashed run is visible, not silent.
+          const liveRun = t.runs.find((r) => r.live) ?? t.runs.find((r) => r.interrupted);
           return (
             <button
               key={t.key}

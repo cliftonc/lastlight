@@ -171,19 +171,30 @@ export function gradeExecution(opts: {
   // otherwise suite mode — grade on the command's exit code.
   const named = opts.failToPass.length > 0 && opts.failToPass.some((id) => passed.has(id));
 
+  // `PASS_TO_PASS: ["*"]` is a wildcard meaning "the ENTIRE suite must stay
+  // green" — far more robust than pinning every test by name (which breaks the
+  // moment a test is renamed or added). It resolves to the run being green: the
+  // command exited 0 and no TAP line reported `not ok`. Other PASS_TO_PASS names
+  // (if any) are still checked individually alongside it.
+  const passAll = opts.passToPass.includes("*");
+  const explicitPass = opts.passToPass.filter((id) => id !== "*");
+  const suiteGreen = exitOk && [...passed.values()].every(Boolean);
+
   let fail: { id: string; pass: boolean }[];
   let pass: { id: string; pass: boolean }[];
   let resolved: boolean;
   if (named) {
     fail = opts.failToPass.map((id) => ({ id, pass: passed.get(id) === true }));
-    pass = opts.passToPass.map((id) => ({ id, pass: passed.get(id) === true }));
+    pass = explicitPass.map((id) => ({ id, pass: passed.get(id) === true }));
+    if (passAll) pass.push({ id: "* (all tests)", pass: suiteGreen });
     resolved = fail.every((t) => t.pass) && pass.every((t) => t.pass);
   } else {
     // Suite mode: the held-out tests pass iff the command exited 0. Report each
     // declared id against that single outcome; honor any PASS_TO_PASS names that
     // did surface in TAP.
     fail = opts.failToPass.map((id) => ({ id, pass: exitOk }));
-    pass = opts.passToPass.map((id) => ({ id, pass: passed.has(id) ? passed.get(id) === true : exitOk }));
+    pass = explicitPass.map((id) => ({ id, pass: passed.has(id) ? passed.get(id) === true : exitOk }));
+    if (passAll) pass.push({ id: "* (all tests)", pass: suiteGreen });
     resolved = exitOk && pass.every((t) => t.pass);
   }
   return { resolved, failToPass: fail, passToPass: pass, raw: setupLog ? `${setupLog}\n${raw}` : raw };

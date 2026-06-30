@@ -61,6 +61,16 @@ export interface InstanceResult {
   /** Per-phase metrics; carries the per-step model map in `config` runs. */
   phases?: PhaseMetric[];
   resolved?: boolean;
+  /** Per-test verdicts from the held-out test run (code-fix). */
+  failToPass?: { id: string; pass: boolean }[];
+  passToPass?: { id: string; pass: boolean }[];
+  /** Run-relative path of the captured held-out test output (setup log + TAP),
+   * shown in the "tests" view for resolved and unresolved cases alike. */
+  executionLog?: string;
+  /** Run-relative path of the agent's diff (`changes.diff`), captured vs the
+   * seeded base (code-fix only). Resolves against the scorecard URL like
+   * `executionLog`; powers the "files" diff viewer. Absent for triage. */
+  modelPatchFile?: string;
   behavioral?: { ok: boolean; checks: Check[] };
   trials?: number;
   trialErrors?: number;
@@ -132,6 +142,8 @@ export interface IndexRun {
   byTier: TierSummary[];
   runs: number;
   live: boolean;
+  /** Was `live` but its writer died (killed/crashed) — show "interrupted". */
+  interrupted?: boolean;
   progress?: string;
   running?: number;
   queued?: number;

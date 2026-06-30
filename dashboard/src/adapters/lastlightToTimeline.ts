@@ -117,7 +117,17 @@ export function toBaseMessages(messages: Message[]): BaseMessage[] {
         metadata: toolName ? { toolName } : undefined,
       });
     } else if (role === "system") {
-      out.push({ id, timestamp: ts, type: "system", content: { text } });
+      if (msg.subtype === "skills_status") {
+        out.push({
+          id,
+          timestamp: ts,
+          type: "system",
+          content: { kind: "skills", status: msg.status, discovered: msg.discovered, staged: msg.staged ?? [] },
+          metadata: { kind: "skills" },
+        });
+      } else {
+        out.push({ id, timestamp: ts, type: "system", content: { text } });
+      }
     } else if (role === "session_meta") {
       out.push({ id, timestamp: ts, type: "meta", content: msg });
     } else {

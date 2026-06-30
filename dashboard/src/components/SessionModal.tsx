@@ -15,7 +15,77 @@ function isUserMessage(item: TimelineItemT): boolean {
  * or a finished case's per-trial / per-phase logs to browse. */
 export type SessionSource =
   | { kind: "live"; title: string; url: string }
-  | { kind: "trials"; title: string; sessions: TrialSession[]; baseUrl: string };
+  | { kind: "trials"; title: string; sessions: TrialSession[]; baseUrl: string }
+  | {
+      kind: "execution";
+      title: string;
+      /** Run-relative-resolved URL of the captured test output, if any. */
+      logUrl?: string;
+      failToPass?: { id: string; pass: boolean }[];
+      passToPass?: { id: string; pass: boolean }[];
+    };
+
+/** The held-out test view: per-test FAIL_TO_PASS / PASS_TO_PASS verdicts on top
+ * (so you see WHICH tests failed) and the raw captured test output below. Shown
+ * for resolved and unresolved code-fix cases alike. */
+function ExecutionView({
+  logUrl,
+  failToPass = [],
+  passToPass = [],
+}: {
+  logUrl?: string;
+  failToPass?: { id: string; pass: boolean }[];
+  passToPass?: { id: string; pass: boolean }[];
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!logUrl) {
+      setText("");
+      return;
+    }
+    let cancelled = false;
+    fetch(logUrl)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((t) => !cancelled && setText(t))
+      .catch((e) => !cancelled && setErr(e instanceof Error ? e.message : String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [logUrl]);
+
+  const tests = [
+    ...failToPass.map((t) => ({ ...t, kind: "FAIL_TO_PASS" })),
+    ...passToPass.map((t) => ({ ...t, kind: "PASS_TO_PASS" })),
+  ];
+  return (
+    <div className="flex-1 overflow-y-auto bg-base-100">
+      {tests.length > 0 && (
+        <div className="space-y-1 border-b border-base-300 px-4 py-3">
+          <div className="mb-1.5 font-mono text-2xs uppercase tracking-wide text-base-content/40">
+            held-out tests ({tests.filter((t) => t.pass).length}/{tests.length} passed)
+          </div>
+          {tests.map((t, i) => (
+            <div key={i} className="flex items-start gap-2 font-mono text-xs leading-5">
+              <span className={t.pass ? "text-success" : "text-error"}>{t.pass ? "✓" : "✗"}</span>
+              <span className="shrink-0 text-base-content/40">{t.kind}</span>
+              <span className="break-all text-base-content/80">{t.id}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {err && <div className="px-4 py-3 font-mono text-xs text-error">Couldn't load test output: {err}</div>}
+      {text === null && !err && (
+        <div className="py-16 text-center font-mono text-sm text-base-content/40">loading test output…</div>
+      )}
+      {text !== null && (
+        <pre className="whitespace-pre-wrap px-4 py-3 font-mono text-2xs leading-5 text-base-content/80">
+          {text || "(no test output captured)"}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 /** Scrolling timeline for one session jsonl URL. Re-fetches on a short interval
  * when `live`. Keyed by url upstream so switching tabs resets scroll. */
@@ -132,16 +202,20 @@ export function SessionModal({ source, onClose }: { source: SessionSource; onClo
               ↓ newest first
             </span>
           )}
-          {url && (
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="ml-auto whitespace-nowrap font-mono text-2xs text-info hover:underline"
-            >
-              raw jsonl
-            </a>
-          )}
+          {(() => {
+            const rawUrl = source.kind === "execution" ? source.logUrl : url;
+            if (!rawUrl) return null;
+            return (
+              <a
+                href={rawUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-auto whitespace-nowrap font-mono text-2xs text-info hover:underline"
+              >
+                {source.kind === "execution" ? "raw log" : "raw jsonl"}
+              </a>
+            );
+          })()}
           <button onClick={onClose} className="btn btn-ghost btn-xs h-6 min-h-0" aria-label="Close">
             ✕
           </button>
@@ -183,7 +257,9 @@ export function SessionModal({ source, onClose }: { source: SessionSource; onClo
           </div>
         )}
 
-        {url ? (
+        {source.kind === "execution" ? (
+          <ExecutionView logUrl={source.logUrl} failToPass={source.failToPass} passToPass={source.passToPass} />
+        ) : url ? (
           <SessionTimeline key={url} url={url} live={live} />
         ) : (
           <div className="flex-1 py-16 text-center font-mono text-sm text-base-content/40">no session log</div>

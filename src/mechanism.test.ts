@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 
 import { startFakeGitHub } from "./fake-github.js";
 import { seedWorkspace, seedWorkspaceFromGit } from "./seed.js";
+import { gitDiffAgainstBase } from "./run-instance.js";
 import { execFileSync } from "node:child_process";
 import { gradeExecution, gradeBehavioral, gradeTriage } from "./grade.js";
 import { loadMergedConfig, resolvePhaseModel } from "./config.js";
@@ -293,6 +294,87 @@ describe("workspace seed + execution grade (SWE-bench resolved)", () => {
         passToPass: ["stays numeric"],
       });
       expect(after.resolved).toBe(true);
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('PASS_TO_PASS ["*"] requires the whole suite to stay green, not just named tests', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "ll-eval-star-"));
+    try {
+      const fixtureDir = join(stateDir, "fixture");
+      mkdirSync(join(fixtureDir, "src"), { recursive: true });
+      writeFileSync(join(fixtureDir, "src", "counter.ts"), "export const next = (n: number): number => n + 1;\n");
+      const seeded = seedWorkspace({ stateDir, taskId: "star-task", fixtureDir });
+
+      const heldOutDir = join(stateDir, "held");
+      mkdirSync(heldOutDir, { recursive: true });
+      writeFileSync(
+        join(heldOutDir, "counter.test.ts"),
+        [
+          'import { test } from "node:test";',
+          'import assert from "node:assert/strict";',
+          'import { next } from "./src/counter.ts";',
+          'test("increments by one", () => { assert.equal(next(1), 2); });',
+        ].join("\n") + "\n",
+      );
+
+      // Whole suite green → the wildcard regression guard resolves.
+      const green = gradeExecution({
+        workDir: seeded.workDir,
+        heldOutDir,
+        failToPass: ["increments by one"],
+        passToPass: ["*"],
+      });
+      expect(green.resolved).toBe(true);
+      expect(green.passToPass.find((t) => t.id === "* (all tests)")?.pass).toBe(true);
+
+      // An unrelated test now fails: the named FAIL_TO_PASS is still green, but
+      // ["*"] catches the regression → NOT resolved.
+      writeFileSync(
+        join(seeded.workDir, "unrelated.test.ts"),
+        [
+          'import { test } from "node:test";',
+          'import assert from "node:assert/strict";',
+          'test("unrelated invariant", () => { assert.equal(1, 2); });',
+        ].join("\n") + "\n",
+      );
+      const regressed = gradeExecution({
+        workDir: seeded.workDir,
+        failToPass: ["increments by one"],
+        passToPass: ["*"],
+      });
+      expect(regressed.failToPass.find((t) => t.id === "increments by one")?.pass).toBe(true);
+      expect(regressed.passToPass.find((t) => t.id === "* (all tests)")?.pass).toBe(false);
+      expect(regressed.resolved).toBe(false);
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("captures the agent's changes as a diff vs base — even after a commit (where `git diff HEAD` is empty)", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "ll-eval-diff-"));
+    const g = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString();
+    try {
+      const fixtureDir = join(stateDir, "fixture");
+      mkdirSync(join(fixtureDir, "src"), { recursive: true });
+      writeFileSync(join(fixtureDir, "src", "counter.ts"), "export const next = (n: number): number => n + 2;\n");
+      const seeded = seedWorkspace({ stateDir, taskId: "diff-task", fixtureDir, branch: "lastlight/fix" });
+
+      // Simulate the agent: edit a file, add a NEW file, then commit (as the real
+      // code-fix workflow does) so the working tree == HEAD.
+      writeFileSync(join(seeded.workDir, "src", "counter.ts"), "export const next = (n: number): number => n + 1;\n");
+      writeFileSync(join(seeded.workDir, "NOTES.md"), "# fixed the off-by-one\n");
+      g(seeded.workDir, "add", "-A");
+      g(seeded.workDir, "-c", "user.email=e@e", "-c", "user.name=e", "commit", "-q", "-m", "fix");
+
+      // `git diff HEAD` is now empty (the prior bug) — but the diff vs base is not.
+      expect(g(seeded.workDir, "diff", "HEAD").trim()).toBe("");
+      const patch = gitDiffAgainstBase(seeded.workDir, seeded.baseCommit);
+      expect(patch).toBeTruthy();
+      expect(patch).toContain("src/counter.ts"); // the modified file
+      expect(patch).toContain("NOTES.md"); // the new file
+      expect(patch).toContain("+export const next = (n: number): number => n + 1;");
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
     }

@@ -20,8 +20,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, cpSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { mkdirSync, cpSync, existsSync, appendFileSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 
 const FIXED = "2026-01-01T00:00:00 +0000";
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -36,6 +36,27 @@ const GIT_ENV: NodeJS.ProcessEnv = {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, env: GIT_ENV, stdio: ["ignore", "pipe", "pipe"] }).toString();
+}
+
+/** Where to seed the repo: `<stateDir>/sandboxes/<taskId>[/<repoSubdir>]`. With a
+ * subdir the repo is a CHILD of the workspace root (matching production's nested
+ * layout, where AGENTS.md/.lastlight-skills are siblings outside the repo). */
+function workDirFor(stateDir: string, taskId: string, repoSubdir?: string): string {
+  const base = resolve(stateDir, "sandboxes", taskId);
+  return repoSubdir ? resolve(base, repoSubdir) : base;
+}
+
+/** Git-native ignore (repo-local, NOT a committed file) so the agent's
+ * `npm install` artifacts never enter the repo's git tree or the captured diff —
+ * exactly what a real repo's `.gitignore` does. Belt-and-suspenders for
+ * git-source repos (which already ignore it) and essential for vendored fixtures
+ * that ship without a `.gitignore`. Must run after `git init`/`clone`. */
+function ignoreBuildArtifacts(workDir: string): void {
+  try {
+    appendFileSync(join(workDir, ".git", "info", "exclude"), "\nnode_modules/\n");
+  } catch {
+    /* best-effort: a missing exclude just means node_modules may show in the diff */
+  }
 }
 
 export interface SeedResult {
@@ -78,14 +99,17 @@ export function seedWorkspace(opts: {
   /** Working branch the agent will push (build creates a feature branch). */
   branch?: string;
   defaultBranch?: string;
+  /** Seed into a `<workspace>/<repoSubdir>/` child dir (production's nested
+   * layout) instead of the workspace root. See {@link workDirFor}. */
+  repoSubdir?: string;
 }): SeedResult {
   const def = opts.defaultBranch ?? "main";
-  const sandboxBase = resolve(opts.stateDir, "sandboxes");
-  const workDir = resolve(sandboxBase, opts.taskId);
+  const workDir = workDirFor(opts.stateDir, opts.taskId, opts.repoSubdir);
   mkdirSync(workDir, { recursive: true });
   cpSync(opts.fixtureDir, workDir, { recursive: true });
 
   git(workDir, ["init", "-q", "-b", def]);
+  ignoreBuildArtifacts(workDir);
   git(workDir, ["add", "-A"]);
   git(workDir, ["commit", "-q", "-m", "base"]);
   const baseCommit = git(workDir, ["rev-parse", "HEAD"]).trim();
@@ -146,18 +170,21 @@ export function seedWorkspaceFromGit(opts: {
   branch?: string;
   defaultBranch?: string;
   cacheDir?: string;
+  /** Seed into a `<workspace>/<repoSubdir>/` child dir (production's nested
+   * layout) instead of the workspace root. See {@link workDirFor}. */
+  repoSubdir?: string;
 }): SeedResult {
   const def = opts.defaultBranch ?? "main";
   const mirror = ensureRepoCache({ repo: opts.repo, baseCommit: opts.baseCommit, cacheDir: opts.cacheDir });
 
-  const sandboxBase = resolve(opts.stateDir, "sandboxes");
-  const workDir = resolve(sandboxBase, opts.taskId);
-  mkdirSync(sandboxBase, { recursive: true });
+  const workDir = workDirFor(opts.stateDir, opts.taskId, opts.repoSubdir);
+  mkdirSync(dirname(workDir), { recursive: true });
 
   // Plain local clone (not --shared) so the sandbox owns its objects/refs and
   // parallel runs never touch the cache's object store.
-  git(sandboxBase, ["clone", "--quiet", `file://${mirror}`, workDir]);
+  git(dirname(workDir), ["clone", "--quiet", `file://${mirror}`, workDir]);
   git(workDir, ["checkout", "--quiet", "--detach", opts.baseCommit]);
+  ignoreBuildArtifacts(workDir);
 
   const originDir = setupOfflineOrigin(workDir, opts.stateDir, opts.taskId, def);
 

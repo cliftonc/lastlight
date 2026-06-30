@@ -66,12 +66,19 @@ export interface SweBenchInstance {
   problem_statement: string;
   /** Gold patch — reference only; NOT used to grade. */
   patch?: string;
-  /** Held-out tests, applied AFTER the agent runs (kept out of the agent's repo). */
+  /** Held-out tests, applied AFTER the agent runs (kept out of the agent's repo).
+   * Only used when {@link hold_out_tests} is set — otherwise ignored. */
   test_patch?: string;
-  /** Test ids expected to go red→green. Empty/absent ⇒ suite mode (graded on the
-   * test command's exit code rather than per-test TAP names). */
+  /** Opt into SWE-bench-style **held-out** grading: the maintainer's `test_patch`
+   * is hidden from the agent and applied only at grade time, scored by named
+   * `FAIL_TO_PASS` / `PASS_TO_PASS`. Default (absent/false) is **suite mode**: run
+   * the repo's own `test_cmd` on the agent's final tree, resolved iff it exits 0 —
+   * nothing held out, nothing applied. */
+  hold_out_tests?: boolean;
+  /** Test ids expected to go red→green (hold-out mode only). Empty/absent ⇒ suite
+   * mode (graded on the test command's exit code rather than per-test TAP names). */
   FAIL_TO_PASS?: string[];
-  /** Test ids that must stay green. */
+  /** Test ids that must stay green (hold-out mode only). */
   PASS_TO_PASS?: string[];
   environment_setup_commit?: string;
   version?: string;
@@ -158,8 +165,21 @@ export interface InstanceResult {
   /** Count of mutating GitHub calls the workflow made against the fake server.
    * A mechanism signal: >0 proves the real github_* tools reached the mock. */
   githubMutations?: number;
-  /** SWE-bench predictions: unified diff of the agent's edits. */
+  /** SWE-bench predictions: unified diff of the agent's edits. Kept in-memory for
+   * `predictions.jsonl`, but STRIPPED from the serialized `scorecard.json` (see
+   * `writeScorecard`) so the live-polled scorecard stays lean — the dashboard
+   * reads the diff from {@link modelPatchFile} instead. */
   model_patch?: string;
+  /** Relative path (under the run dir) of the agent's diff persisted as a
+   * discrete `changes.diff` artifact beside the trial's logs (mirrors
+   * {@link executionLog}). What the dashboard's "files" diff viewer fetches;
+   * publishes with the run tree. Code-fix only. */
+  modelPatchFile?: string;
+  /** Relative path (under the run dir) of the held-out test output captured at
+   * grade time (setup log + TAP). The dashboard's "tests" view shows it — for
+   * both resolved and unresolved cases — so you can see exactly what ran and why
+   * each FAIL_TO_PASS / PASS_TO_PASS test passed or failed. */
+  executionLog?: string;
   /** Archived agent sessions for this case — one {@link TrialSession} per trial
    * (`--runs N` keeps them all), each split per workflow phase. The dashboard
    * resolves the relative paths against the run's scorecard URL to render the

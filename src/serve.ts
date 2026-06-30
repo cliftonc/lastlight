@@ -45,6 +45,8 @@ const MIME: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".jsonl": "application/x-ndjson; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",

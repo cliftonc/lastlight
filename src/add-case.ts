@@ -44,7 +44,13 @@ Options:
   --overlay <dir>       Write into <dir>/evals/datasets instead
   --test-cmd "<cmd>"    Held-out test command (default: node --test). Stored as test_cmd.
   --setup-cmd "<cmd>"   Install/build run before tests (e.g. "npm ci"). Stored as setup_cmd.
-  --no-validate         Don't run the repo's tests to auto-detect FAIL_TO_PASS (just scaffold)
+  --hold-out            SWE-bench style: hold the PR's test files out of the agent's
+                        repo and apply them only at grade time, scored by named
+                        FAIL_TO_PASS. Default is SUITE mode — grade on the repo's own
+                        test_cmd run against the agent's final tree (nothing held out).
+  --pass-list           (hold-out only) Enumerate every green test in PASS_TO_PASS.
+                        Default is PASS_TO_PASS=["*"] (the whole suite must stay green).
+  --no-validate         Don't run the repo's tests to validate the case (just scaffold)
   --dry-run             Print the proposed instance JSON; don't write
   -h, --help            Show this help
 
@@ -141,7 +147,31 @@ interface PrView {
   headRefName: string;
   headRefOid: string;
   url: string;
-  closingIssuesReferences?: { number: number; title: string; body: string }[];
+  // `gh pr view --json closingIssuesReferences` only returns id/number/url/repository
+  // per linked issue — NOT title/body. Those are fetched separately (fetchLinkedIssue).
+  closingIssuesReferences?: { number: number }[];
+}
+
+interface LinkedIssue {
+  number: number;
+  title: string;
+  body: string;
+}
+
+/** Fetch a linked closing issue's title/body. `gh pr view`'s
+ * `closingIssuesReferences` omits them (it returns only number/url/id/repository),
+ * so a bare interpolation of `linked.title`/`linked.body` would yield the literal
+ * string "undefined". Returns undefined if the issue can't be read (private/gone),
+ * letting the caller fall back to the PR's own title/body. */
+function fetchLinkedIssue(repo: string, number: number): LinkedIssue | undefined {
+  try {
+    const iss = ghJson<{ number: number; title: string; body?: string }>([
+      "issue", "view", String(number), "--repo", repo, "--json", "number,title,body",
+    ]);
+    return { number: iss.number, title: iss.title, body: iss.body ?? "" };
+  } catch {
+    return undefined;
+  }
 }
 
 async function fromPr(url: string, o: Options): Promise<number> {
@@ -162,32 +192,60 @@ async function fromPr(url: string, o: Options): Promise<number> {
   // Make sure the base branch is present (default mirror has refs/heads/*).
   const base = sh("git", ["merge-base", `refs/heads/${pr.baseRefName}`, head], mirror).trim();
 
-  // Split the change into held-out tests vs the rest (gold patch, reference only).
+  // The non-test code change is the gold patch (reference only) in both modes.
   const changed = sh("git", ["diff", "--name-only", base, head], mirror).split("\n").map((s) => s.trim()).filter(Boolean);
   const testFiles = changed.filter(isTestPath);
   const codeFiles = changed.filter((f) => !isTestPath(f));
-  const testPatch = testFiles.length ? sh("git", ["diff", base, head, "--", ...testFiles], mirror) : "";
   const goldPatch = codeFiles.length ? sh("git", ["diff", base, head, "--", ...codeFiles], mirror) : "";
-  if (!testFiles.length) {
-    console.log(chalk.yellow("⚠ No test files detected in the PR diff. The held-out tests heuristic found nothing —"));
-    console.log(chalk.yellow("  set them by hand (test_patch) or rely on the in-repo tests via --test-cmd."));
-  }
 
-  // Auto-detect FAIL_TO_PASS / PASS_TO_PASS by running the tests at base (with
-  // the held-out tests applied) → red, then at head → green.
-  let failToPass: string[] = [];
-  let passToPass: string[] = [];
-  if (o.validate) {
-    const verdicts = validate({ mirror, base, head, testPatch, testCmd: o.testCmd, setupCmd: o.setupCmd });
-    failToPass = verdicts.failToPass;
-    passToPass = verdicts.passToPass;
-    if (verdicts.note) console.log(chalk.yellow(`⚠ ${verdicts.note}`));
+  // Grading fields differ by mode:
+  //   - default (suite): nothing held out — grade on the repo's own `test_cmd`
+  //     run against the agent's final tree (resolved iff it exits 0).
+  //   - `--hold-out`: SWE-bench — the PR's test files are held out and applied
+  //     only at grade time, scored by named FAIL_TO_PASS / PASS_TO_PASS.
+  let gradeFields: Partial<SweBenchInstance> = {};
+  if (o.holdOut) {
+    const testPatch = testFiles.length ? sh("git", ["diff", base, head, "--", ...testFiles], mirror) : "";
+    if (!testFiles.length) {
+      console.log(chalk.yellow("⚠ --hold-out but no test files detected in the PR diff — set test_patch by hand or rely on --test-cmd."));
+    }
+    let failToPass: string[] = [];
+    let passToPass: string[] = ["*"];
+    if (o.validate) {
+      const verdicts = validate({ mirror, base, head, testPatch, testCmd: o.testCmd, setupCmd: o.setupCmd });
+      failToPass = verdicts.failToPass;
+      if (o.passList) passToPass = verdicts.passToPass;
+      if (verdicts.note) console.log(chalk.yellow(`⚠ ${verdicts.note}`));
+    } else {
+      console.log(chalk.dim("Skipping validation (--no-validate) — FAIL_TO_PASS left empty."));
+    }
+    console.log(chalk.dim(o.passList ? "PASS_TO_PASS enumerated." : 'PASS_TO_PASS = ["*"] (whole suite must stay green; --pass-list to enumerate).'));
+    gradeFields = {
+      hold_out_tests: true,
+      ...(testPatch ? { test_patch: testPatch } : {}),
+      FAIL_TO_PASS: failToPass,
+      PASS_TO_PASS: passToPass,
+    };
   } else {
-    console.log(chalk.dim("Skipping test validation (--no-validate) — FAIL_TO_PASS left empty (suite mode)."));
+    console.log(chalk.dim("Suite mode (default): grade on the repo's own test_cmd at the agent's final tree — nothing held out. (--hold-out for SWE-bench style.)"));
+    if (o.validate) {
+      const probe = probeSuite({ mirror, base, head, testCmd: o.testCmd, setupCmd: o.setupCmd });
+      if (probe.headGreen) console.log(chalk.dim("✓ Reference suite passes at head."));
+      else console.log(chalk.yellow("⚠ The reference solution's suite did NOT pass at head (test_cmd exit ≠ 0) — check --test-cmd / --setup-cmd; the case may be ungradeable."));
+      if (probe.baseGreen) {
+        console.log(chalk.yellow("⚠ The suite is ALREADY green at base — a no-op solution would resolve this case. Consider --hold-out, or a case whose failing test already exists at base."));
+      }
+    }
+    // No test_patch / FAIL_TO_PASS / PASS_TO_PASS — pure suite-exit-code grading.
   }
 
   // Issue fixture: the linked issue if the PR closes one, else the PR itself.
-  const linked = pr.closingIssuesReferences?.[0];
+  // `closingIssuesReferences` carries only the issue number, so fetch title/body.
+  const linkedRef = pr.closingIssuesReferences?.[0];
+  const linked = linkedRef ? fetchLinkedIssue(repo, linkedRef.number) : undefined;
+  if (linkedRef && !linked) {
+    console.log(chalk.yellow(`⚠ PR closes #${linkedRef.number} but its title/body couldn't be read — falling back to the PR's own title/body.`));
+  }
   const issueNumber = linked?.number ?? pr.number;
   const issue: IssueSeed = {
     number: issueNumber,
@@ -206,9 +264,7 @@ async function fromPr(url: string, o: Options): Promise<number> {
     head_commit: head,
     problem_statement: linked ? `${linked.title}\n\n${linked.body ?? ""}`.trim() : `${pr.title}\n\n${pr.body ?? ""}`.trim(),
     ...(goldPatch ? { patch: goldPatch } : {}),
-    ...(testPatch ? { test_patch: testPatch } : {}),
-    FAIL_TO_PASS: failToPass,
-    PASS_TO_PASS: passToPass,
+    ...gradeFields,
     ...(o.testCmd ? { test_cmd: o.testCmd } : {}),
     ...(o.setupCmd ? { setup_cmd: o.setupCmd } : {}),
     issue,
@@ -257,7 +313,8 @@ function validate(opts: { mirror: string; base: string; head: string; testPatch:
         failToPass: [],
         passToPass: [],
         note: headRun.ok
-          ? "No TAP test names parsed — case will use suite mode (graded on the test command's exit code)."
+          ? "No TAP test names parsed — case will use suite mode (graded on the test command's exit code). " +
+            "For per-test FAIL_TO_PASS grading, point --test-cmd at a TAP-emitting runner (e.g. \"npx vitest run --reporter=tap\", \"npx mocha --reporter tap\")."
           : "Tests did not pass at head and emitted no TAP — check the test command / setup; case left in suite mode.",
       };
     }
@@ -274,6 +331,39 @@ function validate(opts: { mirror: string; base: string; head: string; testPatch:
     return { failToPass, passToPass };
   } catch (err) {
     return { failToPass: [], passToPass: [], note: `Validation failed (${(err as Error).message}); fill FAIL_TO_PASS manually.` };
+  } finally {
+    try {
+      sh("git", ["worktree", "remove", "--force", wt], opts.mirror);
+    } catch {
+      /* best effort */
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Suite-mode sanity probe: run the repo's own `test_cmd` at base and head. A
+ * green head means the reference solution's suite passes (case is gradeable); a
+ * green base means a no-op would already resolve it (the author should reconsider). */
+function probeSuite(opts: { mirror: string; base: string; head: string; testCmd?: string[]; setupCmd?: string[] }): {
+  baseGreen: boolean;
+  headGreen: boolean;
+} {
+  const tmp = mkdtempSync(join(tmpdir(), "ll-addcase-suite-"));
+  const wt = join(tmp, "wt");
+  console.log(chalk.dim("Probing the repo suite at base and head…"));
+  try {
+    sh("git", ["worktree", "add", "--quiet", "--detach", wt, opts.base], opts.mirror);
+    const run = () => {
+      if (opts.setupCmd) runCmd(opts.setupCmd, wt);
+      const argv = opts.testCmd ?? defaultTestArgv(wt);
+      return runCmd(argv, wt).ok;
+    };
+    const baseGreen = run();
+    sh("git", ["checkout", "--quiet", "--force", opts.head], wt);
+    const headGreen = run();
+    return { baseGreen, headGreen };
+  } catch {
+    return { baseGreen: false, headGreen: false };
   } finally {
     try {
       sh("git", ["worktree", "remove", "--force", wt], opts.mirror);
@@ -439,6 +529,8 @@ interface Options {
   overlay?: string;
   testCmd?: string[];
   setupCmd?: string[];
+  holdOut: boolean;
+  passList: boolean;
   validate: boolean;
   dryRun: boolean;
 }
@@ -464,6 +556,8 @@ export async function runAddCase(args: string[] = []): Promise<number> {
     overlay: val("--overlay"),
     testCmd: parseCmd(val("--test-cmd")),
     setupCmd: parseCmd(val("--setup-cmd")),
+    holdOut: args.includes("--hold-out"),
+    passList: args.includes("--pass-list"),
     validate: !args.includes("--no-validate"),
     dryRun: args.includes("--dry-run"),
   };
