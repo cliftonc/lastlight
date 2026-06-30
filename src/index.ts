@@ -21,7 +21,7 @@ import { initTelemetry, shutdownTelemetry } from "./telemetry/index.js";
 import { authMiddleware, authIsEnabled } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github/github.js";
 import { screenForInjection, flagPrefix } from "./engine/screen/screen.js";
-import { runSimpleWorkflow, type SimpleWorkflowRequest } from "./workflows/simple.js";
+import { runSimpleWorkflow, PR_HEADREF_PREPOPULATE_WORKFLOWS, type SimpleWorkflowRequest } from "./workflows/simple.js";
 import type { RunnerCallbacks } from "./workflows/runner.js";
 import { resumeOrphanedWorkflows } from "./workflows/resume.js";
 import {
@@ -270,16 +270,16 @@ async function main() {
       prePopulateBranch = ctxBranch;
     }
     // PR-scoped read workflows that benefit from a workspace pre-checked-out at
-    // the PR's *real* head ref. `demo` is the load-bearing case: it synthesizes
-    // a `lastlight/N-<title-slug>` branch (see resolveRunBranch) that does NOT
-    // exist on the remote, so prePopulateWorkspace's missing-branch fallback
-    // silently clones the *default* branch — making a before/after demo's
-    // "after" identical to "before" (both end up on main). Resolving the head
-    // ref here pins the workspace to the actual PR code.
-    const PR_HEADREF_PREPOPULATE = new Set(["pr-review", "demo"]);
+    // the PR's *real* head ref. Each one synthesizes a `lastlight/N-<title-slug>`
+    // branch (see resolveRunBranch) that does NOT exist on the remote, so
+    // prePopulateWorkspace's missing-branch fallback silently clones the
+    // *default* branch — testing/demoing code that lacks the PR's changes
+    // (a false-negative QA, or a before/after demo whose "after" matches
+    // "before"). Resolving the head ref here pins the workspace to the actual
+    // PR code. See `PR_HEADREF_PREPOPULATE_WORKFLOWS` for the per-workflow why.
     if (
       !prePopulateBranch &&
-      PR_HEADREF_PREPOPULATE.has(workflowName) &&
+      PR_HEADREF_PREPOPULATE_WORKFLOWS.has(workflowName) &&
       typeof prNumber === "number" &&
       github &&
       owner &&

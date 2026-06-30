@@ -86,11 +86,38 @@ export const PER_TARGET_REUSE_WORKFLOWS = new Set(["pr-review", "pr-fix"]);
  * `serverArtifacts()` harvests them instead of being orphaned a level up.
  * `build` was the original member; verify/qa-test were added for the harvest
  * fix, and `demo` for the same reason (its `demo.mp4` is written under
- * `.lastlight/<key>/` and harvested into the Artifacts store). The dispatcher
- * leaves `prePopulateBranch` unset for all of them; the missing-branch fallback
- * in `prePopulateWorkspace` clones the default branch.
+ * `.lastlight/<key>/` and harvested into the Artifacts store). For a fresh
+ * (issue-scoped) dispatch the dispatcher leaves `prePopulateBranch` unset and
+ * the missing-branch fallback in `prePopulateWorkspace` clones the default
+ * branch — correct for `build`/`demo`, which *create* the synth branch off the
+ * default. But when the *same* workflow runs against an existing PR, the synth
+ * `lastlight/<prNumber>-<title-slug>` name won't match the PR's real head ref
+ * (named after the originating issue), so the fallback would clone the default
+ * branch and test/demo code that lacks the PR — see
+ * `PR_HEADREF_PREPOPULATE_WORKFLOWS`.
  */
 export const PREPOPULATE_SYNTH_WORKFLOWS = new Set(["build", "verify", "qa-test", "demo"]);
+
+/**
+ * The subset of PR-scoped read workflows the dispatcher pins to the PR's *real*
+ * head ref (via `getPullRequest(...).head.ref`) before pre-populating, instead
+ * of letting them fall back to the synthesized `lastlight/N-<title-slug>` name.
+ * Each of these is meaningful only against an existing PR, and the synth name
+ * never matches the PR's actual branch (which is named after the originating
+ * issue, e.g. `lastlight/14-…` for a PR #15). Without this pinning:
+ *   - `qa-test` / `verify` QA the *base* branch and report the PR's feature
+ *     missing — a false-negative result.
+ *   - `demo`'s "after" collapses onto the default branch, matching "before".
+ * `pr-fix` is handled separately (it plumbs `branch` through context for the
+ * architect/executor to push to). See the resolution block in
+ * `dispatchWorkflow` (src/index.ts).
+ */
+export const PR_HEADREF_PREPOPULATE_WORKFLOWS = new Set([
+  "pr-review",
+  "demo",
+  "qa-test",
+  "verify",
+]);
 
 export function workflowScopedTaskId(
   repo: string,

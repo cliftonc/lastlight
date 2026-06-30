@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workflowScopedTaskId, resolveRunBranch, PER_TARGET_REUSE_WORKFLOWS, PREPOPULATE_SYNTH_WORKFLOWS } from "#src/workflows/simple.js";
+import { workflowScopedTaskId, resolveRunBranch, PER_TARGET_REUSE_WORKFLOWS, PREPOPULATE_SYNTH_WORKFLOWS, PR_HEADREF_PREPOPULATE_WORKFLOWS } from "#src/workflows/simple.js";
 
 const RUN = "abcdef12-3456-7890-abcd-ef1234567890";
 
@@ -115,5 +115,26 @@ describe("PREPOPULATE_SYNTH_WORKFLOWS", () => {
   it("does not pre-populate read-only scan workflows that clone in-session", () => {
     expect(PREPOPULATE_SYNTH_WORKFLOWS.has("triage")).toBe(false);
     expect(PREPOPULATE_SYNTH_WORKFLOWS.has("answer")).toBe(false);
+  });
+});
+
+describe("PR_HEADREF_PREPOPULATE_WORKFLOWS", () => {
+  it("pins qa-test and verify to the PR head ref so they QA the PR, not the base branch", () => {
+    // Regression: when run against an existing PR these synthesize a
+    // `lastlight/<prNumber>-<title-slug>` branch that doesn't match the PR's
+    // real head ref (named after the originating issue). Without head-ref
+    // pinning the sandbox cloned the *default* branch and reported the PR's
+    // feature missing — a false-negative QA result.
+    expect(PR_HEADREF_PREPOPULATE_WORKFLOWS.has("qa-test")).toBe(true);
+    expect(PR_HEADREF_PREPOPULATE_WORKFLOWS.has("verify")).toBe(true);
+  });
+
+  it("also pins pr-review and demo (the original members)", () => {
+    expect(PR_HEADREF_PREPOPULATE_WORKFLOWS.has("pr-review")).toBe(true);
+    expect(PR_HEADREF_PREPOPULATE_WORKFLOWS.has("demo")).toBe(true);
+  });
+
+  it("does not pin build — it creates the synth branch off the default branch", () => {
+    expect(PR_HEADREF_PREPOPULATE_WORKFLOWS.has("build")).toBe(false);
   });
 });
