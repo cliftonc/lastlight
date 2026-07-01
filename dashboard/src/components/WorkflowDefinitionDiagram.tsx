@@ -8,7 +8,7 @@ import {
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { WorkflowFullDefinition, WorkflowFullPhase } from "../api";
+import { phaseSkillNames, type WorkflowFullDefinition, type WorkflowFullPhase } from "../api";
 import {
   pipelineNodeTypes,
   type PipelineNodeData,
@@ -26,7 +26,9 @@ const nodeTypes = pipelineNodeTypes;
 function phaseTags(phase: WorkflowFullPhase): PhaseTag[] {
   const tags: PhaseTag[] = [];
   if (phase.type === "context") tags.push({ label: "context", tone: "ghost" });
-  if (phase.skill) tags.push({ label: `skill: ${phase.skill}`, tone: "info", mono: true });
+  for (const skill of phaseSkillNames(phase)) {
+    tags.push({ label: `skill: ${skill}`, tone: "info", mono: true });
+  }
   if (phase.prompt) tags.push({ label: "prompt", tone: "info", mono: true });
   if (phase.loop || phase.generic_loop) tags.push({ label: "loop", tone: "warning" });
   const gate = phase.approval_gate ?? phase.loop?.approval_gate;

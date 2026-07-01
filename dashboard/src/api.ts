@@ -165,7 +165,10 @@ export interface WorkflowFullPhase {
   runtime?: "js" | "ts" | "python";
   /** type: bash/script — per-step timeout in seconds. */
   timeout_seconds?: number;
+  /** Singular sugar. Mutually exclusive with `skills`; use {@link phaseSkillNames}. */
   skill?: string;
+  /** Plural skill list (e.g. pr-review's `skills: [pr-review, building, code-review]`). */
+  skills?: string[];
   model?: string;
   approval_gate?: string;
   approval_gate_message?: string;
@@ -203,6 +206,17 @@ export interface WorkflowFullDefinition {
   trigger?: string;
   variables?: Record<string, string>;
   phases: WorkflowFullPhase[];
+}
+
+/**
+ * Normalize a phase's declared skills to a flat list — mirrors the server's
+ * `phaseSkillNames` (src/workflows/schema.ts). A phase may use the plural
+ * `skills: [...]` array or the singular `skill:` sugar; prefer the array.
+ */
+export function phaseSkillNames(phase: WorkflowFullPhase): string[] {
+  if (phase.skills?.length) return phase.skills;
+  if (phase.skill) return [phase.skill];
+  return [];
 }
 
 /**

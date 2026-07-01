@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import {
   api,
+  phaseSkillNames,
   type WorkflowSummary,
   type WorkflowFullDefinition,
   type WorkflowFullPhase,
@@ -571,7 +572,11 @@ function PhaseDetailBox({ phase, onClose }: PhaseDetailBoxProps) {
         <Field label="name">{phase.name}</Field>
         {phase.label && <Field label="label">{phase.label}</Field>}
         <Field label="type">{phase.type}</Field>
-        {phase.skill && <Field label="skill">{phase.skill}</Field>}
+        {phaseSkillNames(phase).length > 0 && (
+          <Field label={phaseSkillNames(phase).length > 1 ? "skills" : "skill"}>
+            {phaseSkillNames(phase).join(", ")}
+          </Field>
+        )}
         {phase.prompt && <Field label="prompt">{phase.prompt}</Field>}
         {phase.command && <Field label="command">{phase.command}</Field>}
         {phase.runtime && <Field label="runtime">{phase.runtime}</Field>}
@@ -719,8 +724,8 @@ interface PhaseContentViewProps {
 function PhaseContentView({ phase, workflowName }: PhaseContentViewProps) {
   const sources = useMemo<ContentSource[]>(() => {
     const out: ContentSource[] = [];
-    if (phase.skill) {
-      out.push({ key: `skill:${phase.skill}`, label: `skill: ${phase.skill}`, kind: "skill", ref: phase.skill });
+    for (const skill of phaseSkillNames(phase)) {
+      out.push({ key: `skill:${skill}`, label: `skill: ${skill}`, kind: "skill", ref: skill });
     }
     if (phase.prompt) {
       out.push({ key: `prompt:${phase.prompt}`, label: phase.prompt, kind: "prompt", ref: phase.prompt });
