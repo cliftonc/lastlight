@@ -27,7 +27,7 @@ function phaseTags(phase: WorkflowFullPhase): PhaseTag[] {
   const tags: PhaseTag[] = [];
   if (phase.type === "context") tags.push({ label: "context", tone: "ghost" });
   for (const skill of phaseSkillNames(phase)) {
-    tags.push({ label: `skill: ${skill}`, tone: "info", mono: true });
+    tags.push({ label: `skill: ${skill}`, tone: "skill", mono: true });
   }
   if (phase.prompt) tags.push({ label: "prompt", tone: "info", mono: true });
   if (phase.loop || phase.generic_loop) tags.push({ label: "loop", tone: "warning" });

@@ -17,7 +17,7 @@ export type PhaseStatus = "pending" | "active" | "paused" | "done" | "failed";
 export interface PhaseTag {
   label: string;
   /** DaisyUI badge tone. Defaults to `ghost`. */
-  tone?: "info" | "warning" | "error" | "ghost";
+  tone?: "info" | "warning" | "error" | "ghost" | "skill";
   /** Render in monospace, lower-case (for code-y tags like `skill: x`). */
   mono?: boolean;
 }
@@ -119,9 +119,10 @@ function TagRow({ tags }: { tags: PhaseTag[] }) {
         <span
           key={i}
           className={clsx(
-            "badge badge-xs",
+            "badge badge-xs whitespace-nowrap h-auto",
             {
               "badge-info": t.tone === "info",
+              "badge-secondary": t.tone === "skill",
               "badge-warning": t.tone === "warning",
               "badge-error": t.tone === "error",
               "badge-ghost": t.tone === "ghost" || !t.tone,
