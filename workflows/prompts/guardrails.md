@@ -10,6 +10,21 @@ THE ISSUE THIS BUILD WILL IMPLEMENT (use it to judge the escape hatch below):
 SKIP CHECK — if {{issueDir}}/status.md already exists and contains
 guardrails_status: READY, output "READY — guardrails already verified" and stop.
 
+INSTALL DEPENDENCIES FIRST (do this before running ANY check command):
+The harness pre-clones the repo but does NOT install dependencies, so the
+test/lint/typecheck binaries (vitest, oxlint, tsc, eslint, ruff, …) will not
+resolve until you install them. Detect the ecosystem and run the install:
+- Node — pick the package manager from the lockfile: `pnpm-lock.yaml` → `pnpm install`,
+  `yarn.lock` → `yarn install`, `package-lock.json` (or none) → `npm ci`
+  (fall back to `npm install` if `npm ci` fails for a lockfile mismatch).
+- Python — `pip install -e .` / `pip install -r requirements.txt`, or `poetry install` / `uv sync`.
+- Rust — cargo fetches on first build; no separate step.
+Only AFTER a successful install should you judge whether a command "runs". A
+binary that is missing *after* dependencies installed cleanly is a real gap; a
+binary missing *because deps were never installed* is NOT — do not BLOCK on it.
+If the install itself fails (bad lockfile, missing manifest), that IS a blocking
+guardrail — report it as such.
+
 CHECK THESE GUARDRAILS:
 
 1. **Test Framework** — Does the repo have a test runner (vitest, jest, pytest, cargo test, etc.)?
