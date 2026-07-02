@@ -99,18 +99,32 @@ lastlight-evals run --compare                   # cross-vendor set (only models 
 lastlight-evals run triage --runs 3             # repeat each case 3× (worst-case verdict, mean metrics)
 lastlight-evals run triage --no-open            # don't open the report
 # Plain layout: add --overlay .   (e.g. lastlight-evals run triage --overlay .)
+
+lastlight-evals serve                           # browse past runs in the dashboard (no models run)
+lastlight-evals clean --dry-run                 # list killed/crashed runs that are stuck "running"
+lastlight-evals clean                           # finalize them (mark interrupted; --delete to remove)
 ```
 
-Output lands in `./eval-results/<tiers>/`: `index.html` (scorecard),
-`scorecard.json`, `predictions.jsonl` (SWE-bench format). Re-render a report
-without re-running: `lastlight-evals report ./eval-results/triage`.
+Each run lands in its own dir `./eval-results/<tiers>/<runId>/`: `scorecard.json`
++ `predictions.jsonl` (SWE-bench format). The report is a **JSON-driven dashboard
+SPA**, not generated HTML — `run` starts a local server and opens it; browse every
+past run later with `lastlight-evals serve`. In the dashboard a code-fix row's
+**files** button opens the agent's captured diff and **log** shows the per-phase
+agent session.
+
+If a run is killed or crashes mid-flight it stays stuck showing "running" (its
+scorecard never got its final write). `lastlight-evals clean` finalizes such runs
+— marks them *interrupted* (default; keeps the partial scorecard + transcripts)
+or `--delete` removes the run dir.
 
 ## 5. Author eval cases (optional)
 
-Two tiers ship: **triage** (cheap, issue-triage) and **code-fix** (heavy, build
-workflow with held-out tests). To add cases or a custom tier, read
-**`references/instance-schema.md`** — it has the `SweBenchInstance` schema, the
-exact files to create for each tier, and worked examples.
+Three tiers ship: **triage** (cheap, issue-triage), **code-fix** (heavy, build
+workflow with held-out tests), and **pr-review** (PR-review precision, graded by
+an LLM judge against a gold set → precision / recall / **F0.5**). To add cases or
+a custom tier, read **`references/instance-schema.md`** — it has the
+`SweBenchInstance` schema, the exact files to create for each tier, and worked
+examples.
 
 Quick shape (paths are relative to the workspace's `evals/` dir):
 - **Triage case:** append a `SweBenchInstance` to `evals/datasets/triage/instances.json`
@@ -118,6 +132,12 @@ Quick shape (paths are relative to the workspace's `evals/` dir):
 - **Code-fix case:** add the instance to `evals/datasets/code-fix/instances.json` **and**
   create `evals/datasets/code-fix/repos/<instance_id>/` (fixture repo at base) +
   `evals/datasets/code-fix/tests/<instance_id>/` (held-out tests applied at grade time).
+- **PR-review case:** a `SweBenchInstance` with a `pr` fixture (base/head refs +
+  commits, checked out at the PR head) and a `review_gold` set (severity +
+  description). The `pr-review` tier ships empty — populate the full Martian
+  [Code Review Bench](https://codereview.withmartian.com/) 50 with
+  `npx tsx scripts/import-martian.ts`. Grading needs a judge model
+  (`EVAL_JUDGE_MODEL`, else a strong default per provider key).
 - **Custom tier:** a new `evals/datasets/<tier>/` with `tier.json` +
   `instances.json` (+ `repos/` & `tests/` for code-fix-style tiers). Discovery is
   automatic — no code change.

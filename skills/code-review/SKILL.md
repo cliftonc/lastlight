@@ -1,7 +1,7 @@
 ---
 name: code-review
-description: The shared rubric for reviewing a code change — finding tiers (Critical/Important/Suggestions/Nits) and what to check (correctness, security, edge cases, regression risk, test coverage). Use when reviewing a PR or a branch diff.
-version: 1.0.0
+description: The shared rubric for reviewing a code change — precision-first, high-signal findings only (Critical/Important), plus what to check (correctness, security, edge cases, regression risk, test coverage). Use when reviewing a PR or a branch diff.
+version: 2.0.0
 tags: [review, code-quality]
 ---
 
@@ -17,17 +17,40 @@ modified functions, check callers of anything whose signature or behaviour
 changed for regression risk, and check that tests cover the actual risk areas,
 not just the happy path.
 
+## Precision first — post only what matters
+
+A review is only useful if people trust it. A noisy reviewer gets muted; every
+low-value comment you post spends the credibility of the ones that matter. So
+the bar is **high-signal only**:
+
+- **Post only Critical and Important findings.** Suggestions and Nits (below)
+  are *not* worth a formal review comment on their own — drop them, or fold at
+  most one genuinely valuable line into the summary. When in doubt, leave it out.
+- **If you cannot name the concrete impact — what breaks, and for which input or
+  caller — do not post it.** "This could be cleaner" is not a finding; "this
+  crashes when `items` is empty because line 42 indexes `[0]`" is.
+- **Confidence gate.** Before you finalise, re-read each finding against the
+  actual code and try to *refute your own claim*. If you can't defend it against
+  what the code actually does (not what you assumed), drop it. A missed marginal
+  issue costs far less than a wrong one.
+
 ## Finding tiers
 
-Categorise every finding into exactly one tier:
+Categorise every finding into exactly one tier. **Only Critical and Important
+are posted** (see Precision first):
 
 - **Critical** — security issues, data loss, breaking changes, silent
   data-dropping (see Correctness below). Blocks merge.
 - **Important** — missing tests, performance problems, type errors, **avoidable
   duplication**, **excessive complexity**, **compiler-silencing assertions**.
   Should fix.
-- **Suggestions** — clarity, naming, minor DRY tidy-ups. Nice to have.
-- **Nits** — style, formatting. Optional.
+- **Suggestions** — clarity, naming, minor DRY tidy-ups. *Not posted* — noise
+  in a formal review.
+- **Nits** — style, formatting. *Not posted* — this is the linter's job.
+
+Every posted finding carries a **one-line concrete impact**: the consequence
+(what breaks / for whom) and, where it helps, the fix. That local reasoning is
+what makes a comment actionable rather than a vague worry.
 
 ## What to check
 
