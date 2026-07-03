@@ -94,6 +94,11 @@ export interface ModelSummary {
   codeFixTotal: number;
   behavioralOk: number;
   behavioralTotal: number;
+  /** PR-review tier: N cases graded by the judge + mean precision/recall/F0.5. */
+  reviewTotal: number;
+  avgPrecision: number;
+  avgRecall: number;
+  avgF05: number;
   avgInputTokens: number;
   avgCachedTokens: number;
   avgOutputTokens: number;
@@ -161,6 +166,24 @@ export function aggregateTrials(trials: InstanceResult[]): InstanceResult {
     out.model_patch = (ok.find((t) => t.resolved) ?? ok[0]).model_patch;
   }
 
+  // review (pr-review): mean the metrics across non-errored trials; carry a
+  // representative trial's FP/FN lists (the worst — lowest F0.5 — for inspection).
+  const rev = ok.filter((t) => t.review);
+  if (rev.length) {
+    const rep = [...rev].sort((a, b) => (a.review!.f05 - b.review!.f05))[0];
+    out.review = {
+      precision: mean(rev.map((t) => t.review!.precision)),
+      recall: mean(rev.map((t) => t.review!.recall)),
+      f05: mean(rev.map((t) => t.review!.f05)),
+      posted: Math.round(mean(rev.map((t) => t.review!.posted))),
+      gold: rev[0].review!.gold,
+      matched: Math.round(mean(rev.map((t) => t.review!.matched))),
+      falsePositives: rep.review!.falsePositives,
+      falseNegatives: rep.review!.falseNegatives,
+    };
+    out.reviewTrials = rev.length;
+  }
+
   return out;
 }
 
@@ -177,6 +200,7 @@ export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
   for (const [model, list] of byModel) {
     const codeFix = list.filter((r) => r.resolved !== undefined);
     const behavioral = list.filter((r) => r.behavioral !== undefined && !r.error);
+    const review = list.filter((r) => r.review !== undefined && !r.error);
     const durations = list.map((r) => r.durationMs).sort((a, b) => a - b);
     models.push({
       model,
@@ -185,6 +209,10 @@ export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
       codeFixTotal: codeFix.length,
       behavioralOk: behavioral.filter((r) => r.behavioral?.ok).length,
       behavioralTotal: behavioral.length,
+      reviewTotal: review.length,
+      avgPrecision: avg(review.map((r) => r.review!.precision)),
+      avgRecall: avg(review.map((r) => r.review!.recall)),
+      avgF05: avg(review.map((r) => r.review!.f05)),
       avgInputTokens: avg(list.map((r) => r.inputTokens)),
       avgCachedTokens: avg(list.map((r) => r.cachedTokens)),
       avgOutputTokens: avg(list.map((r) => r.outputTokens)),
@@ -201,11 +229,32 @@ export function summarize(results: InstanceResult[]): Scorecard {
 }
 
 export function renderTable(card: Scorecard, labels: Record<string, string> = {}): string {
-  const header = ["model", "code-fix", "behavioral", "in tok", "cached", "out tok", "cost $", "p50", "err"];
+  // Show the pr-review columns (prec/rec/F0.5) only when some run graded a
+  // review — otherwise keep the table lean for triage/code-fix.
+  const hasReview = card.models.some((m) => m.reviewTotal > 0);
+  const header = [
+    "model",
+    "code-fix",
+    "behavioral",
+    ...(hasReview ? ["prec", "rec", "F0.5"] : []),
+    "in tok",
+    "cached",
+    "out tok",
+    "cost $",
+    "p50",
+    "err",
+  ];
   const rows = card.models.map((m) => [
     labels[m.model] ?? m.model,
     m.codeFixTotal ? `${m.codeFixResolved}/${m.codeFixTotal}` : "—",
     m.behavioralTotal ? `${m.behavioralOk}/${m.behavioralTotal}` : "—",
+    ...(hasReview
+      ? [
+          m.reviewTotal ? m.avgPrecision.toFixed(2) : "—",
+          m.reviewTotal ? m.avgRecall.toFixed(2) : "—",
+          m.reviewTotal ? m.avgF05.toFixed(2) : "—",
+        ]
+      : []),
     fmtTokens(m.avgInputTokens),
     fmtTokens(m.avgCachedTokens),
     fmtTokens(m.avgOutputTokens),

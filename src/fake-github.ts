@@ -15,12 +15,20 @@
 import { createServer } from "node:http";
 import { type AddressInfo } from "node:net";
 
-import type { IssueSeed } from "./schema.js";
+import type { IssueSeed, PullSeed } from "./schema.js";
 
 export interface RecordedCall {
   method: string;
   path: string;
   body?: unknown;
+}
+
+/** A review the workflow submitted during the run, in the shape the pr-review
+ * grader consumes (decoupled from the fake's internal storage). */
+export interface SubmittedReview {
+  body: string;
+  event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" | "PENDING";
+  comments: { path: string; line?: number; body: string }[];
 }
 
 interface Label {
@@ -46,14 +54,54 @@ interface Issue {
   updated_at: string;
   html_url: string;
 }
+interface InlineComment {
+  id: number;
+  user: { login: string };
+  path: string;
+  line?: number;
+  position?: number;
+  body: string;
+  created_at: string;
+}
+interface Review {
+  id: number;
+  user: { login: string };
+  body: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "PENDING";
+  commit_id?: string;
+  submitted_at: string;
+  /** Inline comments submitted with this review (non-standard on the wire, but
+   * handy for grading — the GET endpoint serves them under /pulls/:n/comments). */
+  comments: InlineComment[];
+}
 interface PullRequest {
   number: number;
   title: string;
   body: string;
-  head: { ref: string };
-  base: { ref: string };
+  head: { ref: string; sha: string };
+  base: { ref: string; sha: string };
   state: string;
+  merged: boolean;
+  user: { login: string };
   html_url: string;
+  reviews: Review[];
+  reviewComments: InlineComment[];
+  /** Reviews the workflow SUBMITTED during the run (for pr-review grading). */
+  submitted: Review[];
+}
+
+/** How the create-review `event` maps to a review `state`. */
+function eventToState(event: string | undefined): Review["state"] {
+  switch (event) {
+    case "APPROVE":
+      return "APPROVED";
+    case "REQUEST_CHANGES":
+      return "CHANGES_REQUESTED";
+    case "COMMENT":
+      return "COMMENTED";
+    default:
+      return "PENDING";
+  }
 }
 
 export interface FakeGitHub {
@@ -66,6 +114,9 @@ export interface FakeGitHub {
   commentsOn: (issueNumber: number) => string[];
   issueState: (issueNumber: number) => "open" | "closed" | undefined;
   pulls: () => PullRequest[];
+  /** Reviews the workflow submitted on a PR (event + body + inline comments) —
+   * the pr-review grade reads these. */
+  submittedReviews: (prNumber: number) => SubmittedReview[];
 }
 
 export interface FakeGitHubOptions {
@@ -73,6 +124,9 @@ export interface FakeGitHubOptions {
   repo: string;
   defaultBranch?: string;
   issues?: IssueSeed[];
+  /** PRs served by the fake (pr-review tier). Each also gets a shadow issue so
+   * the issue-comment / labels endpoints work on the PR number. */
+  pulls?: PullSeed[];
   /** Repo labels that already exist (createLabel on these returns 422). */
   existingLabels?: string[];
 }
@@ -112,6 +166,62 @@ export async function startFakeGitHub(opts: FakeGitHubOptions): Promise<FakeGitH
 
   const pulls: PullRequest[] = [];
   let pullSeq = 1;
+  let reviewSeq = 5000;
+
+  // Seed PRs (pr-review tier). Each PR also gets a SHADOW issue so the
+  // issue-comment + labels endpoints work on the PR number (GitHub models a PR
+  // as an issue), matching what the pr-review skill calls.
+  for (const seed of opts.pulls ?? []) {
+    pullSeq = Math.max(pullSeq, seed.number + 1);
+    pulls.push({
+      number: seed.number,
+      title: seed.title,
+      body: seed.body,
+      head: { ref: seed.head_ref, sha: seed.head_commit },
+      base: { ref: seed.base_ref, sha: seed.base_commit },
+      state: seed.state ?? "open",
+      merged: false,
+      user: { login: seed.user ?? "contributor" },
+      html_url: `https://github.com/${owner}/${repo}/pull/${seed.number}`,
+      reviews: (seed.reviews ?? []).map((r) => ({
+        id: reviewSeq++,
+        user: { login: r.user },
+        body: r.body,
+        state: r.state ?? "COMMENTED",
+        submitted_at: NOW,
+        comments: [],
+      })),
+      reviewComments: (seed.review_comments ?? []).map((c) => ({
+        id: commentSeq++,
+        user: { login: c.user },
+        path: c.path,
+        line: c.line,
+        body: c.body,
+        created_at: NOW,
+      })),
+      submitted: [],
+    });
+    // Shadow issue so /issues/:n[/comments|/labels] serve the PR number.
+    if (!issues.has(seed.number)) {
+      issues.set(seed.number, {
+        number: seed.number,
+        title: seed.title,
+        body: seed.body,
+        state: seed.state ?? "open",
+        user: { login: seed.user ?? "contributor" },
+        labels: [],
+        comments: (seed.issue_comments ?? []).map((c) => ({
+          id: commentSeq++,
+          user: { login: c.user },
+          body: c.body,
+          created_at: NOW,
+        })),
+        created_at: NOW,
+        updated_at: NOW,
+        html_url: `https://github.com/${owner}/${repo}/pull/${seed.number}`,
+      });
+    }
+  }
 
   const repoBase = `/repos/${owner}/${repo}`;
 
@@ -269,27 +379,121 @@ export async function startFakeGitHub(opts: FakeGitHubOptions): Promise<FakeGitH
     // Pulls collection: /repos/:owner/:repo/pulls
     if (path === `${repoBase}/pulls`) {
       if (method === "GET") {
-        json(200, pulls);
+        json(200, pulls.map(serializePull));
         return true;
       }
       if (method === "POST") {
         const b = body as { title: string; body?: string; head: string; base: string };
+        const num = pullSeq++;
         const pr: PullRequest = {
-          number: pullSeq++,
+          number: num,
           title: b.title,
           body: b.body ?? "",
-          head: { ref: stripOwnerPrefix(b.head, owner) },
-          base: { ref: b.base },
+          head: { ref: stripOwnerPrefix(b.head, owner), sha: "0".repeat(40) },
+          base: { ref: b.base, sha: "0".repeat(40) },
           state: "open",
-          html_url: `https://github.com/${owner}/${repo}/pull/${pullSeq - 1}`,
+          merged: false,
+          user: { login: "last-light[bot]" },
+          html_url: `https://github.com/${owner}/${repo}/pull/${num}`,
+          reviews: [],
+          reviewComments: [],
+          submitted: [],
         };
         pulls.push(pr);
-        json(201, pr);
+        json(201, serializePull(pr));
+        return true;
+      }
+    }
+
+    // Per-PR routes: /repos/:owner/:repo/pulls/:n[/reviews|/comments]
+    const pullMatch = path.match(new RegExp(`^${escapeRe(repoBase)}/pulls/(\\d+)(/reviews|/comments)?$`));
+    if (pullMatch) {
+      const num = Number(pullMatch[1]);
+      const sub = pullMatch[2];
+      const pr = pulls.find((p) => p.number === num);
+      if (!pr) {
+        json(404, { message: `pull ${num} not found` });
+        return true;
+      }
+
+      // /pulls/:n
+      if (!sub && method === "GET") {
+        json(200, serializePull(pr));
+        return true;
+      }
+
+      // /pulls/:n/reviews — list existing, or SUBMIT one (create_pull_request_review).
+      if (sub === "/reviews") {
+        if (method === "GET") {
+          json(200, pr.reviews.map(serializeReview));
+          return true;
+        }
+        if (method === "POST") {
+          const b = (body ?? {}) as {
+            body?: string;
+            event?: string;
+            commit_id?: string;
+            comments?: { path: string; line?: number; position?: number; body: string }[];
+          };
+          const review: Review = {
+            id: reviewSeq++,
+            user: { login: "last-light[bot]" },
+            body: b.body ?? "",
+            state: eventToState(b.event),
+            commit_id: b.commit_id ?? pr.head.sha,
+            submitted_at: NOW,
+            comments: (b.comments ?? []).map((c) => ({
+              id: commentSeq++,
+              user: { login: "last-light[bot]" },
+              path: c.path,
+              line: c.line,
+              position: c.position,
+              body: c.body,
+              created_at: NOW,
+            })),
+          };
+          pr.reviews.push(review);
+          pr.submitted.push(review);
+          pr.reviewComments.push(...review.comments);
+          json(200, serializeReview(review));
+          return true;
+        }
+      }
+
+      // /pulls/:n/comments — inline review comments.
+      if (sub === "/comments" && method === "GET") {
+        json(200, pr.reviewComments);
         return true;
       }
     }
 
     return false;
+  }
+
+  function serializePull(pr: PullRequest) {
+    return {
+      number: pr.number,
+      title: pr.title,
+      body: pr.body,
+      state: pr.state,
+      merged: pr.merged,
+      head: pr.head,
+      base: pr.base,
+      user: pr.user,
+      draft: false,
+      html_url: pr.html_url,
+    };
+  }
+
+  function serializeReview(r: Review) {
+    return {
+      id: r.id,
+      user: r.user,
+      body: r.body,
+      state: r.state,
+      commit_id: r.commit_id,
+      submitted_at: r.submitted_at,
+    };
   }
 
   function serializeIssue(issue: Issue) {
@@ -319,7 +523,27 @@ export async function startFakeGitHub(opts: FakeGitHubOptions): Promise<FakeGitH
     commentsOn: (n) => (issues.get(n)?.comments ?? []).map((c) => c.body),
     issueState: (n) => issues.get(n)?.state,
     pulls: () => pulls,
+    submittedReviews: (n) =>
+      (pulls.find((p) => p.number === n)?.submitted ?? []).map((r) => ({
+        body: r.body,
+        event: stateToEvent(r.state),
+        comments: r.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
+      })),
   };
+}
+
+/** Inverse of {@link eventToState} — the grader reports the review's event. */
+function stateToEvent(state: Review["state"]): SubmittedReview["event"] {
+  switch (state) {
+    case "APPROVED":
+      return "APPROVE";
+    case "CHANGES_REQUESTED":
+      return "REQUEST_CHANGES";
+    case "COMMENTED":
+      return "COMMENT";
+    default:
+      return "PENDING";
+  }
 }
 
 function escapeRe(s: string): string {

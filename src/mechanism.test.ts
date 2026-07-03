@@ -18,7 +18,7 @@ import { startFakeGitHub } from "./fake-github.js";
 import { seedWorkspace, seedWorkspaceFromGit } from "./seed.js";
 import { gitDiffAgainstBase } from "./run-instance.js";
 import { execFileSync } from "node:child_process";
-import { gradeExecution, gradeBehavioral, gradeTriage } from "./grade.js";
+import { gradeExecution, gradeBehavioral, gradeTriage, gradeReview, fBeta } from "./grade.js";
 import { loadMergedConfig, resolvePhaseModel } from "./config.js";
 import { modelsArm, configArm, releaseOverlayGuard } from "./arm.js";
 
@@ -71,6 +71,144 @@ describe("fake GitHub + agentic-pi github tools (baseUrl seam)", () => {
       expect(miss.ok).toBe(false);
     } finally {
       await fake.close();
+    }
+  });
+});
+
+describe("fake GitHub — PR + review endpoints (pr-review tier)", () => {
+  const seedPr = () =>
+    startFakeGitHub({
+      owner: "acme",
+      repo: "widget",
+      pulls: [
+        {
+          number: 42,
+          title: "Add pagination",
+          body: "Adds cursor pagination",
+          base_ref: "main",
+          head_ref: "feature/paginate",
+          base_commit: "a".repeat(40),
+          head_commit: "b".repeat(40),
+          user: "contributor",
+          reviews: [{ user: "human", body: "LGTM once tests pass", state: "COMMENTED" }],
+          review_comments: [{ user: "human", path: "src/page.ts", line: 10, body: "off-by-one?" }],
+          issue_comments: [{ user: "human", body: "thanks for the PR" }],
+        },
+      ],
+    });
+
+  it("serves the seeded PR, its prior reviews/comments, and the shadow issue", async () => {
+    const fake = await seedPr();
+    try {
+      const base = fake.url;
+      const pr = await (await fetch(`${base}/repos/acme/widget/pulls/42`)).json();
+      expect(pr.number).toBe(42);
+      expect(pr.merged).toBe(false);
+      expect(pr.head.sha).toBe("b".repeat(40));
+      expect(pr.base.ref).toBe("main");
+
+      const reviews = await (await fetch(`${base}/repos/acme/widget/pulls/42/reviews`)).json();
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0].state).toBe("COMMENTED");
+
+      const comments = await (await fetch(`${base}/repos/acme/widget/pulls/42/comments`)).json();
+      expect(comments[0].path).toBe("src/page.ts");
+
+      // Shadow issue → issue-comment endpoint works on the PR number.
+      const issueComments = await (await fetch(`${base}/repos/acme/widget/issues/42/comments`)).json();
+      expect(issueComments.some((c: { body: string }) => /thanks/i.test(c.body))).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("records a submitted review and exposes it for grading", async () => {
+    const fake = await seedPr();
+    try {
+      const res = await fetch(`${fake.url}/repos/acme/widget/pulls/42/reviews`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          event: "REQUEST_CHANGES",
+          body: "Two blocking issues below.",
+          comments: [{ path: "src/page.ts", line: 12, body: "negative slice crashes" }],
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      const submitted = fake.submittedReviews(42);
+      expect(submitted).toHaveLength(1);
+      expect(submitted[0].event).toBe("REQUEST_CHANGES");
+      expect(submitted[0].comments[0].path).toBe("src/page.ts");
+
+      // The behavioral proxy sees it.
+      const beh = gradeBehavioral(
+        { review_submitted: { event: "REQUEST_CHANGES", body_matches: "blocking" } },
+        fake,
+        { issueNumber: 42, branch: "feature/paginate" },
+      );
+      expect(beh.ok).toBe(true);
+
+      // Wrong expected event → miss.
+      const miss = gradeBehavioral({ review_submitted: { event: "APPROVE" } }, fake, {
+        issueNumber: 42,
+        branch: "feature/paginate",
+      });
+      expect(miss.ok).toBe(false);
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("pr-review grade — F0.5 math + judge-free paths", () => {
+  it("fBeta(0.5) weights precision 2× over recall", () => {
+    expect(fBeta(1, 1, 0.5)).toBeCloseTo(1, 6);
+    expect(fBeta(0, 0, 0.5)).toBe(0);
+    // P=1,R=0.5 should beat P=0.5,R=1 (precision-weighted).
+    expect(fBeta(1, 0.5, 0.5)).toBeGreaterThan(fBeta(0.5, 1, 0.5));
+    // Closed-form check: P=0.8, R=0.4 → 1.25*0.32 / (0.25*0.8 + 0.4) = 0.4/0.6.
+    expect(fBeta(0.8, 0.4, 0.5)).toBeCloseTo(0.4 / 0.6, 6);
+  });
+
+  it("an empty review scores 0 against a non-empty gold set (no judge call)", async () => {
+    const g = await gradeReview({ gold: [{ severity: "high", description: "x" }], reviews: [] });
+    expect(g.precision).toBe(0);
+    expect(g.recall).toBe(0);
+    expect(g.f05).toBe(0);
+    expect(g.falseNegatives).toHaveLength(1);
+    expect(g.error).toBeUndefined();
+  });
+
+  it("an empty review on an empty gold set is perfect (no judge call)", async () => {
+    const g = await gradeReview({ gold: [], reviews: [] });
+    expect(g.precision).toBe(1);
+    expect(g.recall).toBe(1);
+    expect(g.f05).toBe(1);
+  });
+
+  it("a posted review with no provider key is ungraded (error), not a silent zero", async () => {
+    const saved = {
+      a: process.env.ANTHROPIC_API_KEY,
+      o: process.env.OPENAI_API_KEY,
+      r: process.env.OPENROUTER_API_KEY,
+      j: process.env.EVAL_JUDGE_MODEL,
+    };
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.EVAL_JUDGE_MODEL;
+    try {
+      const g = await gradeReview({
+        gold: [{ severity: "high", description: "negative slice" }],
+        reviews: [{ body: "Found a bug in slicing", event: "COMMENT", comments: [] }],
+      });
+      expect(g.error).toBeTruthy();
+    } finally {
+      if (saved.a !== undefined) process.env.ANTHROPIC_API_KEY = saved.a;
+      if (saved.o !== undefined) process.env.OPENAI_API_KEY = saved.o;
+      if (saved.r !== undefined) process.env.OPENROUTER_API_KEY = saved.r;
+      if (saved.j !== undefined) process.env.EVAL_JUDGE_MODEL = saved.j;
     }
   });
 });

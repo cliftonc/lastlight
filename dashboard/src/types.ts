@@ -11,6 +11,11 @@ export interface ModelSummary {
   codeFixTotal: number;
   behavioralOk: number;
   behavioralTotal: number;
+  /** PR-review tier: N cases graded + mean precision/recall/F0.5. */
+  reviewTotal: number;
+  avgPrecision: number;
+  avgRecall: number;
+  avgF05: number;
   avgInputTokens: number;
   avgCachedTokens: number;
   avgOutputTokens: number;
@@ -72,6 +77,19 @@ export interface InstanceResult {
    * `executionLog`; powers the "files" diff viewer. Absent for triage. */
   modelPatchFile?: string;
   behavioral?: { ok: boolean; checks: Check[] };
+  /** PR-review grade (pr-review tier): the posted review scored against the gold
+   * set via LLM judge. F0.5 weights precision 2× over recall. */
+  review?: {
+    precision: number;
+    recall: number;
+    f05: number;
+    posted: number;
+    gold: number;
+    matched: number;
+    falsePositives: { description: string; file?: string }[];
+    falseNegatives: { description: string; file?: string; severity: string }[];
+  };
+  reviewTrials?: number;
   trials?: number;
   trialErrors?: number;
   behavioralPass?: number;

@@ -30,6 +30,56 @@ export interface IssueSeed {
   state?: "open" | "closed";
 }
 
+/** A prior PR-level review to seed (the pr-review skill reads the existing
+ * discussion and must not re-raise resolved threads). */
+export interface ReviewSeed {
+  user: string;
+  body: string;
+  /** APPROVED / CHANGES_REQUESTED / COMMENTED. */
+  state?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
+}
+
+/** A prior inline review comment to seed (path + line + body). */
+export interface ReviewCommentSeed {
+  user: string;
+  path: string;
+  line?: number;
+  body: string;
+}
+
+/** Seed state for one pull request, served by the fake GitHub for the
+ * `pr-review` tier. The head/base refs + commits also drive the workspace
+ * checkout (see {@link seedWorkspacePrReview}); the `pull_number` lets the seed
+ * fetch the immutable `refs/pull/<n>/head` ref so a squash-merged PR's head
+ * commit is still reachable. */
+export interface PullSeed {
+  number: number;
+  title: string;
+  body: string;
+  base_ref: string;
+  head_ref: string;
+  base_commit: string;
+  head_commit: string;
+  state?: "open" | "closed";
+  user?: string;
+  /** Prior PR discussion the skill reads (advance, don't restart). */
+  reviews?: ReviewSeed[];
+  review_comments?: ReviewCommentSeed[];
+  issue_comments?: IssueCommentSeed[];
+}
+
+/** One human-verified "golden comment" — a real issue a reviewer should catch.
+ * Mirrors Martian's Code Review Bench gold-set shape. Used only to grade the
+ * `pr-review` tier (LLM judge match → precision/recall/F0.5). */
+export interface GoldComment {
+  /** File the issue lives in. Optional — Martian's gold set carries only a
+   * description + severity, so the judge matches on substance, not location. */
+  file?: string;
+  line?: number;
+  severity: "low" | "medium" | "high" | "critical";
+  description: string;
+}
+
 /** Assertions on the GitHub mutations the workflow performed (recorded by the
  * fake server). Every field is optional — only the ones present are checked. */
 export interface ExpectGithub {
@@ -48,6 +98,13 @@ export interface ExpectGithub {
     head_is_branch?: boolean;
     /** PR title must match this (case-insensitive) regex. */
     title_matches?: string;
+  };
+  /** A formal PR review must have been submitted (pr-review tier). A cheap
+   * deterministic proxy alongside the LLM-judge precision/recall grade. */
+  review_submitted?: {
+    event?: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+    /** The review body must match this (case-insensitive) regex. */
+    body_matches?: string;
   };
 }
 
@@ -97,10 +154,16 @@ export interface SweBenchInstance {
   workflow?: string;
   /** Issue fixtures served by the fake GitHub (triage & code-fix). */
   issue?: IssueSeed;
+  /** PR fixture served by the fake GitHub (pr-review tier). Drives both the
+   * mocked PR endpoints and the head-ref workspace checkout. */
+  pr?: PullSeed;
   /** Behavioral grading expectations on recorded GitHub calls. */
   expect_github?: ExpectGithub;
   /** For triage: the gold triage decision (category + state role names). */
   triage_gold?: { category?: string; state?: string };
+  /** For pr-review: the human-verified gold set the posted review is scored
+   * against (LLM judge → precision/recall/F0.5). */
+  review_gold?: GoldComment[];
 }
 
 // ── Results ───────────────────────────────────────────────────────────────
@@ -154,6 +217,24 @@ export interface InstanceResult {
   passToPass?: { id: string; pass: boolean }[];
   /** Behavioral grade: did the workflow take the expected GitHub actions? */
   behavioral?: { ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] };
+  /** PR-review grade (pr-review tier): the posted review scored against the gold
+   * set via LLM judge. `posted` = distinct findings the agent raised, `gold` =
+   * golden comments, `matched` = findings that matched a gold comment. F0.5
+   * weights precision 2× over recall (Martian's headline metric). */
+  review?: {
+    precision: number;
+    recall: number;
+    f05: number;
+    posted: number;
+    gold: number;
+    matched: number;
+    /** Findings the agent raised that matched no gold comment. */
+    falsePositives: { description: string; file?: string }[];
+    /** Gold comments the agent missed. */
+    falseNegatives: { description: string; file?: string; severity: string }[];
+  };
+  /** When `--runs N`: how many trials the mean review metrics aggregate. */
+  reviewTrials?: number;
   /** When `--runs N` (N>1): how many non-errored trials this result aggregates,
    * and how many of them passed each verdict. The binary `behavioral.ok` /
    * `resolved` above are WORST-case (true only if every trial passed); these

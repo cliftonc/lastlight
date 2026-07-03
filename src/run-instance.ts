@@ -31,9 +31,9 @@ import {
 import type { SweBenchInstance, InstanceResult, PhaseSession } from "./schema.js";
 import type { Arm } from "./arm.js";
 import { startFakeGitHub } from "./fake-github.js";
-import { seedWorkspace, seedWorkspaceFromGit, isRealSha, type SeedResult } from "./seed.js";
+import { seedWorkspace, seedWorkspaceFromGit, seedWorkspacePrReview, isRealSha, type SeedResult } from "./seed.js";
 import { collectMetrics, drainSessions, readSessionLog, listSessionFiles, concatJsonl } from "./metrics.js";
-import { gradeBehavioral, gradeExecution, gradeTriage } from "./grade.js";
+import { gradeBehavioral, gradeExecution, gradeTriage, gradeReview } from "./grade.js";
 
 export interface RunInstanceOptions {
   /**
@@ -106,7 +106,12 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
   const start = Date.now();
   const { owner, name } = splitRepo(inst.repo);
   const workflowName = inst.workflow ?? opts.defaultWorkflow ?? "issue-triage";
-  const isCodeFix = workflowName !== "issue-triage";
+  // Three tier shapes: triage (no repo), pr-review (checkout PR head, review-only,
+  // judge grade), and code-fix (everything else — seed a base checkout + execution
+  // grade). Keeping these explicit avoids the old `!== "issue-triage"` binary
+  // misclassifying pr-review as code-fix.
+  const isPrReview = workflowName === "pr-review";
+  const isCodeFix = !isPrReview && workflowName !== "issue-triage";
 
   const stateDir = opts.stateDir ?? mkdtempSync(join(tmpdir(), "ll-eval-"));
   const sessionsDir = join(stateDir, "agent-sessions");
@@ -114,15 +119,22 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
   // does not create that parent recursively — pre-create it so token/cost
   // metrics are captured (collectMetrics reads those jsonl files).
   mkdirSync(join(sessionsDir, "projects"), { recursive: true });
-  const taskId = `${name}-${inst.issue?.number ?? 0}-${workflowName}-${slug(inst.instance_id)}`;
-  const issueNumber = inst.issue?.number ?? 1;
-  const branch = isCodeFix ? `lastlight/${slug(inst.instance_id)}` : "main";
+  // The target number is the PR number for pr-review, else the issue number.
+  const targetNumber = inst.pr?.number ?? inst.issue?.number ?? 1;
+  const taskId = `${name}-${targetNumber}-${workflowName}-${slug(inst.instance_id)}`;
+  const issueNumber = targetNumber;
+  const branch = isCodeFix
+    ? `lastlight/${slug(inst.instance_id)}`
+    : isPrReview
+      ? inst.pr?.head_ref ?? "main"
+      : "main";
 
-  // 1. Fake GitHub, seeded with the issue.
+  // 1. Fake GitHub, seeded with the issue and/or PR.
   const fake = await startFakeGitHub({
     owner,
     repo: name,
     issues: inst.issue ? [inst.issue] : [],
+    pulls: inst.pr ? [inst.pr] : [],
     existingLabels: inst.issue?.labels ?? [],
   });
 
@@ -156,7 +168,7 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
     // captured diff (5b') is the repo's change alone. We keep the SeedResult to
     // diff the agent's final tree against the seeded base (the agent commits +
     // pushes, so a `git diff HEAD` would be empty — we diff against the base).
-    const repoSubdir = isCodeFix ? name : undefined;
+    const repoSubdir = isCodeFix || isPrReview ? name : undefined;
     let seed: SeedResult | undefined;
     if (isCodeFix) {
       const fixtureDir = opts.datasetDir ? join(opts.datasetDir, "repos", inst.instance_id) : undefined;
@@ -165,6 +177,20 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       } else if (isRealSha(inst.base_commit) && /^[^/]+\/[^/]+$/.test(inst.repo)) {
         seed = seedWorkspaceFromGit({ stateDir, taskId, repo: inst.repo, baseCommit: inst.base_commit, branch, repoSubdir });
       }
+    } else if (isPrReview && inst.pr && /^[^/]+\/[^/]+$/.test(inst.repo)) {
+      // Check out the PR HEAD into a `<repo>/` subdir (skills/pr-review's
+      // pre-clone contract), with an offline origin carrying base + head.
+      seed = seedWorkspacePrReview({
+        stateDir,
+        taskId,
+        repo: inst.repo,
+        pullNumber: inst.pr.number,
+        baseRef: inst.pr.base_ref,
+        headRef: inst.pr.head_ref,
+        baseCommit: inst.pr.base_commit,
+        headCommit: inst.pr.head_commit,
+        repoSubdir,
+      });
     }
     // The repo's working dir (the nested subdir when seeded) — where grading and
     // the diff run. Falls back to the workspace root if nothing was seeded.
@@ -176,8 +202,8 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       owner,
       repo: name,
       issueNumber,
-      issueTitle: inst.issue?.title ?? inst.instance_id,
-      issueBody: inst.issue?.body ?? inst.problem_statement,
+      issueTitle: (isPrReview ? inst.pr?.title : inst.issue?.title) ?? inst.instance_id,
+      issueBody: (isPrReview ? inst.pr?.body : inst.issue?.body) ?? inst.problem_statement,
       issueLabels: inst.issue?.labels ?? [],
       commentBody: "",
       sender: "eval",
@@ -185,6 +211,10 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       taskId,
       issueDir: `.lastlight/issue-${issueNumber}`,
       bootstrapLabel: "lastlight:bootstrap",
+      // pr-review's Context block keys off `prNumber` — the skill goes straight
+      // to github_get_pull_request when it's set (buildPhasePrompt dumps every
+      // defined ctx field into the "Context:" block).
+      ...(isPrReview && inst.pr ? { prNumber: inst.pr.number, prTitle: inst.pr.title } : {}),
       // No prePopulateBranch → the runner never clones from GitHub; the agent
       // works in the dir we seeded above (or an empty dir for triage).
     };
@@ -330,6 +360,26 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       ok: behavioralExpect.ok && triage.ok,
       checks: [...behavioralExpect.checks, ...triage.checks],
     };
+
+    // 5b-pr. PR-review grade (pr-review only): the submitted review scored
+    // against the gold set by an LLM judge → precision / recall / F0.5. A judge
+    // failure is surfaced as a harness error (the case is ungraded) rather than a
+    // silent zero, so it doesn't masquerade as a real score.
+    if (isPrReview && inst.review_gold) {
+      const reviews = fake.submittedReviews(issueNumber);
+      const rg = await gradeReview({ gold: inst.review_gold, reviews });
+      result.review = {
+        precision: rg.precision,
+        recall: rg.recall,
+        f05: rg.f05,
+        posted: rg.posted,
+        gold: rg.gold,
+        matched: rg.matched,
+        falsePositives: rg.falsePositives,
+        falseNegatives: rg.falseNegatives,
+      };
+      if (rg.error) result.error = result.error ?? `review judge: ${rg.error}`;
+    }
 
     // 5b. Execution grade (code-fix only). Two modes:
     //   - Default (suite): run the repo's own `test_cmd` on the agent's final

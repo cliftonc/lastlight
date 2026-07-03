@@ -46,7 +46,7 @@ import { startServer, type RunningServer } from "./serve.js";
 import { runInit } from "./init.js";
 import { runAddCase } from "./add-case.js";
 import { runClean } from "./clean.js";
-import { ensureRepoCache, isRealSha } from "./seed.js";
+import { ensureRepoCache, ensurePrCommitsInCache, isRealSha } from "./seed.js";
 
 /** Minimal subset of the clack spinner we use. */
 interface Spinner {
@@ -493,6 +493,39 @@ async function runEval(): Promise<number> {
       s.stop(`Cached ${gitRepos.size} git-source repo(s).`);
     } catch (err) {
       s.stop(chalk.red(`Failed to cache a git-source repo: ${(err as Error).message}`));
+      p.outro(chalk.red("aborted"));
+      return 1;
+    }
+  }
+
+  // Prefetch pr-review checkouts: ensure each PR's base + head commit is in the
+  // repo-local mirror (fetching refs/pull/<n>/head for squash/rebase-merged PRs),
+  // SERIALLY and once per (repo, PR) before the batch — so per-run checkout is
+  // offline and concurrent fetches don't race.
+  const seenPr = new Set<string>();
+  const prToFetch = work.filter((w) => {
+    if (!w.inst.pr || !/^[^/]+\/[^/]+$/.test(w.inst.repo)) return false;
+    const k = `${w.inst.repo}#${w.inst.pr.number}`;
+    if (seenPr.has(k)) return false;
+    seenPr.add(k);
+    return true;
+  });
+  if (prToFetch.length) {
+    const s = p.spinner();
+    s.start(`Caching ${prToFetch.length} PR checkout(s)…`);
+    try {
+      for (const w of prToFetch) {
+        s.message(`Caching ${w.inst.repo}#${w.inst.pr!.number}…`);
+        ensurePrCommitsInCache({
+          repo: w.inst.repo,
+          pullNumber: w.inst.pr!.number,
+          baseCommit: w.inst.pr!.base_commit,
+          headCommit: w.inst.pr!.head_commit,
+        });
+      }
+      s.stop(`Cached ${prToFetch.length} PR checkout(s).`);
+    } catch (err) {
+      s.stop(chalk.red(`Failed to cache a PR checkout: ${(err as Error).message}`));
       p.outro(chalk.red("aborted"));
       return 1;
     }

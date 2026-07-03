@@ -37,6 +37,16 @@ export function tierMetric(tier: string): TierMetric {
       frac: (m) => (m.codeFixTotal ? `${m.codeFixResolved}/${m.codeFixTotal}` : "—"),
     };
   }
+  if (tier === "pr-review") {
+    // F0.5 is the headline (precision weighted 2× over recall), shown as a
+    // percentage with the underlying precision/recall in the fraction slot.
+    return {
+      label: "F0.5",
+      rate: (m) => (m.reviewTotal ? m.avgF05 : 0),
+      frac: (m) =>
+        m.reviewTotal ? `${(m.avgF05 * 100).toFixed(0)}% · P${m.avgPrecision.toFixed(2)}/R${m.avgRecall.toFixed(2)}` : "—",
+    };
+  }
   return {
     label: "behavioral",
     rate: (m) => (m.behavioralTotal ? m.behavioralOk / m.behavioralTotal : 0),

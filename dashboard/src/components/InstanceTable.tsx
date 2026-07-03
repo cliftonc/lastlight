@@ -6,6 +6,21 @@ import { Chip, Frac, Pill } from "./ui";
 import { SessionModal, type SessionSource } from "./SessionModal";
 import { DiffModal } from "./DiffModal";
 
+/** Hover text listing the review's false positives + missed gold comments, for
+ * eyeballing where a case lost precision/recall (Martian's gold set is known to
+ * be incomplete, so "false positives" are worth a look). */
+function reviewTooltip(r: InstanceResult): string {
+  const rev = r.review;
+  if (!rev) return "";
+  const fp = rev.falsePositives.length
+    ? "False positives:\n" + rev.falsePositives.map((f) => `- ${f.file ? `${f.file}: ` : ""}${f.description}`).join("\n")
+    : "No false positives.";
+  const fn = rev.falseNegatives.length
+    ? "Missed gold:\n" + rev.falseNegatives.map((f) => `- [${f.severity}] ${f.file ? `${f.file}: ` : ""}${f.description}`).join("\n")
+    : "No missed gold.";
+  return `${fp}\n\n${fn}`;
+}
+
 /** Per-instance result rows for one tier, plus running/queued rows for a live
  * run. Mirrors the old static report's detail table. */
 export function InstanceTable({
@@ -23,7 +38,8 @@ export function InstanceTable({
   scorecardUrl?: string;
 }) {
   const showCodeFix = tier === "code-fix";
-  const cols = showCodeFix ? 7 : 6;
+  const showReview = tier === "pr-review";
+  const cols = 6 + (showCodeFix ? 1 : 0) + (showReview ? 1 : 0);
   // running before queued, so in-flight rows sit nearest the finished ones.
   const ordered = [...pending].sort((a, b) => (a.status === b.status ? 0 : a.status === "running" ? -1 : 1));
 
@@ -65,6 +81,7 @@ export function InstanceTable({
             <th className="px-3 py-3 text-left font-semibold">instance</th>
             <th className="px-3 py-3 text-left font-semibold">model</th>
             {showCodeFix && <th className="px-3 py-3 text-left font-semibold">code-fix</th>}
+            {showReview && <th className="px-3 py-3 text-left font-semibold">review (F0.5)</th>}
             <th className="px-3 py-3 text-left font-semibold">behavioral</th>
             <th className="px-3 py-3 text-left font-semibold">checks</th>
             <th className="px-3 py-3 text-right font-semibold">cost</th>
@@ -118,6 +135,25 @@ export function InstanceTable({
                       >
                         files
                       </button>
+                    )}
+                  </td>
+                )}
+                {showReview && (
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    {r.error ? (
+                      <Pill kind="fail">error</Pill>
+                    ) : r.review ? (
+                      <span
+                        title={reviewTooltip(r)}
+                        className="cursor-help"
+                      >
+                        <Pill kind={r.review.f05 >= 0.5 ? "pass" : "fail"}>{(r.review.f05 * 100).toFixed(0)}%</Pill>
+                        <span className="ml-2 font-mono text-2xs text-base-content/60">
+                          P{r.review.precision.toFixed(2)}/R{r.review.recall.toFixed(2)} · {r.review.matched}/{r.review.gold} gold · {r.review.falsePositives.length} FP
+                        </span>
+                      </span>
+                    ) : (
+                      <Pill kind="na">—</Pill>
                     )}
                   </td>
                 )}
@@ -184,10 +220,15 @@ export function InstanceTable({
                   {pn.status === "running" ? <Pill kind="run">running…</Pill> : <Pill kind="wait">queued</Pill>}
                 </td>
               )}
+              {showReview && (
+                <td className="px-3 py-2.5">
+                  {pn.status === "running" ? <Pill kind="run">running…</Pill> : <Pill kind="wait">queued</Pill>}
+                </td>
+              )}
               <td className="px-3 py-2.5">
-                {!showCodeFix &&
+                {!showCodeFix && !showReview &&
                   (pn.status === "running" ? <Pill kind="run">running…</Pill> : <Pill kind="wait">queued</Pill>)}
-                {showCodeFix && <span className="text-base-content/40">—</span>}
+                {(showCodeFix || showReview) && <span className="text-base-content/40">—</span>}
               </td>
               <td className="px-3 py-2.5 text-base-content/40">—</td>
               <td className="px-3 py-2.5 text-right font-mono text-base-content/40">—</td>

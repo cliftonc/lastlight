@@ -15,8 +15,9 @@ import { cpSync, existsSync, writeFileSync } from "node:fs";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ExpectGithub } from "./schema.js";
-import type { FakeGitHub } from "./fake-github.js";
+import type { ExpectGithub, GoldComment } from "./schema.js";
+import type { FakeGitHub, SubmittedReview } from "./fake-github.js";
+import { judge, parseJudgeJson, defaultJudgeModel } from "./judge.js";
 
 export interface Check {
   name: string;
@@ -68,6 +69,19 @@ export function gradeBehavioral(
     checks.push({ name: "pr-opened", ok, detail });
   }
 
+  if (expect.review_submitted) {
+    const reviews = fake.submittedReviews(ctx.issueNumber);
+    const r = reviews[0];
+    let ok = reviews.length > 0;
+    let detail = `${reviews.length} review(s)`;
+    if (r) {
+      if (expect.review_submitted.event) ok = ok && r.event === expect.review_submitted.event;
+      if (expect.review_submitted.body_matches) ok = ok && new RegExp(expect.review_submitted.body_matches, "i").test(r.body);
+      detail = `event=${r.event} bodyLen=${r.body.length}`;
+    }
+    checks.push({ name: "review-submitted", ok, detail });
+  }
+
   return { ok: checks.every((c) => c.ok), checks };
 }
 
@@ -85,6 +99,178 @@ export function gradeTriage(
   if (gold.category) checks.push({ name: `category=${gold.category}`, ok: labels.includes(gold.category), detail: `labels=[${labels.join(", ")}]` });
   if (gold.state) checks.push({ name: `state=${gold.state}`, ok: labels.includes(gold.state), detail: `labels=[${labels.join(", ")}]` });
   return { ok: checks.every((c) => c.ok), checks };
+}
+
+// ── PR-review grade (LLM judge → precision / recall / F0.5) ──────────────────
+
+export interface ReviewGrade {
+  precision: number;
+  recall: number;
+  f05: number;
+  posted: number;
+  gold: number;
+  matched: number;
+  falsePositives: { description: string; file?: string }[];
+  falseNegatives: { description: string; file?: string; severity: string }[];
+  /** Set if the judge couldn't be run (missing key, HTTP error, unparseable) —
+   * the case is ungraded, not zero-scored. */
+  error?: string;
+}
+
+interface ExtractedFinding {
+  description: string;
+  file?: string | null;
+}
+
+/** F-beta with β=0.5 (precision weighted 2× over recall — Martian's headline). */
+export function fBeta(precision: number, recall: number, beta = 0.5): number {
+  const b2 = beta * beta;
+  const denom = b2 * precision + recall;
+  return denom > 0 ? ((1 + b2) * precision * recall) / denom : 0;
+}
+
+/** Flatten a submitted review (body + inline comments) into one text blob for
+ * the extractor. Inline comments carry their location so the judge can match on
+ * file/line. */
+function reviewText(reviews: SubmittedReview[]): string {
+  const parts: string[] = [];
+  for (const r of reviews) {
+    if (r.body?.trim()) parts.push(r.body.trim());
+    for (const c of r.comments) {
+      const loc = c.line ? `${c.path}:${c.line}` : c.path;
+      parts.push(`[inline ${loc}] ${c.body}`);
+    }
+  }
+  return parts.join("\n\n").slice(0, 24_000);
+}
+
+const EXTRACT_SYSTEM =
+  "You extract the distinct, concrete code-review findings from a reviewer's writeup. " +
+  "A finding is a SPECIFIC problem the reviewer identified in the code — a bug, correctness issue, " +
+  "security flaw, missing test, performance problem, etc. — tied to a location. " +
+  "IGNORE: summaries of what the PR does, praise, approvals, meta commentary, and vague remarks with no concrete problem. " +
+  "Merge duplicates that describe the same issue. " +
+  'Output ONLY JSON: {"findings":[{"description":"<the problem>","file":"<path or null>"}]}';
+
+const MATCH_SYSTEM =
+  "You judge whether a reviewer's findings match a gold set of KNOWN real issues in a pull request. " +
+  "Two items MATCH when they describe the SAME underlying issue — the same root cause or the same required fix — " +
+  "even if worded differently or the line is slightly off. Wording need not match; substance must. " +
+  "Each gold issue matches AT MOST ONE finding, and each finding matches at most one gold issue (choose the best pairing). " +
+  'Output ONLY JSON: {"matches":[{"finding":<finding index>,"gold":<gold index>}]}';
+
+/**
+ * Grade a posted PR review against the gold set via an LLM judge, mirroring
+ * Martian's Code Review Bench: extract the review's distinct findings, then match
+ * each to a golden comment ("same underlying issue?"). Precision = matched ÷
+ * posted, recall = matched ÷ gold, F0.5 weights precision 2× (false positives
+ * cost more than misses). A judge failure yields `error` (ungraded), never a
+ * silent zero.
+ */
+export async function gradeReview(opts: {
+  gold: GoldComment[];
+  reviews: SubmittedReview[];
+  judgeModel?: string;
+}): Promise<ReviewGrade> {
+  const gold = opts.gold;
+  const empty = (partial: Partial<ReviewGrade>): ReviewGrade => ({
+    precision: 0,
+    recall: 0,
+    f05: 0,
+    posted: 0,
+    gold: gold.length,
+    matched: 0,
+    falsePositives: [],
+    falseNegatives: gold.map((g) => ({ description: g.description, file: g.file, severity: g.severity })),
+    ...partial,
+  });
+
+  const text = reviewText(opts.reviews);
+  // No review posted: nothing caught. Perfect only if there was nothing to catch.
+  if (!text.trim()) {
+    return gold.length === 0
+      ? { precision: 1, recall: 1, f05: 1, posted: 0, gold: 0, matched: 0, falsePositives: [], falseNegatives: [] }
+      : empty({});
+  }
+
+  let model: string;
+  try {
+    model = opts.judgeModel ?? defaultJudgeModel();
+  } catch (err) {
+    return empty({ error: (err as Error).message });
+  }
+
+  // 1. Extract distinct findings from the review.
+  let findings: ExtractedFinding[];
+  try {
+    const raw = await judge(model, EXTRACT_SYSTEM, text);
+    const parsed = parseJudgeJson<{ findings?: ExtractedFinding[] }>(raw);
+    if (!parsed?.findings) return empty({ error: "judge: unparseable extraction reply" });
+    findings = parsed.findings.filter((f) => f && typeof f.description === "string" && f.description.trim());
+  } catch (err) {
+    return empty({ error: `judge extract: ${(err as Error).message}` });
+  }
+
+  const posted = findings.length;
+  if (posted === 0) return gold.length === 0
+    ? { precision: 1, recall: 1, f05: 1, posted: 0, gold: 0, matched: 0, falsePositives: [], falseNegatives: [] }
+    : empty({});
+  if (gold.length === 0) {
+    // Findings on a PR with no gold issues are all noise.
+    return {
+      precision: 0,
+      recall: 1,
+      f05: 0,
+      posted,
+      gold: 0,
+      matched: 0,
+      falsePositives: findings.map((f) => ({ description: f.description, file: f.file ?? undefined })),
+      falseNegatives: [],
+    };
+  }
+
+  // 2. Match findings ↔ gold.
+  const matchUser = JSON.stringify({
+    findings: findings.map((f, i) => ({ index: i, description: f.description, file: f.file ?? null })),
+    gold: gold.map((g, i) => ({ index: i, file: g.file ?? null, line: g.line ?? null, severity: g.severity, description: g.description })),
+  });
+  let matches: { finding: number; gold: number }[];
+  try {
+    const raw = await judge(model, MATCH_SYSTEM, matchUser);
+    const parsed = parseJudgeJson<{ matches?: { finding: number; gold: number }[] }>(raw);
+    if (!parsed?.matches) return empty({ error: "judge: unparseable match reply", posted });
+    matches = parsed.matches;
+  } catch (err) {
+    return empty({ error: `judge match: ${(err as Error).message}`, posted });
+  }
+
+  // De-dup the matching: each finding + each gold used at most once (guard the
+  // judge over-pairing), and drop out-of-range indices.
+  const usedFinding = new Set<number>();
+  const usedGold = new Set<number>();
+  for (const m of matches) {
+    if (!Number.isInteger(m.finding) || !Number.isInteger(m.gold)) continue;
+    if (m.finding < 0 || m.finding >= posted || m.gold < 0 || m.gold >= gold.length) continue;
+    if (usedFinding.has(m.finding) || usedGold.has(m.gold)) continue;
+    usedFinding.add(m.finding);
+    usedGold.add(m.gold);
+  }
+
+  const matched = usedFinding.size;
+  const precision = matched / posted;
+  const recall = matched / gold.length;
+  const f05 = fBeta(precision, recall, 0.5);
+
+  const falsePositives = findings
+    .map((f, i) => ({ f, i }))
+    .filter(({ i }) => !usedFinding.has(i))
+    .map(({ f }) => ({ description: f.description, file: f.file ?? undefined }));
+  const falseNegatives = gold
+    .map((g, i) => ({ g, i }))
+    .filter(({ i }) => !usedGold.has(i))
+    .map(({ g }) => ({ description: g.description, file: g.file, severity: g.severity }));
+
+  return { precision, recall, f05, posted, gold: gold.length, matched, falsePositives, falseNegatives };
 }
 
 // ── Execution grade (SWE-bench resolved) ────────────────────────────────────

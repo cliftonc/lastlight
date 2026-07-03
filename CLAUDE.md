@@ -141,7 +141,9 @@ The release commit is conventionally just the two version-file lines
 | `src/init.ts` | `init` — scaffold + `gh repo create` an overlay+evals repo. |
 | `src/add-case.ts` | `add-case` — author an instance from a real GitHub PR/issue (`gh`+`git`: base/head SHAs, `test_patch`, red→green verdicts). |
 | `src/fake-github.ts` | In-process fake GitHub REST API (seeds fixtures, records mutations). |
-| `src/seed.ts` / `src/grade.ts` / `src/metrics.ts` | Workspace seeding (vendored fixture OR git-source checkout @ `base_commit` from the `./.eval-cache/` mirror) / deterministic grading (named TAP or suite exit-code) / token-cost roll-up. |
+| `src/seed.ts` / `src/grade.ts` / `src/metrics.ts` | Workspace seeding (vendored fixture, git-source `base_commit` checkout, OR pr-review PR-head checkout — all from the `./.eval-cache/` mirror) / grading (execution TAP, behavioral, + `gradeReview` judge) / token-cost roll-up. |
+| `src/judge.ts` | One-shot LLM client for `gradeReview` (pr-review only) — direct provider `fetch`, temp 0. `EVAL_JUDGE_MODEL` overrides `defaultJudgeModel()`. |
+| `scripts/import-martian.ts` | Import Martian's Code Review Bench offline set (50 PRs) into the `pr-review` tier (`gh`+`git`: resolves base/head, pins SHAs). |
 | `src/report.ts` | Scorecard roll-up + JSON/JSONL artifacts + `buildIndex` (filesystem → the SPA's `/api/index`). |
 | `src/serve.ts` | Tiny dependency-free server: `/api/index` (fs scan), `/data/*` (raw artifacts), the SPA + fallback. |
 | `dashboard/` | The JSON-driven dashboard SPA (Vite + React + Tailwind/daisyUI + TanStack Query); ships prebuilt as `dashboard/dist`. |
@@ -272,7 +274,7 @@ drain and cost silently reads 0.
   `tsconfig`'s `src` rootDir). Keep them excluded or the default suite tries to
   run raw fixture tests.
 
-## Grading = two deterministic signals
+## Grading = deterministic signals (+ one scoped judge)
 
 - **Execution** (`gradeExecution`): copy the held-out tests in, run them, require
   every `FAIL_TO_PASS` green and every `PASS_TO_PASS` still green — SWE-bench's
@@ -280,9 +282,16 @@ drain and cost silently reads 0.
   out of the seeded repo so the agent can't edit them.
 - **Behavioral** (`gradeBehavioral` / `gradeTriage`): assert the recorded
   GitHub mutations (labels, comments, PRs) against the instance's
-  `expect_github` / `triage_gold`. Primary signal for triage.
-
-No LLM-as-judge — by design.
+  `expect_github` / `triage_gold`. Primary signal for triage. Includes a cheap
+  `review_submitted` proxy for the pr-review tier.
+- **Review** (`gradeReview`, `pr-review` tier only): the posted PR review is
+  matched to a human-verified `review_gold` set by an **LLM judge** (`judge.ts`)
+  → precision / recall / **F0.5** (Martian's Code Review Bench metric). This is
+  the one, deliberately-scoped exception to the deterministic rule — matching a
+  free-text review against semantic gold comments can't be done deterministically.
+  Triage/code-fix stay judge-free. The judge model is independent of the models
+  under test (`EVAL_JUDGE_MODEL`, else a strong default per provider key); a judge
+  failure marks the case errored (ungraded), never a silent zero.
 
 ## Models
 

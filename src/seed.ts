@@ -127,6 +127,116 @@ export function isRealSha(sha: string | undefined): sha is string {
   return !!sha && /^[0-9a-f]{40}$/i.test(sha) && !/^0+$/.test(sha);
 }
 
+/** True if `mirror` already contains `sha` as a commit. */
+function mirrorHasCommit(mirror: string, sha: string): boolean {
+  try {
+    git(mirror, ["cat-file", "-e", `${sha}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure a repo-local bare mirror contains BOTH a PR's base and head commits,
+ * for the `pr-review` tier. Beyond {@link ensureRepoCache}: a squash/rebase-merged
+ * PR's head commit is not reachable from any branch, so we fetch the immutable
+ * `refs/pull/<n>/head` ref (which GitHub always exposes) when the head is absent.
+ * Run SERIALLY per repo before a parallel batch (concurrent fetches race).
+ */
+export function ensurePrCommitsInCache(opts: {
+  repo: string;
+  pullNumber: number;
+  baseCommit: string;
+  headCommit: string;
+  cacheDir?: string;
+}): string {
+  const [owner, name] = opts.repo.split("/");
+  if (!owner || !name) throw new Error(`ensurePrCommitsInCache: repo must be "owner/name", got "${opts.repo}"`);
+  const cacheDir = resolveCacheDir(opts.cacheDir);
+  const mirror = resolve(cacheDir, `${owner}__${name}.git`);
+
+  if (!existsSync(mirror)) {
+    mkdirSync(dirname(mirror), { recursive: true });
+    git(dirname(mirror), ["clone", "--bare", "--quiet", `https://github.com/${owner}/${name}.git`, mirror]);
+  }
+  // Base is usually on a branch — a heads fetch covers it.
+  if (!mirrorHasCommit(mirror, opts.baseCommit)) {
+    git(mirror, ["fetch", "--quiet", "origin", "+refs/heads/*:refs/heads/*"]);
+  }
+  // Head may be off-branch (squash/rebase merge) — fetch the PR head ref by number.
+  if (!mirrorHasCommit(mirror, opts.headCommit)) {
+    try {
+      git(mirror, ["fetch", "--quiet", "origin", `refs/pull/${opts.pullNumber}/head`]);
+    } catch {
+      /* fall through — the presence check below reports a clear error */
+    }
+  }
+  for (const [label, sha] of [["base", opts.baseCommit], ["head", opts.headCommit]] as const) {
+    if (!mirrorHasCommit(mirror, sha)) {
+      throw new Error(
+        `ensurePrCommitsInCache: ${label} commit ${sha} for PR #${opts.pullNumber} of ${opts.repo} is not reachable ` +
+          `(not on a branch and refs/pull/${opts.pullNumber}/head didn't provide it).`,
+      );
+    }
+  }
+  return mirror;
+}
+
+/**
+ * Seed the workspace for the `pr-review` tier: check out the PR HEAD commit into
+ * a `<repo>/` subdir (matching production's pre-clone contract in
+ * skills/pr-review), with `origin` pointing at a local bare repo that carries
+ * the base + head branches — so the skill's `git fetch origin <baseRef>` and
+ * `git diff origin/<baseRef>...HEAD` work fully offline. No push happens
+ * (pr-review is review-only), but a real origin keeps the git plumbing honest.
+ */
+export function seedWorkspacePrReview(opts: {
+  stateDir: string;
+  taskId: string;
+  repo: string;
+  pullNumber: number;
+  baseRef: string;
+  headRef: string;
+  baseCommit: string;
+  headCommit: string;
+  cacheDir?: string;
+  repoSubdir?: string;
+}): SeedResult {
+  const mirror = ensurePrCommitsInCache({
+    repo: opts.repo,
+    pullNumber: opts.pullNumber,
+    baseCommit: opts.baseCommit,
+    headCommit: opts.headCommit,
+    cacheDir: opts.cacheDir,
+  });
+
+  const workDir = workDirFor(opts.stateDir, opts.taskId, opts.repoSubdir);
+  mkdirSync(dirname(workDir), { recursive: true });
+
+  git(dirname(workDir), ["clone", "--quiet", `file://${mirror}`, workDir]);
+  // Check out the PR head on a branch named for the head ref (what the skill sees).
+  git(workDir, ["checkout", "--quiet", "-B", opts.headRef, opts.headCommit]);
+  ignoreBuildArtifacts(workDir);
+
+  // Point origin at a fresh bare repo carrying both the base and head branches,
+  // so `git fetch origin <baseRef>` resolves offline.
+  const originsDir = resolve(opts.stateDir, "origins");
+  mkdirSync(originsDir, { recursive: true });
+  const originDir = resolve(originsDir, `${opts.taskId}.git`);
+  git(workDir, ["init", "--bare", "-q", originDir]);
+  try {
+    git(workDir, ["remote", "remove", "origin"]);
+  } catch {
+    /* the clone's origin (the cache) — replace it */
+  }
+  git(workDir, ["remote", "add", "origin", `file://${originDir}`]);
+  git(workDir, ["push", "-q", "origin", `${opts.baseCommit}:refs/heads/${opts.baseRef}`]);
+  git(workDir, ["push", "-q", "origin", `${opts.headCommit}:refs/heads/${opts.headRef}`]);
+
+  return { workDir, originDir, baseCommit: opts.baseCommit, branch: opts.headRef };
+}
+
 /** Ensure a repo-local bare mirror of `repo` exists and contains `baseCommit`
  * (clone on miss, fetch if the commit is absent). Returns the cache dir. Run
  * this SERIALLY per repo before a parallel batch — concurrent clones of the same

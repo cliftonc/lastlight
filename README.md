@@ -9,9 +9,10 @@
 `lastlight-evals` takes [**Last Light**](https://lastlight.dev)'s *real*
 production workflows — the actual prompts, skills, and agent loop that ship — and
 runs them end to end against a fully mocked GitHub, for whatever models you throw
-at it. No toy benchmarks, no LLM-as-judge: every run is graded **deterministically**
-(did the agent apply the right labels? did the held-out tests turn green?), then
-ranked side by side on **pass rate, cost, and latency**.
+at it. No toy benchmarks: grading is **deterministic** by default (did the agent
+apply the right labels? did the held-out tests turn green?) — with one scoped
+LLM-judge for the `pr-review` tier's precision/recall/F0.5 — then ranked side by
+side on **pass/score rate, cost, and latency**.
 
 The payoff is one scorecard that tells you, for *your* workflows, exactly what
 each model delivers — and what it costs you per run. Swap a model, re-run, see the
@@ -146,12 +147,16 @@ tests) is taken through the **real** production workflow end to end:
 3. The **real workflow YAML** (`issue-triage`, `build`, …) is loaded from
    `lastlight` and run with `sandbox:"none"`, the agent's `github_*` tools
    pointed at the fake, and approval gates disabled (so it never pauses).
-4. The result is **graded deterministically** — no LLM judge:
+4. The result is **graded deterministically** (with one scoped judge for
+   pr-review):
    - **behavioral** — the recorded GitHub calls (labels, comments, PRs) vs the
      instance's `expect_github` / `triage_gold`.
    - **execution** (code-fix) — the held-out tests are applied and run; the case
      is *resolved* only if every `FAIL_TO_PASS` passes and every `PASS_TO_PASS`
      stays green (SWE-bench's criterion).
+   - **review** (pr-review) — the posted review is matched to a human-verified
+     gold set by an **LLM judge** → precision / recall / **F0.5** (the one,
+     deliberately-scoped exception; triage/code-fix stay judge-free).
 5. Token usage, cost, and latency are collected per run.
 
 Run multiple models and you get a side-by-side **scorecard** (HTML + JSON)
@@ -303,7 +308,9 @@ A **tier** is a directory containing `instances.json` (+ an optional `tier.json`
 declaring its `defaultWorkflow`). Tiers are discovered from three roots, merged
 by name with **overlay > user (`--datasets`) > built-in** precedence:
 
-- **built-in** (shipped here): `triage` → `issue-triage`, `code-fix` → `build`.
+- **built-in** (shipped here): `triage` → `issue-triage`, `code-fix` → `build`,
+  `pr-review` → `pr-review` (ships empty — populate with
+  `scripts/import-martian.ts`; see `datasets/pr-review/README.md`).
 - **user**: `--datasets <dir>` / `LASTLIGHT_EVALS_DATASETS`.
 - **overlay**: `<overlay>/evals/datasets/*`.
 

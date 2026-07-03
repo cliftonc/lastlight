@@ -20,6 +20,7 @@ export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
   for (const [model, list] of byModel) {
     const codeFix = list.filter((r) => r.resolved !== undefined);
     const behavioral = list.filter((r) => r.behavioral !== undefined && !r.error);
+    const review = list.filter((r) => r.review !== undefined && !r.error);
     const durations = list.map((r) => r.durationMs).sort((a, b) => a - b);
     models.push({
       model,
@@ -28,6 +29,10 @@ export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
       codeFixTotal: codeFix.length,
       behavioralOk: behavioral.filter((r) => r.behavioral?.ok).length,
       behavioralTotal: behavioral.length,
+      reviewTotal: review.length,
+      avgPrecision: avg(review.map((r) => r.review!.precision)),
+      avgRecall: avg(review.map((r) => r.review!.recall)),
+      avgF05: avg(review.map((r) => r.review!.f05)),
       avgInputTokens: avg(list.map((r) => r.inputTokens)),
       avgCachedTokens: avg(list.map((r) => r.cachedTokens)),
       avgOutputTokens: avg(list.map((r) => r.outputTokens)),
