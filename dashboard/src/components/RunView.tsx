@@ -103,28 +103,37 @@ export function RunView({ run }: { run: IndexRun }) {
             <span className="font-normal text-base-content/50">— {tier}</span>
           </h2>
           {tier === "pr-review" && (
-            <p className="mb-4 max-w-2xl text-2xs leading-5 text-base-content/50">
-              An LLM judge matches the posted review against a human-verified gold set of real issues, giving{" "}
-              <span className="text-base-content/70">precision</span> (matched ÷ posted) and{" "}
-              <span className="text-base-content/70">recall</span> (matched ÷ gold), combined as{" "}
-              <b className="font-semibold text-base-content/70">F{reviewBeta}</b>
-              {reviewBeta === 1 ? (
-                <> — the F-beta with <span className="font-mono">β=1</span> (equal weight), matching the benchmark leaderboard</>
-              ) : (
-                <> — the F-beta with <span className="font-mono">β={reviewBeta}</span> (via <span className="font-mono">EVAL_F_BETA</span>; β&lt;1 weights precision higher)</>
-              )}
-              . Click <b className="font-semibold text-base-content/70">judge</b> on any row to inspect the match. Cases
-              come from the offline set of{" "}
-              <a
-                href="https://github.com/withmartian/code-review-benchmark"
-                target="_blank"
-                rel="noreferrer"
-                className="text-info hover:underline"
-              >
-                Martian's Code Review Bench
-              </a>
-              ; its gold set is known to be incomplete, so unrecognized-but-real findings can score as false positives.
-            </p>
+            <details className="group mb-4 max-w-2xl">
+              <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-2xs text-base-content/50 transition-colors hover:text-base-content/80 [&::-webkit-details-marker]:hidden">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full border border-base-content/30 font-mono text-[10px] leading-none">
+                  ?
+                </span>
+                Comparison methodology
+                <span className="text-base-content/30 transition-transform group-open:rotate-90">›</span>
+              </summary>
+              <p className="mt-2 text-2xs leading-5 text-base-content/50">
+                An LLM judge matches the posted review against a human-verified gold set of real issues, giving{" "}
+                <span className="text-base-content/70">precision</span> (matched ÷ posted) and{" "}
+                <span className="text-base-content/70">recall</span> (matched ÷ gold), combined as{" "}
+                <b className="font-semibold text-base-content/70">F{reviewBeta}</b>
+                {reviewBeta === 1 ? (
+                  <> — the F-beta with <span className="font-mono">β=1</span> (equal weight), matching the benchmark leaderboard</>
+                ) : (
+                  <> — the F-beta with <span className="font-mono">β={reviewBeta}</span> (via <span className="font-mono">EVAL_F_BETA</span>; β&lt;1 weights precision higher)</>
+                )}
+                . Click <b className="font-semibold text-base-content/70">judge</b> on any row to inspect the match. Cases
+                come from the offline set of{" "}
+                <a
+                  href="https://github.com/withmartian/code-review-benchmark"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-info hover:underline"
+                >
+                  Martian's Code Review Bench
+                </a>
+                ; its gold set is known to be incomplete, so unrecognized-but-real findings can score as false positives.
+              </p>
+            </details>
           )}
           <CompareTable models={models} tier={tier} labels={labels} axisLabel={isConfig ? "Config" : "Model"} />
 
