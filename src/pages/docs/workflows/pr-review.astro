@@ -3,13 +3,24 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 ---
 <DocsLayout
 	slug="workflows/pr-review"
-	description="The PR review workflow — reads a pull request diff and posts structured feedback without modifying code."
+	description="The PR review workflow — reviews a pull request, verifies by building where possible, and posts one precision-first formal review without modifying code."
 >
 	<p>
-		PR review is a single-phase, read-only workflow. It reads the diff for a
-		pull request, checks for bugs, style issues, missing tests, and security
-		concerns, then posts structured feedback as a PR comment with severity-ranked
-		findings and file:line references.
+		PR review is a single-phase, read-only workflow. It reads the PR diff in
+		full context and — where the repo can be built in time — installs deps and
+		runs the build/tests to verify correctness for real (best-effort: if the
+		toolchain isn't available it falls back to a careful static review rather
+		than blocking). It then posts <strong>one formal review</strong> with
+		<code>file:line</code> references.
+	</p>
+
+	<p>
+		The review is <strong>precision-first</strong>: only high-signal
+		<strong>Critical</strong> and <strong>Important</strong> findings are
+		posted — each with a concrete impact (what breaks, for which input) and
+		put through a self-refutation confidence gate — while lower-value
+		suggestions and nits are dropped, because a noisy reviewer gets muted. A
+		clean PR is approved with few or no comments.
 	</p>
 
 	<div class="docs-callout tip">
