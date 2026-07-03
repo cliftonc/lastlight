@@ -295,6 +295,32 @@ drain and cost silently reads 0.
   under test (`EVAL_JUDGE_MODEL`, else a strong default per provider key); a judge
   failure marks the case errored (ungraded), never a silent zero.
 
+### The pr-review approach (Code Review Bench)
+
+The full path, since it's the most involved tier (see README "PR-review tier" for
+the user-facing version):
+
+- **Source.** Cases are imported from Martian's **offline** Code Review Bench
+  (`scripts/import-martian.ts` → 50 real merged PRs with inlined `golden_comments`,
+  base/head SHAs pinned). The tier ships empty by design.
+- **Seed.** `seedWorkspacePrReview` clones the real repo into `./.eval-cache/` and
+  checks out the PR **head** (see "Seeding without a clone" — the PR head is
+  anchored on a branch so the workspace clone carries it; a squash/rebase-merged
+  head is off-branch otherwise).
+- **Judge (two steps, `gradeReview`).** (1) *extract* the review's distinct
+  concrete findings; (2) *match* each to a gold comment. precision = matched ÷
+  posted, recall = matched ÷ gold, combined as **F-beta** at `beta`
+  (`defaultBeta()` ← `EVAL_F_BETA`, default 1). The dashboard labels the column
+  `F{β}` from `review.beta`.
+- **Trace.** `gradeReview` returns a `ReviewTrace` (judge model, the review text
+  it read, extracted findings, the gold set, the finding↔gold pairing, raw
+  replies). It rides in `InstanceResult.review.trace` → the dashboard's **judge**
+  button (`JudgeModal`) renders it, so a score is inspectable, not a black box.
+- **Caveat to preserve in docs.** Martian's gold set is **incomplete** (their own
+  methodology: it caps at human performance, so a real-but-unlisted finding scores
+  as a false positive → understates precision). That's *why* the default is F1,
+  not F0.5. Don't re-attribute F0.5 to Martian — their leaderboard headline is F1.
+
 ## Models
 
 The model list lives in `models.json` (`default` + a `compare` set); `env.ts`

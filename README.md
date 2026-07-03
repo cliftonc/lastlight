@@ -311,7 +311,8 @@ by name with **overlay > user (`--datasets`) > built-in** precedence:
 
 - **built-in** (shipped here): `triage` → `issue-triage`, `code-fix` → `build`,
   `pr-review` → `pr-review` (ships empty — populate with
-  `scripts/import-martian.ts`; see `datasets/pr-review/README.md`).
+  `scripts/import-martian.ts`; see [PR-review tier](#pr-review-tier-code-review-bench)
+  below and `datasets/pr-review/README.md`).
 - **user**: `--datasets <dir>` / `LASTLIGHT_EVALS_DATASETS`.
 - **overlay**: `<overlay>/evals/datasets/*`.
 
@@ -373,6 +374,64 @@ tests run real code — only use trusted repos.
 A new tier just needs a directory with an `instances.json` and a `tier.json`
 (`{ "name", "defaultWorkflow", "description" }`); per-instance `workflow` wins
 when present.
+
+## PR-review tier (Code Review Bench)
+
+The **`pr-review`** tier measures review *quality* against
+[Martian's Code Review Bench](https://github.com/withmartian/code-review-benchmark):
+the review the real `pr-review` workflow posts is scored against a human-verified
+**gold set** of the issues a reviewer should have caught. It's the **one** tier
+graded by an LLM judge — matching free-text findings to semantic gold comments
+can't be done deterministically — so triage and code-fix stay judge-free.
+
+**Cases** come from Martian's *offline* set — 50 real merged PRs across Sentry,
+Grafana, Cal.com, Discourse, and Keycloak, each carrying inlined `golden_comments`.
+They ship **empty** (`datasets/pr-review/instances.json` is `[]`) because they're
+large real-repo PRs — *generated*, not vendored:
+
+```bash
+npx tsx scripts/import-martian.ts            # resolve all 50 via gh (pins base/head SHAs)
+npx tsx scripts/import-martian.ts --limit 3  # a quick subset first
+```
+
+**Seeding** clones the real repo into the gitignored `./.eval-cache/` and checks
+out the PR **head** (mirroring production's pre-clone contract), so the skill's
+`git diff origin/<base>...HEAD` works fully offline — no fixture is vendored.
+
+**Grading** (`gradeReview`, `src/grade.ts`) is a two-step LLM judge:
+
+1. **Extract** the review's distinct, concrete findings (drop praise/summaries).
+2. **Match** each finding to a gold comment ("same underlying issue?").
+
+From the matches: **precision** = matched ÷ posted, **recall** = matched ÷ gold,
+combined as **F-beta**. The headline is **F1** (β=1 — precision and recall weighted
+equally, Martian's leaderboard metric). Set **`EVAL_F_BETA=0.5`** to weight
+precision 2× (F0.5), mirroring Martian's adjustable F-beta; the dashboard relabels
+itself `F{β}` to match.
+
+> **Gold-set caveat.** Martian's own methodology documents the gold set as
+> *incomplete* — it caps at human performance, so a real issue the annotators
+> missed is scored as a false positive. That understates precision, which is why
+> the default is F1, not the precision-weighted F0.5. Treat the score as a
+> **relative** signal and inspect each match with the dashboard's **judge** button.
+
+**The judge model is independent** of the models under test — a strong default per
+your provider key (`EVAL_JUDGE_MODEL` overrides). A judge failure marks the case
+*errored* (ungraded), never a silent zero. Alongside the judge score, a cheap
+deterministic `review_submitted` proxy checks a review was actually posted.
+
+**Run it** (heavy — clones real repos + calls the judge):
+
+```bash
+lastlight-evals run pr-review --model <model>            # full tier
+lastlight-evals run pr-review --model <model> --limit 3  # first 3 cases (controlled)
+EVAL_F_BETA=0.5 lastlight-evals run pr-review --model <model>   # weight precision 2×
+```
+
+In the dashboard, each row's **judge** button opens the judge's working — the
+findings it extracted, the gold set, the finding↔gold pairing (matched / false
+positive / missed), and its raw replies — so the F1 score is inspectable, not a
+black box.
 
 ## Models (`models.json`)
 
