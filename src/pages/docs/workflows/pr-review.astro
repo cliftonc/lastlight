@@ -3,15 +3,14 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 ---
 <DocsLayout
 	slug="workflows/pr-review"
-	description="The PR review workflow — reviews a pull request, verifies by building where possible, and posts one precision-first formal review without modifying code."
+	description="The PR review workflow — reads a pull request and posts one precision-first formal review, without modifying code or building."
 >
 	<p>
 		PR review is a single-phase, read-only workflow. It reads the PR diff in
-		full context and — where the repo can be built in time — installs deps and
-		runs the build/tests to verify correctness for real (best-effort: if the
-		toolchain isn't available it falls back to a careful static review rather
-		than blocking). It then posts <strong>one formal review</strong> with
-		<code>file:line</code> references.
+		full context and reasons about it statically — this is a <strong>pure code
+		review</strong>: it does not install, build, or run the code (CI validates
+		that the change actually works). It then posts <strong>one formal
+		review</strong> with <code>file:line</code> references.
 	</p>
 
 	<p>
