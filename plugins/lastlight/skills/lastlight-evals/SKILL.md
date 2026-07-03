@@ -97,6 +97,8 @@ lastlight-evals run triage --model haiku        # fuzzy match in models.json
 lastlight-evals run triage --model openai/gpt-5.5,anthropic/claude-opus-4-8
 lastlight-evals run --compare                   # cross-vendor set (only models whose envKey is present)
 lastlight-evals run triage --runs 3             # repeat each case 3× (worst-case verdict, mean metrics)
+lastlight-evals run pr-review --limit 3         # only the first 3 cases of the tier (controlled/cheap run)
+lastlight-evals run triage --instance <id>      # only this exact instance_id (or set EVAL_INSTANCE)
 lastlight-evals run triage --no-open            # don't open the report
 # Plain layout: add --overlay .   (e.g. lastlight-evals run triage --overlay .)
 
