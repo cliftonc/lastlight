@@ -362,7 +362,7 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
     };
 
     // 5b-pr. PR-review grade (pr-review only): the submitted review scored
-    // against the gold set by an LLM judge → precision / recall / F0.5. A judge
+    // against the gold set by an LLM judge → precision / recall / F-beta. A judge
     // failure is surfaced as a harness error (the case is ungraded) rather than a
     // silent zero, so it doesn't masquerade as a real score.
     if (isPrReview && inst.review_gold) {
@@ -371,7 +371,8 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
       result.review = {
         precision: rg.precision,
         recall: rg.recall,
-        f05: rg.f05,
+        fbeta: rg.fbeta,
+        beta: rg.beta,
         posted: rg.posted,
         gold: rg.gold,
         matched: rg.matched,

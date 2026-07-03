@@ -11,7 +11,7 @@ production workflows — the actual prompts, skills, and agent loop that ship �
 runs them end to end against a fully mocked GitHub, for whatever models you throw
 at it. No toy benchmarks: grading is **deterministic** by default (did the agent
 apply the right labels? did the held-out tests turn green?) — with one scoped
-LLM-judge for the `pr-review` tier's precision/recall/F0.5 — then ranked side by
+LLM-judge for the `pr-review` tier's precision/recall/F-beta (F1 by default) — then ranked side by
 side on **pass/score rate, cost, and latency**.
 
 The payoff is one scorecard that tells you, for *your* workflows, exactly what
@@ -155,8 +155,9 @@ tests) is taken through the **real** production workflow end to end:
      is *resolved* only if every `FAIL_TO_PASS` passes and every `PASS_TO_PASS`
      stays green (SWE-bench's criterion).
    - **review** (pr-review) — the posted review is matched to a human-verified
-     gold set by an **LLM judge** → precision / recall / **F0.5** (the one,
-     deliberately-scoped exception; triage/code-fix stay judge-free).
+     gold set by an **LLM judge** → precision / recall / **F-beta** (F1 by default,
+     Martian's leaderboard metric; `EVAL_F_BETA` reweights). The one,
+     deliberately-scoped exception; triage/code-fix stay judge-free.
 5. Token usage, cost, and latency are collected per run.
 
 Run multiple models and you get a side-by-side **scorecard** (HTML + JSON)

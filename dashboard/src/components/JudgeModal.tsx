@@ -31,7 +31,7 @@ function RawBlock({ title, text }: { title: string; text?: string }) {
 }
 
 /**
- * Full-screen overlay making a pr-review F0.5 score inspectable: the two-step
+ * Full-screen overlay making a pr-review F-beta score inspectable: the two-step
  * LLM judge's working — the findings it distilled from the review, the gold set,
  * the finding↔gold pairing (green = matched, red = false positive, amber =
  * missed gold), and its raw replies. Reads the trace embedded in the scorecard

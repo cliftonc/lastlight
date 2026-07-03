@@ -1,10 +1,13 @@
 # pr-review tier
 
-Measures **PR-review precision** the way Martian's
-[Code Review Bench](https://codereview.withmartian.com/) does: the review the
-`pr-review` workflow posts is matched, by an LLM judge, against a human-verified
-**gold set** of real issues, scoring **precision / recall / F0.5** (F0.5 weights
-precision 2× over recall — false positives cost more than misses).
+Measures **PR-review quality** the way Martian's
+[Code Review Bench](https://github.com/withmartian/code-review-benchmark) does: the
+review the `pr-review` workflow posts is matched, by an LLM judge, against a
+human-verified **gold set** of real issues, scoring **precision / recall / F-beta**.
+The headline is **F1** (β=1, precision and recall weighted equally — Martian's
+leaderboard metric); set `EVAL_F_BETA=0.5` to weight precision 2× (F0.5), mirroring
+Martian's adjustable F-beta. Cases come from their **offline** set
+(`offline/results/benchmark_data.json`).
 
 `instances.json` ships **empty** because the cases are large, real-repo PRs — they
 are *generated*, not vendored. Populate it from the Martian offline set (50 PRs
@@ -39,7 +42,9 @@ Each case's shape (`src/schema.ts`):
 - `expect_github.review_submitted` — a cheap deterministic proxy (a review was
   posted) alongside the judge grade.
 
-> Comparability caveat: our F0.5 won't equal the public leaderboard (different
-> judge model + harness). Treat it as a **relative** optimisation signal, and
-> read the per-case false-positive / missed-gold lists (hover the dashboard's
-> review cell) — the Martian gold set is known to be incomplete.
+> Comparability caveat: our F1 won't equal the public leaderboard (different judge
+> model + harness). Treat it as a **relative** optimisation signal, and inspect the
+> per-case match with the dashboard's **judge** button. Martian's gold set is known
+> (by their own methodology) to be **incomplete** — it caps at human performance, so
+> a real issue the annotators missed scores as a false positive. That understates
+> precision, which is why the default is F1 rather than the precision-weighted F0.5.

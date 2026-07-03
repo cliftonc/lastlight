@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { join } from "node:path";
 
 import type { InstanceResult } from "./schema.js";
+import { fLabel } from "./grade.js";
 
 /** A case still running / queued (live runs only — surfaced in the dashboard). */
 export interface PendingCase {
@@ -94,11 +95,13 @@ export interface ModelSummary {
   codeFixTotal: number;
   behavioralOk: number;
   behavioralTotal: number;
-  /** PR-review tier: N cases graded by the judge + mean precision/recall/F0.5. */
+  /** PR-review tier: N cases graded by the judge + mean precision/recall/F-beta. */
   reviewTotal: number;
   avgPrecision: number;
   avgRecall: number;
-  avgF05: number;
+  avgFbeta: number;
+  /** The β the graded cases used (F1 by default). Undefined when nothing graded. */
+  reviewBeta?: number;
   avgInputTokens: number;
   avgCachedTokens: number;
   avgOutputTokens: number;
@@ -167,14 +170,15 @@ export function aggregateTrials(trials: InstanceResult[]): InstanceResult {
   }
 
   // review (pr-review): mean the metrics across non-errored trials; carry a
-  // representative trial's FP/FN lists (the worst — lowest F0.5 — for inspection).
+  // representative trial's FP/FN lists (the worst — lowest F-beta — for inspection).
   const rev = ok.filter((t) => t.review);
   if (rev.length) {
-    const rep = [...rev].sort((a, b) => (a.review!.f05 - b.review!.f05))[0];
+    const rep = [...rev].sort((a, b) => (a.review!.fbeta - b.review!.fbeta))[0];
     out.review = {
       precision: mean(rev.map((t) => t.review!.precision)),
       recall: mean(rev.map((t) => t.review!.recall)),
-      f05: mean(rev.map((t) => t.review!.f05)),
+      fbeta: mean(rev.map((t) => t.review!.fbeta)),
+      beta: rev[0].review!.beta,
       posted: Math.round(mean(rev.map((t) => t.review!.posted))),
       gold: rev[0].review!.gold,
       matched: Math.round(mean(rev.map((t) => t.review!.matched))),
@@ -213,7 +217,8 @@ export function summarizeModels(results: InstanceResult[]): ModelSummary[] {
       reviewTotal: review.length,
       avgPrecision: avg(review.map((r) => r.review!.precision)),
       avgRecall: avg(review.map((r) => r.review!.recall)),
-      avgF05: avg(review.map((r) => r.review!.f05)),
+      avgFbeta: avg(review.map((r) => r.review!.fbeta)),
+      reviewBeta: review[0]?.review!.beta,
       avgInputTokens: avg(list.map((r) => r.inputTokens)),
       avgCachedTokens: avg(list.map((r) => r.cachedTokens)),
       avgOutputTokens: avg(list.map((r) => r.outputTokens)),
@@ -230,14 +235,16 @@ export function summarize(results: InstanceResult[]): Scorecard {
 }
 
 export function renderTable(card: Scorecard, labels: Record<string, string> = {}): string {
-  // Show the pr-review columns (prec/rec/F0.5) only when some run graded a
-  // review — otherwise keep the table lean for triage/code-fix.
+  // Show the pr-review columns (prec/rec/F-beta) only when some run graded a
+  // review — otherwise keep the table lean for triage/code-fix. The F-beta column
+  // is labelled by the β the run used (F1 by default).
   const hasReview = card.models.some((m) => m.reviewTotal > 0);
+  const fCol = fLabel(card.models.find((m) => m.reviewBeta !== undefined)?.reviewBeta ?? 1);
   const header = [
     "model",
     "code-fix",
     "behavioral",
-    ...(hasReview ? ["prec", "rec", "F0.5"] : []),
+    ...(hasReview ? ["prec", "rec", fCol] : []),
     "in tok",
     "cached",
     "out tok",
@@ -253,7 +260,7 @@ export function renderTable(card: Scorecard, labels: Record<string, string> = {}
       ? [
           m.reviewTotal ? m.avgPrecision.toFixed(2) : "—",
           m.reviewTotal ? m.avgRecall.toFixed(2) : "—",
-          m.reviewTotal ? m.avgF05.toFixed(2) : "—",
+          m.reviewTotal ? m.avgFbeta.toFixed(2) : "—",
         ]
       : []),
     fmtTokens(m.avgInputTokens),

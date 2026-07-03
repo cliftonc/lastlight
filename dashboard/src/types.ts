@@ -11,11 +11,13 @@ export interface ModelSummary {
   codeFixTotal: number;
   behavioralOk: number;
   behavioralTotal: number;
-  /** PR-review tier: N cases graded + mean precision/recall/F0.5. */
+  /** PR-review tier: N cases graded + mean precision/recall/F-beta. */
   reviewTotal: number;
   avgPrecision: number;
   avgRecall: number;
-  avgF05: number;
+  avgFbeta: number;
+  /** The β the graded cases used (F1 by default). Undefined when nothing graded. */
+  reviewBeta?: number;
   avgInputTokens: number;
   avgCachedTokens: number;
   avgOutputTokens: number;
@@ -90,11 +92,12 @@ export interface InstanceResult {
   modelPatchFile?: string;
   behavioral?: { ok: boolean; checks: Check[] };
   /** PR-review grade (pr-review tier): the posted review scored against the gold
-   * set via LLM judge. F0.5 weights precision 2× over recall. */
+   * set via LLM judge (F-beta; F1 by default).  */
   review?: {
     precision: number;
     recall: number;
-    f05: number;
+    fbeta: number;
+    beta: number;
     posted: number;
     gold: number;
     matched: number;

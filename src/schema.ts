@@ -70,7 +70,7 @@ export interface PullSeed {
 
 /** One human-verified "golden comment" — a real issue a reviewer should catch.
  * Mirrors Martian's Code Review Bench gold-set shape. Used only to grade the
- * `pr-review` tier (LLM judge match → precision/recall/F0.5). */
+ * `pr-review` tier (LLM judge match → precision/recall/F-beta). */
 export interface GoldComment {
   /** File the issue lives in. Optional — Martian's gold set carries only a
    * description + severity, so the judge matches on substance, not location. */
@@ -162,7 +162,7 @@ export interface SweBenchInstance {
   /** For triage: the gold triage decision (category + state role names). */
   triage_gold?: { category?: string; state?: string };
   /** For pr-review: the human-verified gold set the posted review is scored
-   * against (LLM judge → precision/recall/F0.5). */
+   * against (LLM judge → precision/recall/F-beta). */
   review_gold?: GoldComment[];
 }
 
@@ -219,12 +219,14 @@ export interface InstanceResult {
   behavioral?: { ok: boolean; checks: { name: string; ok: boolean; detail?: string }[] };
   /** PR-review grade (pr-review tier): the posted review scored against the gold
    * set via LLM judge. `posted` = distinct findings the agent raised, `gold` =
-   * golden comments, `matched` = findings that matched a gold comment. F0.5
-   * weights precision 2× over recall (Martian's headline metric). */
+   * golden comments, `matched` = findings that matched a gold comment. `fbeta` is
+   * the F-beta at `beta` — β=1 (F1) by default, matching Martian's leaderboard;
+   * `EVAL_F_BETA` reweights (β=0.5 → precision 2×). */
   review?: {
     precision: number;
     recall: number;
-    f05: number;
+    fbeta: number;
+    beta: number;
     posted: number;
     gold: number;
     matched: number;

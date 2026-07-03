@@ -286,7 +286,9 @@ drain and cost silently reads 0.
   `review_submitted` proxy for the pr-review tier.
 - **Review** (`gradeReview`, `pr-review` tier only): the posted PR review is
   matched to a human-verified `review_gold` set by an **LLM judge** (`judge.ts`)
-  → precision / recall / **F0.5** (Martian's Code Review Bench metric). This is
+  → precision / recall / **F-beta**. The headline is **F1** (β=1, Martian's Code
+  Review Bench leaderboard metric); `EVAL_F_BETA` reweights (0.5 → precision 2×),
+  mirroring Martian's adjustable F-beta. This is
   the one, deliberately-scoped exception to the deterministic rule — matching a
   free-text review against semantic gold comments can't be done deterministically.
   Triage/code-fix stay judge-free. The judge model is independent of the models

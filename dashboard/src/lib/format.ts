@@ -29,7 +29,7 @@ export interface TierMetric {
   frac: (m: ModelSummary) => string;
 }
 
-export function tierMetric(tier: string): TierMetric {
+export function tierMetric(tier: string, beta = 1): TierMetric {
   if (tier === "code-fix") {
     return {
       label: "resolved",
@@ -38,13 +38,14 @@ export function tierMetric(tier: string): TierMetric {
     };
   }
   if (tier === "pr-review") {
-    // F0.5 is the headline (precision weighted 2× over recall), shown as a
-    // percentage with the underlying precision/recall in the fraction slot.
+    // F-beta is the headline (F1 by default — Martian's leaderboard metric),
+    // shown as a percentage with the underlying precision/recall in the fraction
+    // slot. The label reflects the β the run used (F1, F0.5, …).
     return {
-      label: "F0.5",
-      rate: (m) => (m.reviewTotal ? m.avgF05 : 0),
+      label: `F${beta}`,
+      rate: (m) => (m.reviewTotal ? m.avgFbeta : 0),
       frac: (m) =>
-        m.reviewTotal ? `${(m.avgF05 * 100).toFixed(0)}% · P${m.avgPrecision.toFixed(2)}/R${m.avgRecall.toFixed(2)}` : "—",
+        m.reviewTotal ? `${(m.avgFbeta * 100).toFixed(0)}% · P${m.avgPrecision.toFixed(2)}/R${m.avgRecall.toFixed(2)}` : "—",
     };
   }
   return {

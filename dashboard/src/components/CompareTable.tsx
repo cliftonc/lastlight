@@ -17,7 +17,9 @@ export function CompareTable({
   labels: Record<string, string>;
   axisLabel?: string;
 }) {
-  const metric = tierMetric(tier);
+  // pr-review label reflects the β the run graded with (F1 by default).
+  const reviewBeta = models.find((m) => m.reviewBeta !== undefined)?.reviewBeta ?? 1;
+  const metric = tierMetric(tier, reviewBeta);
   const ranked = rankModels(models, metric);
 
   const bestRate = Math.max(0, ...ranked.map(metric.rate));

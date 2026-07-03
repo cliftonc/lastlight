@@ -161,9 +161,16 @@ describe("fake GitHub — PR + review endpoints (pr-review tier)", () => {
   });
 });
 
-describe("pr-review grade — F0.5 math + judge-free paths", () => {
-  it("fBeta(0.5) weights precision 2× over recall", () => {
-    expect(fBeta(1, 1, 0.5)).toBeCloseTo(1, 6);
+describe("pr-review grade — F-beta math + judge-free paths", () => {
+  it("defaults to F1 (equal weight — Martian's leaderboard metric)", () => {
+    // F1 (β=1) is the harmonic mean — symmetric in precision and recall.
+    expect(fBeta(1, 1)).toBeCloseTo(1, 6);
+    expect(fBeta(1, 0.5)).toBeCloseTo(fBeta(0.5, 1), 6); // symmetric at β=1
+    // Closed-form: P=0.8, R=0.4 → 2*0.32 / (0.8 + 0.4) = 0.64/1.2.
+    expect(fBeta(0.8, 0.4)).toBeCloseTo(0.64 / 1.2, 6);
+  });
+
+  it("β<1 weights precision higher (β=0.5 → precision 2×)", () => {
     expect(fBeta(0, 0, 0.5)).toBe(0);
     // P=1,R=0.5 should beat P=0.5,R=1 (precision-weighted).
     expect(fBeta(1, 0.5, 0.5)).toBeGreaterThan(fBeta(0.5, 1, 0.5));
@@ -171,11 +178,18 @@ describe("pr-review grade — F0.5 math + judge-free paths", () => {
     expect(fBeta(0.8, 0.4, 0.5)).toBeCloseTo(0.4 / 0.6, 6);
   });
 
+  it("gradeReview reports β on the grade (F1 by default, opts.beta overrides)", async () => {
+    const g1 = await gradeReview({ gold: [], reviews: [] });
+    expect(g1.beta).toBe(1);
+    const g2 = await gradeReview({ gold: [], reviews: [], beta: 0.5 });
+    expect(g2.beta).toBe(0.5);
+  });
+
   it("an empty review scores 0 against a non-empty gold set (no judge call)", async () => {
     const g = await gradeReview({ gold: [{ severity: "high", description: "x" }], reviews: [] });
     expect(g.precision).toBe(0);
     expect(g.recall).toBe(0);
-    expect(g.f05).toBe(0);
+    expect(g.fbeta).toBe(0);
     expect(g.falseNegatives).toHaveLength(1);
     expect(g.error).toBeUndefined();
   });
@@ -184,7 +198,7 @@ describe("pr-review grade — F0.5 math + judge-free paths", () => {
     const g = await gradeReview({ gold: [], reviews: [] });
     expect(g.precision).toBe(1);
     expect(g.recall).toBe(1);
-    expect(g.f05).toBe(1);
+    expect(g.fbeta).toBe(1);
   });
 
   it("a posted review with no provider key is ungraded (error), not a silent zero", async () => {

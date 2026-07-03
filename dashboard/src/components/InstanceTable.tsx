@@ -40,6 +40,8 @@ export function InstanceTable({
 }) {
   const showCodeFix = tier === "code-fix";
   const showReview = tier === "pr-review";
+  // The β the graded cases used (F1 by default) — labels the review column.
+  const reviewBeta = results.find((r) => r.review)?.review?.beta ?? 1;
   const cols = 6 + (showCodeFix ? 1 : 0) + (showReview ? 1 : 0);
   // running before queued, so in-flight rows sit nearest the finished ones.
   const ordered = [...pending].sort((a, b) => (a.status === b.status ? 0 : a.status === "running" ? -1 : 1));
@@ -85,7 +87,7 @@ export function InstanceTable({
             <th className="px-3 py-3 text-left font-semibold">instance</th>
             <th className="px-3 py-3 text-left font-semibold">model</th>
             {showCodeFix && <th className="px-3 py-3 text-left font-semibold">code-fix</th>}
-            {showReview && <th className="px-3 py-3 text-left font-semibold">review (F0.5)</th>}
+            {showReview && <th className="px-3 py-3 text-left font-semibold">review (F{reviewBeta})</th>}
             <th className="px-3 py-3 text-left font-semibold">behavioral</th>
             <th className="px-3 py-3 text-left font-semibold">checks</th>
             <th className="px-3 py-3 text-right font-semibold">cost</th>
@@ -149,7 +151,7 @@ export function InstanceTable({
                     ) : r.review ? (
                       <span className="inline-flex items-center gap-2">
                         <span title={reviewTooltip(r)} className="cursor-help">
-                          <Pill kind={r.review.f05 >= 0.5 ? "pass" : "fail"}>{(r.review.f05 * 100).toFixed(0)}%</Pill>
+                          <Pill kind={r.review.fbeta >= 0.5 ? "pass" : "fail"}>{(r.review.fbeta * 100).toFixed(0)}%</Pill>
                           <span className="ml-2 font-mono text-2xs text-base-content/60">
                             P{r.review.precision.toFixed(2)}/R{r.review.recall.toFixed(2)} · {r.review.matched}/{r.review.gold} gold · {r.review.falsePositives.length} FP
                           </span>

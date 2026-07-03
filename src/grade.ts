@@ -101,12 +101,17 @@ export function gradeTriage(
   return { ok: checks.every((c) => c.ok), checks };
 }
 
-// ── PR-review grade (LLM judge → precision / recall / F0.5) ──────────────────
+// ── PR-review grade (LLM judge → precision / recall / F-beta) ────────────────
 
 export interface ReviewGrade {
   precision: number;
   recall: number;
-  f05: number;
+  /** The F-beta score at {@link ReviewGrade.beta}. Defaults to F1 (β=1), matching
+   * Martian's Code Review Bench leaderboard; override with `EVAL_F_BETA`. */
+  fbeta: number;
+  /** The β used for {@link ReviewGrade.fbeta} (1 = F1 = equal weight; 0.5 = F0.5
+   * = precision weighted 2×). */
+  beta: number;
   posted: number;
   gold: number;
   matched: number;
@@ -115,7 +120,7 @@ export interface ReviewGrade {
   /** Set if the judge couldn't be run (missing key, HTTP error, unparseable) —
    * the case is ungraded, not zero-scored. */
   error?: string;
-  /** The judge's work, so the F0.5 score is inspectable in the dashboard rather
+  /** The judge's work, so the F-beta score is inspectable in the dashboard rather
    * than a black box: what it read, the findings it distilled, the gold set, the
    * finding↔gold pairing, and its raw replies. Absent when the judge never ran
    * (no review posted / no key). */
@@ -123,7 +128,7 @@ export interface ReviewGrade {
 }
 
 /** An inspectable record of one judge grade — surfaced by the dashboard's
- * "judge" button next to the F0.5 score. `matchedGold`/`matchedFinding` are the
+ * "judge" button next to the F-beta score. `matchedGold`/`matchedFinding` are the
  * paired index (into the sibling array) or null when unmatched (a false positive
  * / a missed gold). Text fields are trimmed for the scorecard. */
 export interface ReviewTrace {
@@ -152,11 +157,28 @@ interface ExtractedFinding {
   file?: string | null;
 }
 
-/** F-beta with β=0.5 (precision weighted 2× over recall — Martian's headline). */
-export function fBeta(precision: number, recall: number, beta = 0.5): number {
+/** F-beta. β=1 (default) is F1 — precision and recall weighted equally, matching
+ * Martian's Code Review Bench leaderboard. β<1 weights precision higher (β=0.5 →
+ * 2×), β>1 weights recall higher. */
+export function fBeta(precision: number, recall: number, beta = 1): number {
   const b2 = beta * beta;
   const denom = b2 * precision + recall;
   return denom > 0 ? ((1 + b2) * precision * recall) / denom : 0;
+}
+
+/** The F-beta β for the pr-review grade. Defaults to 1 (F1, Martian's leaderboard
+ * metric); `EVAL_F_BETA` overrides it (e.g. 0.5 to weight precision 2×, mirroring
+ * Martian's adjustable F-beta). Ignores a non-positive / unparseable value. */
+export function defaultBeta(): number {
+  const raw = process.env.EVAL_F_BETA?.trim();
+  if (!raw) return 1;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** Human label for a β: `F1`, `F0.5`, `F2`, … */
+export function fLabel(beta: number): string {
+  return `F${beta}`;
 }
 
 /** Flatten a submitted review (body + inline comments) into one text blob for
@@ -193,20 +215,23 @@ const MATCH_SYSTEM =
  * Grade a posted PR review against the gold set via an LLM judge, mirroring
  * Martian's Code Review Bench: extract the review's distinct findings, then match
  * each to a golden comment ("same underlying issue?"). Precision = matched ÷
- * posted, recall = matched ÷ gold, F0.5 weights precision 2× (false positives
- * cost more than misses). A judge failure yields `error` (ungraded), never a
- * silent zero.
+ * posted, recall = matched ÷ gold, combined as F-beta — β=1 (F1) by default to
+ * match Martian's leaderboard, `EVAL_F_BETA` to reweight (e.g. 0.5 for precision
+ * 2×). A judge failure yields `error` (ungraded), never a silent zero.
  */
 export async function gradeReview(opts: {
   gold: GoldComment[];
   reviews: SubmittedReview[];
   judgeModel?: string;
+  beta?: number;
 }): Promise<ReviewGrade> {
   const gold = opts.gold;
+  const beta = opts.beta ?? defaultBeta();
   const empty = (partial: Partial<ReviewGrade>): ReviewGrade => ({
     precision: 0,
     recall: 0,
-    f05: 0,
+    fbeta: 0,
+    beta,
     posted: 0,
     gold: gold.length,
     matched: 0,
@@ -214,13 +239,23 @@ export async function gradeReview(opts: {
     falseNegatives: gold.map((g) => ({ description: g.description, file: g.file, severity: g.severity })),
     ...partial,
   });
+  // A perfectly-clean case (nothing to catch, nothing flagged): precision/recall/F all 1.
+  const perfect = (): ReviewGrade => ({
+    precision: 1,
+    recall: 1,
+    fbeta: 1,
+    beta,
+    posted: 0,
+    gold: 0,
+    matched: 0,
+    falsePositives: [],
+    falseNegatives: [],
+  });
 
   const text = reviewText(opts.reviews);
   // No review posted: nothing caught. Perfect only if there was nothing to catch.
   if (!text.trim()) {
-    return gold.length === 0
-      ? { precision: 1, recall: 1, f05: 1, posted: 0, gold: 0, matched: 0, falsePositives: [], falseNegatives: [] }
-      : empty({});
+    return gold.length === 0 ? perfect() : empty({});
   }
 
   let model: string;
@@ -246,15 +281,14 @@ export async function gradeReview(opts: {
   }
 
   const posted = findings.length;
-  if (posted === 0) return gold.length === 0
-    ? { precision: 1, recall: 1, f05: 1, posted: 0, gold: 0, matched: 0, falsePositives: [], falseNegatives: [] }
-    : empty({});
+  if (posted === 0) return gold.length === 0 ? perfect() : empty({});
   if (gold.length === 0) {
     // Findings on a PR with no gold issues are all noise.
     return {
       precision: 0,
       recall: 1,
-      f05: 0,
+      fbeta: 0,
+      beta,
       posted,
       gold: 0,
       matched: 0,
@@ -296,7 +330,7 @@ export async function gradeReview(opts: {
   const matched = usedFinding.size;
   const precision = matched / posted;
   const recall = matched / gold.length;
-  const f05 = fBeta(precision, recall, 0.5);
+  const fbeta = fBeta(precision, recall, beta);
 
   const falsePositives = findings
     .map((f, i) => ({ f, i }))
@@ -326,7 +360,7 @@ export async function gradeReview(opts: {
     rawMatch: capTrace(rawMatch),
   };
 
-  return { precision, recall, f05, posted, gold: gold.length, matched, falsePositives, falseNegatives, trace };
+  return { precision, recall, fbeta, beta, posted, gold: gold.length, matched, falsePositives, falseNegatives, trace };
 }
 
 // ── Execution grade (SWE-bench resolved) ────────────────────────────────────
