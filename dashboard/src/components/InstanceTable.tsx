@@ -1,10 +1,11 @@
 import { useState } from "react";
 
-import type { InstanceResult, PendingCase } from "../types";
+import type { InstanceResult, PendingCase, ReviewTrace } from "../types";
 import { fmtMs, modelLabel } from "../lib/format";
 import { Chip, Frac, Pill } from "./ui";
 import { SessionModal, type SessionSource } from "./SessionModal";
 import { DiffModal } from "./DiffModal";
+import { JudgeModal } from "./JudgeModal";
 
 /** Hover text listing the review's false positives + missed gold comments, for
  * eyeballing where a case lost precision/recall (Martian's gold set is known to
@@ -49,6 +50,9 @@ export function InstanceTable({
   // The open diff viewer (code-fix changed files), or null. Kept separate from
   // `openLog` since the diff modal is two-pane, unlike the single-pane SessionModal.
   const [openDiff, setOpenDiff] = useState<{ title: string; url: string } | null>(null);
+  // The open judge viewer (pr-review trace: findings ↔ gold + raw judge replies),
+  // or null. Reads the trace embedded in the scorecard — no fetch.
+  const [openJudge, setOpenJudge] = useState<{ title: string; trace: ReviewTrace } | null>(null);
   const sessionUrl = (rel: string) => (scorecardUrl ? scorecardUrl.replace(/scorecard\.json$/, rel) : rel);
   const titleFor = (id: string, model: string) => `${id} · ${modelLabel(labels, model)}`;
   const hasDiff = (r: InstanceResult) => !!r.modelPatchFile;
@@ -143,14 +147,24 @@ export function InstanceTable({
                     {r.error ? (
                       <Pill kind="fail">error</Pill>
                     ) : r.review ? (
-                      <span
-                        title={reviewTooltip(r)}
-                        className="cursor-help"
-                      >
-                        <Pill kind={r.review.f05 >= 0.5 ? "pass" : "fail"}>{(r.review.f05 * 100).toFixed(0)}%</Pill>
-                        <span className="ml-2 font-mono text-2xs text-base-content/60">
-                          P{r.review.precision.toFixed(2)}/R{r.review.recall.toFixed(2)} · {r.review.matched}/{r.review.gold} gold · {r.review.falsePositives.length} FP
+                      <span className="inline-flex items-center gap-2">
+                        <span title={reviewTooltip(r)} className="cursor-help">
+                          <Pill kind={r.review.f05 >= 0.5 ? "pass" : "fail"}>{(r.review.f05 * 100).toFixed(0)}%</Pill>
+                          <span className="ml-2 font-mono text-2xs text-base-content/60">
+                            P{r.review.precision.toFixed(2)}/R{r.review.recall.toFixed(2)} · {r.review.matched}/{r.review.gold} gold · {r.review.falsePositives.length} FP
+                          </span>
                         </span>
+                        {r.review.trace && (
+                          <button
+                            onClick={() =>
+                              setOpenJudge({ title: `${titleFor(r.instance_id, r.model)} · judge`, trace: r.review!.trace! })
+                            }
+                            className="btn btn-ghost btn-xs h-5 min-h-0 px-1.5 font-mono text-2xs text-info"
+                            title="Inspect the judge: extracted findings ↔ gold + raw replies"
+                          >
+                            judge
+                          </button>
+                        )}
                       </span>
                     ) : (
                       <Pill kind="na">—</Pill>
@@ -241,6 +255,7 @@ export function InstanceTable({
     </div>
     {openLog && <SessionModal source={openLog} onClose={() => setOpenLog(null)} />}
     {openDiff && <DiffModal title={openDiff.title} url={openDiff.url} onClose={() => setOpenDiff(null)} />}
+    {openJudge && <JudgeModal title={openJudge.title} trace={openJudge.trace} onClose={() => setOpenJudge(null)} />}
     </>
   );
 }

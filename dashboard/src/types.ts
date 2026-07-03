@@ -58,6 +58,18 @@ export interface PhaseMetric {
   durationMs?: number;
 }
 
+/** The judge's inspectable working for one pr-review grade. `matchedGold` /
+ * `matchedFinding` are the paired index into the sibling array, or null when
+ * unmatched (a false positive / a missed gold). */
+export interface ReviewTrace {
+  judgeModel: string;
+  reviewText: string;
+  findings: { description: string; file?: string; matchedGold: number | null }[];
+  gold: { description: string; severity: string; matchedFinding: number | null }[];
+  rawExtract?: string;
+  rawMatch?: string;
+}
+
 export interface InstanceResult {
   instance_id: string;
   model: string;
@@ -88,6 +100,8 @@ export interface InstanceResult {
     matched: number;
     falsePositives: { description: string; file?: string }[];
     falseNegatives: { description: string; file?: string; severity: string }[];
+    /** The judge's inspectable working, shown by the "judge" button. */
+    trace?: ReviewTrace;
   };
   reviewTrials?: number;
   trials?: number;

@@ -377,6 +377,7 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
         matched: rg.matched,
         falsePositives: rg.falsePositives,
         falseNegatives: rg.falseNegatives,
+        trace: rg.trace,
       };
       if (rg.error) result.error = result.error ?? `review judge: ${rg.error}`;
     }

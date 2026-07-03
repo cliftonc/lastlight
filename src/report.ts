@@ -180,6 +180,7 @@ export function aggregateTrials(trials: InstanceResult[]): InstanceResult {
       matched: Math.round(mean(rev.map((t) => t.review!.matched))),
       falsePositives: rep.review!.falsePositives,
       falseNegatives: rep.review!.falseNegatives,
+      trace: rep.review!.trace,
     };
     out.reviewTrials = rev.length;
   }

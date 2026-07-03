@@ -232,6 +232,17 @@ export interface InstanceResult {
     falsePositives: { description: string; file?: string }[];
     /** Gold comments the agent missed. */
     falseNegatives: { description: string; file?: string; severity: string }[];
+    /** The judge's inspectable working (dashboard "judge" button): what it read,
+     * the findings it distilled, the gold set, the finding↔gold pairing, and its
+     * raw replies. Absent when the judge never ran. */
+    trace?: {
+      judgeModel: string;
+      reviewText: string;
+      findings: { description: string; file?: string; matchedGold: number | null }[];
+      gold: { description: string; severity: string; matchedFinding: number | null }[];
+      rawExtract?: string;
+      rawMatch?: string;
+    };
   };
   /** When `--runs N`: how many trials the mean review metrics aggregate. */
   reviewTrials?: number;

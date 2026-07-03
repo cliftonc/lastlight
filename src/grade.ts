@@ -115,6 +115,36 @@ export interface ReviewGrade {
   /** Set if the judge couldn't be run (missing key, HTTP error, unparseable) —
    * the case is ungraded, not zero-scored. */
   error?: string;
+  /** The judge's work, so the F0.5 score is inspectable in the dashboard rather
+   * than a black box: what it read, the findings it distilled, the gold set, the
+   * finding↔gold pairing, and its raw replies. Absent when the judge never ran
+   * (no review posted / no key). */
+  trace?: ReviewTrace;
+}
+
+/** An inspectable record of one judge grade — surfaced by the dashboard's
+ * "judge" button next to the F0.5 score. `matchedGold`/`matchedFinding` are the
+ * paired index (into the sibling array) or null when unmatched (a false positive
+ * / a missed gold). Text fields are trimmed for the scorecard. */
+export interface ReviewTrace {
+  judgeModel: string;
+  /** The flattened review text (body + inline comments) fed to the extractor. */
+  reviewText: string;
+  /** Distinct findings the judge distilled from the review. */
+  findings: { description: string; file?: string; matchedGold: number | null }[];
+  /** The gold set the findings are matched against. */
+  gold: { description: string; severity: string; matchedFinding: number | null }[];
+  /** The judge's raw reply for the extraction step. */
+  rawExtract?: string;
+  /** The judge's raw reply for the matching step. */
+  rawMatch?: string;
+}
+
+/** Cap on trimmed text fields in a {@link ReviewTrace}, keeping the scorecard
+ * lean while preserving enough to eyeball the judge's reasoning. */
+const TRACE_TEXT_CAP = 8_000;
+function capTrace(s: string): string {
+  return s.length > TRACE_TEXT_CAP ? s.slice(0, TRACE_TEXT_CAP) + "\n\n[…trimmed]" : s;
 }
 
 interface ExtractedFinding {
@@ -200,11 +230,15 @@ export async function gradeReview(opts: {
     return empty({ error: (err as Error).message });
   }
 
+  // Raw judge replies, kept for the inspectable trace built at the end.
+  let rawExtract = "";
+  let rawMatch = "";
+
   // 1. Extract distinct findings from the review.
   let findings: ExtractedFinding[];
   try {
-    const raw = await judge(model, EXTRACT_SYSTEM, text);
-    const parsed = parseJudgeJson<{ findings?: ExtractedFinding[] }>(raw);
+    rawExtract = await judge(model, EXTRACT_SYSTEM, text);
+    const parsed = parseJudgeJson<{ findings?: ExtractedFinding[] }>(rawExtract);
     if (!parsed?.findings) return empty({ error: "judge: unparseable extraction reply" });
     findings = parsed.findings.filter((f) => f && typeof f.description === "string" && f.description.trim());
   } catch (err) {
@@ -236,8 +270,8 @@ export async function gradeReview(opts: {
   });
   let matches: { finding: number; gold: number }[];
   try {
-    const raw = await judge(model, MATCH_SYSTEM, matchUser);
-    const parsed = parseJudgeJson<{ matches?: { finding: number; gold: number }[] }>(raw);
+    rawMatch = await judge(model, MATCH_SYSTEM, matchUser);
+    const parsed = parseJudgeJson<{ matches?: { finding: number; gold: number }[] }>(rawMatch);
     if (!parsed?.matches) return empty({ error: "judge: unparseable match reply", posted });
     matches = parsed.matches;
   } catch (err) {
@@ -245,15 +279,18 @@ export async function gradeReview(opts: {
   }
 
   // De-dup the matching: each finding + each gold used at most once (guard the
-  // judge over-pairing), and drop out-of-range indices.
+  // judge over-pairing), and drop out-of-range indices. Keep the accepted pairing
+  // (finding→gold) for the trace.
   const usedFinding = new Set<number>();
   const usedGold = new Set<number>();
+  const findingToGold = new Map<number, number>();
   for (const m of matches) {
     if (!Number.isInteger(m.finding) || !Number.isInteger(m.gold)) continue;
     if (m.finding < 0 || m.finding >= posted || m.gold < 0 || m.gold >= gold.length) continue;
     if (usedFinding.has(m.finding) || usedGold.has(m.gold)) continue;
     usedFinding.add(m.finding);
     usedGold.add(m.gold);
+    findingToGold.set(m.finding, m.gold);
   }
 
   const matched = usedFinding.size;
@@ -270,7 +307,26 @@ export async function gradeReview(opts: {
     .filter(({ i }) => !usedGold.has(i))
     .map(({ g }) => ({ description: g.description, file: g.file, severity: g.severity }));
 
-  return { precision, recall, f05, posted, gold: gold.length, matched, falsePositives, falseNegatives };
+  const goldToFinding = new Map<number, number>();
+  for (const [f, g] of findingToGold) goldToFinding.set(g, f);
+  const trace: ReviewTrace = {
+    judgeModel: model,
+    reviewText: capTrace(text),
+    findings: findings.map((f, i) => ({
+      description: f.description,
+      file: f.file ?? undefined,
+      matchedGold: findingToGold.has(i) ? findingToGold.get(i)! : null,
+    })),
+    gold: gold.map((g, j) => ({
+      description: g.description,
+      severity: g.severity,
+      matchedFinding: goldToFinding.has(j) ? goldToFinding.get(j)! : null,
+    })),
+    rawExtract: capTrace(rawExtract),
+    rawMatch: capTrace(rawMatch),
+  };
+
+  return { precision, recall, f05, posted, gold: gold.length, matched, falsePositives, falseNegatives, trace };
 }
 
 // ── Execution grade (SWE-bench resolved) ────────────────────────────────────
