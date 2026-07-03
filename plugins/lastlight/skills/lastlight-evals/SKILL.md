@@ -123,7 +123,8 @@ or `--delete` removes the run dir.
 
 Three tiers ship: **triage** (cheap, issue-triage), **code-fix** (heavy, build
 workflow with held-out tests), and **pr-review** (PR-review precision, graded by
-an LLM judge against a gold set → precision / recall / **F0.5**). To add cases or
+an LLM judge against a gold set → precision / recall / **F1** by default, the
+F-beta configurable via `EVAL_F_BETA`). To add cases or
 a custom tier, read **`references/instance-schema.md`** — it has the
 `SweBenchInstance` schema, the exact files to create for each tier, and worked
 examples.
