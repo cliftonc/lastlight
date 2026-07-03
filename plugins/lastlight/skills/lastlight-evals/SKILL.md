@@ -99,6 +99,8 @@ lastlight-evals run --compare                   # cross-vendor set (only models 
 lastlight-evals run triage --runs 3             # repeat each case 3× (worst-case verdict, mean metrics)
 lastlight-evals run pr-review --limit 3         # only the first 3 cases of the tier (controlled/cheap run)
 lastlight-evals run triage --instance <id>      # only this exact instance_id (or set EVAL_INSTANCE)
+lastlight-evals run pr-review --f-beta 0.5      # pr-review F-beta β (default 1=F1; 0.5=precision 2×). Or EVAL_F_BETA
+lastlight-evals run pr-review --judge-with-diff # feed the PR diff to the judge (higher fidelity; off by default)
 lastlight-evals run triage --no-open            # don't open the report
 # Plain layout: add --overlay .   (e.g. lastlight-evals run triage --overlay .)
 
