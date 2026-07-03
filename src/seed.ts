@@ -164,7 +164,8 @@ export function ensurePrCommitsInCache(opts: {
   if (!mirrorHasCommit(mirror, opts.baseCommit)) {
     git(mirror, ["fetch", "--quiet", "origin", "+refs/heads/*:refs/heads/*"]);
   }
-  // Head may be off-branch (squash/rebase merge) — fetch the PR head ref by number.
+  // Head may be off-branch (squash/rebase merge) — fetch GitHub's immutable
+  // `refs/pull/<n>/head` when the head commit is absent.
   if (!mirrorHasCommit(mirror, opts.headCommit)) {
     try {
       git(mirror, ["fetch", "--quiet", "origin", `refs/pull/${opts.pullNumber}/head`]);
@@ -180,6 +181,13 @@ export function ensurePrCommitsInCache(opts: {
       );
     }
   }
+  // Anchor the head on a real branch in the mirror. `git clone file://mirror`
+  // (in seedWorkspacePrReview) only transfers refs/heads/* — a head fetched into
+  // FETCH_HEAD alone stays unreachable, so the clone drops its tree objects and
+  // `git checkout <headCommit>` fails with "fatal: unable to read tree". A
+  // dedicated branch guarantees the commit rides along. (Base is already on a
+  // fetched head ref; force-pointing head is idempotent when it is too.)
+  git(mirror, ["branch", "-f", `eval-pr-${opts.pullNumber}-head`, opts.headCommit]);
   return mirror;
 }
 
