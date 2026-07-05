@@ -258,7 +258,7 @@ export async function gradeReview(opts: {
     ...partial,
   });
   // A perfectly-clean case (nothing to catch, nothing flagged): precision/recall/F all 1.
-  const perfect = (): ReviewGrade => ({
+  const perfect = (trace?: ReviewTrace): ReviewGrade => ({
     precision: 1,
     recall: 1,
     fbeta: 1,
@@ -268,19 +268,41 @@ export async function gradeReview(opts: {
     matched: 0,
     falsePositives: [],
     falseNegatives: [],
+    trace,
+  });
+
+  // A minimal trace for the zero-findings outcomes, so the dashboard's judge modal
+  // explains the 0 instead of rendering nothing. Two cases both land here: no review
+  // was posted at all, OR the judge read a review but distilled no concrete findings
+  // from it (e.g. an APPROVE that only lists confirmations). Every finding/gold is
+  // unmatched by definition. Distinguishable in the modal by whether `reviewText` and
+  // the extracted `findings` are present.
+  const bareTrace = (t: { judgeModel: string; reviewText: string; findings?: ExtractedFinding[]; rawExtract?: string }): ReviewTrace => ({
+    judgeModel: t.judgeModel,
+    reviewText: capTrace(t.reviewText),
+    findings: (t.findings ?? []).map((f) => ({ description: f.description, file: f.file ?? undefined, matchedGold: null })),
+    gold: gold.map((g) => ({ description: g.description, severity: g.severity, matchedFinding: null })),
+    rawExtract: t.rawExtract ? capTrace(t.rawExtract) : undefined,
+    usedDiff: !!diff,
   });
 
   const text = reviewText(opts.reviews);
-  // No review posted: nothing caught. Perfect only if there was nothing to catch.
-  if (!text.trim()) {
-    return gold.length === 0 ? perfect() : empty({});
-  }
 
+  // Resolve the judge model up front. If it can't be resolved (missing key) AND a
+  // review WAS posted, the case is ungraded (errored) — never a silent zero. With
+  // nothing posted there's nothing to judge, so we still return a clean traced result.
   let model: string;
   try {
     model = opts.judgeModel ?? defaultJudgeModel();
   } catch (err) {
-    return empty({ error: (err as Error).message });
+    if (text.trim()) return empty({ error: (err as Error).message });
+    model = "";
+  }
+
+  // No review posted: nothing caught. Perfect only if there was nothing to catch.
+  if (!text.trim()) {
+    const trace = bareTrace({ judgeModel: model, reviewText: text });
+    return gold.length === 0 ? perfect(trace) : empty({ trace });
   }
 
   // Raw judge replies, kept for the inspectable trace built at the end.
@@ -299,7 +321,12 @@ export async function gradeReview(opts: {
   }
 
   const posted = findings.length;
-  if (posted === 0) return gold.length === 0 ? perfect() : empty({});
+  if (posted === 0) {
+    // The judge read the review but extracted no concrete findings (e.g. an
+    // approval). Trace it so the 0 is inspectable, not a blank modal.
+    const trace = bareTrace({ judgeModel: model, reviewText: text, findings, rawExtract });
+    return gold.length === 0 ? perfect(trace) : empty({ trace });
+  }
   if (gold.length === 0) {
     // Findings on a PR with no gold issues are all noise.
     return {

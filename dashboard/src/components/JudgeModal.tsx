@@ -56,7 +56,7 @@ export function JudgeModal({ title, trace, onClose }: { title: string; trace: Re
         <div className="flex shrink-0 items-center gap-3 border-b border-base-300 bg-base-200/80 px-4 py-2.5">
           <span className="truncate font-mono text-xs text-base-content/70">{title}</span>
           <span className="shrink-0 whitespace-nowrap rounded border border-base-300 bg-base-200 px-1.5 py-0.5 font-mono text-2xs text-base-content/60">
-            judge: {trace.judgeModel}
+            judge: {trace.judgeModel || "not run (no review posted)"}
           </span>
           <span className="shrink-0 whitespace-nowrap font-mono text-2xs text-base-content/50">
             {matched}/{trace.gold.length} gold matched · {trace.findings.length} posted
