@@ -1,11 +1,17 @@
-# Author an eval case from a real GitHub PR or issue
+# Author a code-fix or triage eval case from a real GitHub PR or issue
 
-`lastlight-evals add-case` turns a real GitHub **PR** into a code-fix (build) case
-or an **issue** into a triage case. It does the mechanical, reproducible
-extraction with `gh` + `git`; **you** refine the judgement parts. The result is a
-**git-source** case — no fixture repo is vendored; at run time the harness clones
-the repo into the gitignored `./.eval-cache/` and checks out `base_commit` (see
-the `instance-schema.md` "Git-source" flavor).
+`lastlight-evals add-case --pr <url> --code-fix` turns a real GitHub **PR** into a
+code-fix (build) case; `--issue <url>` turns an **issue** into a triage case. It
+does the mechanical, reproducible extraction with `gh` + `git`; **you** refine the
+judgement parts. The result is a **git-source** case — no fixture repo is
+vendored; at run time the harness clones the repo into the gitignored
+`./.eval-cache/` and checks out `base_commit` (see the `instance-schema.md`
+"Git-source" flavor).
+
+> A PR seeds two different evals. Use `--code-fix` (this doc) to hide the fix and
+> have the agent reproduce it; use `--review` (see **`authoring-pr-review.md`**)
+> to grade a review of the PR against its human review. `--pr` **requires** one of
+> the two — it no longer defaults to code-fix.
 
 ## Two grading modes (default: suite)
 
@@ -34,7 +40,7 @@ the `instance-schema.md` "Git-source" flavor).
 ## Command
 
 ```bash
-lastlight-evals add-case --pr <github-pr-url> [options]
+lastlight-evals add-case --pr <github-pr-url> --code-fix [options]
 lastlight-evals add-case --issue <github-issue-url> [options]
 ```
 
@@ -42,9 +48,10 @@ Options:
 
 | flag | meaning |
 |---|---|
-| `--pr <url>` | a GitHub PR url → a **code-fix** (build) case |
+| `--pr <url>` | a GitHub PR url (pair with `--code-fix` here, or `--review` for a pr-review case) |
+| `--code-fix` | with `--pr` → a **code-fix** (build) case |
 | `--issue <url>` | a GitHub issue url → a **triage** case |
-| `--tier <name>` | target tier dir (default `code-fix` for `--pr`, `triage` for `--issue`) |
+| `--tier <name>` | target tier dir (default `code-fix` for `--pr --code-fix`, `triage` for `--issue`) |
 | `--id <slug>` | `instance_id` (default derived from repo + number) |
 | `--datasets <dir>` | datasets root to write into (a `<tier>/` subdir). Default `./datasets`, else `./evals/datasets` |
 | `--overlay <dir>` | write into `<dir>/evals/datasets` instead |
@@ -57,8 +64,8 @@ Options:
 
 ## The recommended flow (CLI extracts → you refine)
 
-1. **Dry-run first.** `add-case --pr <url> --dry-run` prints the proposed instance.
-   The CLI derives:
+1. **Dry-run first.** `add-case --pr <url> --code-fix --dry-run` prints the proposed
+   instance. The CLI derives:
    - `repo`, `base_commit` (the **merge-base** of the base branch and the PR head —
      the true fork point, not the base-branch tip), and `head_commit`;
    - gold `patch` — the diff of the non-test files (reference only, never graded);

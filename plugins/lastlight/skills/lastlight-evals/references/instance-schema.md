@@ -44,12 +44,23 @@ Datasets are discovered from (overlay > user > built-in): `<overlay>/evals/datas
     "state": "open"
   },
   "triage_gold": { "category": "bug", "state": "ready-for-agent" },  // triage grading
+  "pr": {                                  // pr-review: the PR fixture (base/head refs + SHAs)
+    "number": 37429, "title": "...", "body": "...",
+    "base_ref": "main", "head_ref": "feature-x",
+    "base_commit": "f3c8e8f...", "head_commit": "02f48f7...",
+    "user": "author"                       // do NOT put the human review here — see below
+  },
+  "review_gold": [                          // pr-review: the held-out judge gold
+    { "file": "src/x.ts", "line": 42, "severity": "high", "description": "..." },
+    { "severity": "medium", "description": "..." }   // file/line optional (judge matches on substance)
+  ],
   "expect_github": {                       // behavioral assertions on recorded GitHub calls
     "labels_added": ["bug"],
     "labels_absent": ["wontfix"],
     "issue_closed": false,
     "comment_matches": "(?i)thanks",
-    "pr_opened": { "base": "main", "head_is_branch": true, "title_matches": "(?i)fix" }
+    "pr_opened": { "base": "main", "head_is_branch": true, "title_matches": "(?i)fix" },
+    "review_submitted": {}                 // pr-review: proxy check that a review was posted
   }
 }
 ```
@@ -83,6 +94,26 @@ hand-build these — use `lastlight-evals add-case --pr <url>` (see
 **`authoring-from-pr.md`**), which fills `base_commit`, `head_commit`,
 `test_patch`, and the verdicts for you.
 
+## Add a pr-review case
+
+A pr-review instance has a **`pr`** fixture + a **`review_gold`** set and
+`workflow: "pr-review"`. The `pr` fixture drives both the mocked PR endpoints and
+the workspace checkout: at run time the harness checks out the PR **head**, and
+the review workflow diffs `base..head`. `review_gold` is the held-out gold the
+posted review is scored against by an LLM judge (each entry: `severity` ∈
+`low`|`medium`|`high`|`critical` + `description`; `file`/`line` optional — the
+judge matches on substance). Set `expect_github.review_submitted: {}` (a cheap
+proxy that a review was posted).
+
+> **Never** put the human/gold review in `pr.reviews` / `pr.review_comments` —
+> those seed the mocked GitHub the agent can read, spoiling the case. The gold
+> lives only in `review_gold`.
+
+Don't hand-build these — use `lastlight-evals add-case --pr <url> --review` (see
+**`authoring-pr-review.md`**), which pins the `pr` fixture and seeds a candidate
+`review_gold` from the PR's human review for you to curate. Or bulk-import the
+Martian Code Review Bench with `npx tsx scripts/import-martian.ts`.
+
 ## Add a custom tier
 
 Create `datasets/<tier-name>/` with `tier.json` (`name`, `defaultWorkflow`,
@@ -95,6 +126,11 @@ and `tests/<id>/`. Discovery auto-finds it — no code change. Run it with
 - **Behavioral:** did the workflow take the expected GitHub actions
   (`expect_github`)?
 - **Triage:** did the decision match `triage_gold`?
+- **Review (pr-review):** an LLM judge matches the posted review's findings against
+  `review_gold` → **precision / recall / F-beta** (β via `EVAL_F_BETA` or
+  `--f-beta`; default F1). Needs a judge model (`EVAL_JUDGE_MODEL`, else a strong
+  default per provider key); independent of the model under test. The judge trace
+  is inspectable in the dashboard.
 - **Execution (code-fix)** — two modes:
   - **Suite (default).** Nothing held out: run the repo's own `test_cmd` against the
     agent's final tree, **resolved iff it exits 0**. Grades "did the agent leave the

@@ -13,6 +13,7 @@ Light's *internal* sandbox skills under the repo's top-level `skills/` dir
 
 | Skill | Use it when you want to… |
 |-------|--------------------------|
+| `lastlight-guide` | **Not sure which of the below you need** — orientation & router across all the Last Light skills. Start here (or `/lastlight-guide`). |
 | `lastlight-server` | Install & configure a Last Light **server** (the agent + docker stack) on a host. |
 | `lastlight-client` | Point the `lastlight` **CLI client** at an existing server and log in. |
 | `lastlight-overlay` | Create a deployment **overlay** instance and fork/customize workflows, prompts, skills, or the agent persona. |
@@ -41,4 +42,6 @@ claude plugin install lastlight@lastlight-skills
 auto-discovers them on the next session.
 
 After installing, start a new Claude Code session and say e.g. *"set up a Last
-Light server"* or *"scaffold a Last Light evals workspace"*.
+Light server"* or *"scaffold a Last Light evals workspace"* — or, if you're not
+sure where to start, *"help me with Last Light"* (or `/lastlight-guide`) and the
+guide skill will route you.

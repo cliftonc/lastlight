@@ -1,7 +1,7 @@
 ---
 name: lastlight-evals
-description: Scaffold, configure and run a Last Light EVALS workspace — the harness that runs Last Light's real workflows against a mocked GitHub and grades them deterministically. Use when the user wants to "set up / scaffold Last Light Evals", "create an evals workspace or instance", "run evals", "compare models", or author new eval cases — including "create an eval dataset/case from this PR/issue <github url>" (triage / code-fix instances). GitHub is mocked when running, so no real GitHub token is needed — only a model provider API key (the one exception is `add-case`, which reads real PRs/issues via `gh`).
-version: 1.2.0
+description: Scaffold, configure and run a Last Light EVALS workspace — the harness that runs Last Light's real workflows against a mocked GitHub and grades them deterministically. Use when the user wants to "set up / scaffold Last Light Evals", "create an evals workspace or instance", "run evals", "compare models", or author new eval cases — including "create an eval dataset/case from this PR/issue <github url>" and "create a PR-review eval dataset from these gold PRs" (triage / code-fix / pr-review instances, via `add-case --pr <url> --review|--code-fix` / `--issue`). GitHub is mocked when running, so no real GitHub token is needed — only a model provider API key (the one exception is `add-case`, which reads real PRs/issues via `gh`).
+version: 1.3.0
 tags: [lastlight, evals, benchmark, models, swe-bench]
 ---
 
@@ -13,6 +13,24 @@ build, …) end-to-end against a mocked GitHub, grades the results deterministic
 thin CLI on top of the `lastlight` core package (via the `lastlight/evals`
 barrel), so it exercises the same workflows/skills production does. SWE-bench
 compatible. **Node 24+.**
+
+## Start here — what do you want to do?
+
+If the user's evals goal is clear, jump to the section. If it's vague ("help me
+with the evals", "what can this do?"), **ask** (`AskUserQuestion`) which of these
+they want, then go:
+
+| Goal | Section |
+|---|---|
+| Set up an evals workspace (first time) | **§2 Scaffold** (+ §1 prereqs, §3 providers) |
+| Run evals / compare models | **§4 Run** |
+| Look at past runs (no models run) | **§4** — `lastlight-evals serve` |
+| Author one case from a GitHub PR or issue | **§6** |
+| **Build a PR-review dataset from my own gold PRs** | **§6 → "Build a PR-review dataset"** |
+| Add cases by hand / understand the schema | **§5** + `references/instance-schema.md` |
+
+New to the whole plugin (server / overlay / client, not just evals)? That's the
+**`lastlight-guide`** skill — this one is evals-only.
 
 ## 1. Check prerequisites
 
@@ -144,9 +162,11 @@ Quick shape (paths are relative to the workspace's `evals/` dir):
   `evals/datasets/code-fix/tests/<instance_id>/` (held-out tests applied at grade time).
 - **PR-review case:** a `SweBenchInstance` with a `pr` fixture (base/head refs +
   commits, checked out at the PR head) and a `review_gold` set (severity +
-  description). The `pr-review` tier ships empty — populate the full Martian
+  description). Populate the full Martian
   [Code Review Bench](https://codereview.withmartian.com/) 50 with
-  `npx tsx scripts/import-martian.ts`. Grading needs a judge model
+  `npx tsx scripts/import-martian.ts`, **or author your *own* gold-PR dataset**
+  with `add-case --pr <url> --review` (see §6 and
+  **`references/authoring-pr-review.md`**). Grading needs a judge model
   (`EVAL_JUDGE_MODEL`, else a strong default per provider key).
 - **Custom tier:** a new `evals/datasets/<tier>/` with `tier.json` +
   `instances.json` (+ `repos/` & `tests/` for code-fix-style tiers). Discovery is
@@ -154,16 +174,28 @@ Quick shape (paths are relative to the workspace's `evals/` dir):
 
 ## 6. Author a case from a real GitHub PR or issue
 
-When the user says **"create an eval dataset/case from this PR/issue <url>"**, use
-the `add-case` subcommand — it does the mechanical extraction; you refine the
-fuzzy parts.
+When the user says **"create an eval dataset/case from this PR/issue <url>"** or
+**"create a PR-review eval dataset from these gold PRs"**, use the `add-case`
+subcommand — it does the mechanical extraction; you refine the fuzzy parts.
+
+A PR seeds two different evals, so `--pr` requires a kind — `--review` (the PR's
+human review is the gold set) or `--code-fix` (hide the fix, the agent must
+reproduce it):
 
 ```bash
-lastlight-evals add-case --pr <github-pr-url> --dry-run        # propose a code-fix case; don't write
-lastlight-evals add-case --pr <github-pr-url>                  # write into ./datasets (or --datasets/--overlay)
-lastlight-evals add-case --issue <github-issue-url> --dry-run  # propose a triage case
+lastlight-evals add-case --pr <github-pr-url> --review --dry-run    # propose a pr-review case; don't write
+lastlight-evals add-case --pr <github-pr-url> --review              # write into ./datasets/pr-review (or --overlay)
+lastlight-evals add-case --pr <github-pr-url> --code-fix --dry-run  # propose a code-fix case
+lastlight-evals add-case --issue <github-issue-url> --dry-run       # propose a triage case
 ```
 
+- **From a PR (pr-review):** derives the `pr` fixture (base/head refs + commits,
+  from the PR's `baseRefOid`/`headRefOid`) and a **candidate `review_gold`** from
+  the PR's *human* review — inline comments + substantive review bodies, with
+  bot/nit/reply/outdated noise filtered out. Prints an evidence block; **you**
+  assign real severities and prune non-actionable comments. Byte-compatible with
+  `import-martian.ts`, so authored cases sit alongside imported ones. Leak-safe:
+  the review lands only in `review_gold`, never in the seeded PR the agent sees.
 - **From a PR (code-fix):** derives `repo`, `base_commit` (merge-base of base &
   head) + `head_commit`, the PR's **test** diff as the held-out `test_patch`, and
   auto-detects `FAIL_TO_PASS` / `PASS_TO_PASS` by running the tests at base (red)
@@ -176,9 +208,35 @@ lastlight-evals add-case --issue <github-issue-url> --dry-run  # propose a triag
   **reviewer comments** — the raw triage signal. You then assign
   `triage_gold` (category/state) from those labels per the deployment's taxonomy.
 
+### Build a PR-review dataset from gold PRs (interactive)
+
+When the user says **"I want to create a PR-review eval dataset"** (from *their*
+PRs, to track review quality as they evolve models/prompts):
+
+1. **Get the PRs.** If they didn't paste URLs, **ask** for them — "give me the
+   gold PR URL(s) — one or many, whose human review is the standard you want a
+   model to reproduce." Also confirm *where* to write: the current workspace's
+   `./datasets` (or `--overlay <dir>` for a deployment's own dataset).
+2. **One PR at a time.** For each URL run
+   `add-case --pr <url> --review --dry-run`, read the evidence block, then
+   **curate** the candidate `review_gold` — set real severities and drop
+   comments that aren't concrete findings — and write it
+   (`add-case --pr <url> --review [--datasets/--overlay …]`). Re-running the same
+   PR **replaces by id**, so curation is idempotent.
+   - For **many** PRs, spawn a **curation sub-agent per PR** (each handed one URL
+     + the target dir, returning the curated instance) so the judgement stays
+     isolated and they run in parallel.
+3. **Smoke-run** the new tier with the cheapest model to confirm the seed + judge
+   plumbing (needs a judge-model key): `lastlight-evals run pr-review --limit 1 --model haiku`.
+
+See **`references/authoring-pr-review.md`** for the full extract→curate→write
+flow, the `--severity` / `--include-bots` knobs, and the anti-spoil guarantee.
+
 The full flow, what you refine for each, the `test_cmd` / `setup_cmd` options for
 non-`node --test` runners, and the trust/offline caveats are in
-**`references/authoring-from-pr.md`** — read it before authoring.
+**`references/authoring-from-pr.md`** (PR code-fix + issue triage) and
+**`references/authoring-pr-review.md`** (PR review) — read the relevant one
+before authoring.
 
 ## Done when
 
