@@ -674,7 +674,7 @@ describe('dispatch — webhook dispatch', () => {
     const outcome = await dispatch(envelope, deps);
 
     expect(outcome).toEqual({ kind: 'dispatched', workflow: 'pr-review' });
-    expect(dispatchWorkflow).toHaveBeenCalledWith('pr-review', expect.objectContaining({ _triggerType: 'webhook' }));
+    expect(dispatchWorkflow).toHaveBeenCalledWith('pr-review', expect.objectContaining({ _triggerType: 'webhook' }), expect.any(Function));
     expect(github.createCheckRun).not.toHaveBeenCalled();
   });
 
@@ -698,6 +698,57 @@ describe('dispatch — webhook dispatch', () => {
     expect(github.createCheckRun).toHaveBeenCalledWith(
       'cliftonc', 'lastlight', 'headsha', 'last-light/review', expect.anything(),
     );
+  });
+
+  it('links the review check to the run dashboard URL once the run starts', async () => {
+    const envelope = makeEnvelope({ type: 'pr.opened', repo: 'cliftonc/lastlight', prNumber: 8 });
+    // dispatchWorkflow fires onRunStart with the new run id, like the real runner.
+    const dispatchWorkflow = vi.fn().mockImplementation(async (_wf, _ctx, onRunStart?: (id: string) => Promise<void>) => {
+      if (onRunStart) await onRunStart('run-abc123');
+      return { success: true };
+    });
+    const github = {
+      getPullRequestHeadSha: vi.fn().mockResolvedValue('headsha'),
+      createCheckRun: vi.fn().mockResolvedValue(4242),
+      updateCheckRun: vi.fn().mockResolvedValue(undefined),
+      getLatestBotReview: vi.fn().mockResolvedValue({ state: 'APPROVED', body: 'lgtm' }),
+    };
+    const deps = makeDeps(
+      { action: 'handler', handler: 'pr-review', context: { _routeKey: 'github.pr_opened', repo: 'cliftonc/lastlight', prNumber: 8 } },
+      { db: mockDb() as any, github: github as any, dispatchWorkflow, reviewPostsCheck: true, publicUrl: 'https://dash.example' },
+    );
+
+    await dispatch(envelope, deps);
+
+    expect(github.updateCheckRun).toHaveBeenCalledWith(
+      'cliftonc', 'lastlight', 4242,
+      expect.objectContaining({ detailsUrl: 'https://dash.example/admin/?run=run-abc123&tab=runs&wf=pr-review' }),
+    );
+  });
+
+  it('skips the details link when no public URL is configured', async () => {
+    const envelope = makeEnvelope({ type: 'pr.opened', repo: 'cliftonc/lastlight', prNumber: 8 });
+    const dispatchWorkflow = vi.fn().mockImplementation(async (_wf, _ctx, onRunStart?: (id: string) => Promise<void>) => {
+      if (onRunStart) await onRunStart('run-abc123');
+      return { success: true };
+    });
+    const github = {
+      getPullRequestHeadSha: vi.fn().mockResolvedValue('headsha'),
+      createCheckRun: vi.fn().mockResolvedValue(4242),
+      updateCheckRun: vi.fn().mockResolvedValue(undefined),
+      getLatestBotReview: vi.fn().mockResolvedValue({ state: 'APPROVED', body: 'lgtm' }),
+    };
+    const deps = makeDeps(
+      { action: 'handler', handler: 'pr-review', context: { _routeKey: 'github.pr_opened', repo: 'cliftonc/lastlight', prNumber: 8 } },
+      { db: mockDb() as any, github: github as any, dispatchWorkflow, reviewPostsCheck: true }, // no publicUrl
+    );
+
+    await dispatch(envelope, deps);
+
+    // No updateCheckRun call carries a detailsUrl (completion call omits it too).
+    for (const call of github.updateCheckRun.mock.calls) {
+      expect(call[3]).not.toHaveProperty('detailsUrl');
+    }
   });
 });
 

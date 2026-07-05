@@ -227,6 +227,8 @@ export class GitHubClient {
         | "timed_out"
         | "action_required"
         | "skipped";
+      /** Sets the check's "Details" link (e.g. the dashboard run deep link). */
+      detailsUrl?: string;
       output?: { title: string; summary: string };
     },
   ): Promise<void> {
@@ -237,6 +239,7 @@ export class GitHubClient {
       ...(update.status ? { status: update.status } : {}),
       ...(update.conclusion ? { conclusion: update.conclusion } : {}),
       ...(update.status === "completed" ? { completed_at: new Date().toISOString() } : {}),
+      ...(update.detailsUrl ? { details_url: update.detailsUrl } : {}),
       ...(update.output ? { output: update.output } : {}),
     });
   }

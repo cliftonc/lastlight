@@ -304,7 +304,26 @@ async function handleWebhookDispatch(
     }
   }
 
-  const workflowPromise = deps.dispatchWorkflow(handler, { ...workflowContext, _triggerType: "webhook" });
+  // As soon as the run row exists, point the in-progress check at its dashboard
+  // deep link so a reviewer can click the check's "Details" straight through to
+  // the live run. Best-effort + only when the check and a public URL both exist.
+  const onRunStart = async (runId: string) => {
+    if (prCheckRunId === undefined || !github) return;
+    const detailsUrl = runDashboardUrl(deps.publicUrl, runId, handler);
+    if (!detailsUrl) return;
+    try {
+      await github.updateCheckRun(prOwner, prRepoName, prCheckRunId, { detailsUrl });
+      console.log(`[check] linked check ${prCheckRunId} → ${detailsUrl}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[check] failed to set details_url on check ${prCheckRunId}: ${msg}`);
+    }
+  };
+  const workflowPromise = deps.dispatchWorkflow(
+    handler,
+    { ...workflowContext, _triggerType: "webhook" },
+    onRunStart,
+  );
 
   if (prCheckRunId !== undefined && github) {
     const checkId = prCheckRunId;
