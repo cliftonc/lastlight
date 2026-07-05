@@ -738,8 +738,10 @@ lastlight server start agent       # after REMOVING an .env var (recreate)
 **Only release when the CLI changes** — harness/dashboard/asset/doc changes
 reach prod via `lastlight server update`, not npm (see the npm-release-policy
 note in local agent memory). A release is a version bump + a `vX.Y.Z` tag + a
-GitHub release; npm publish is a separate, optional step (it needs the
-maintainer's 2FA OTP, so an agent usually can't complete it unattended).
+GitHub release. **npm publish is automated** — creating the GitHub release
+fires the `publish.yml` workflow, which typechecks + tests + builds + publishes
+to npm using a repo token (no 2FA). Do NOT run `npm publish` or prompt for an
+OTP; just watch the release run and confirm the version went live.
 
 Patch for fixes/doc tweaks to the CLI surface; minor for new user-facing
 commands/features. The dance (run on a clean `main`, up to date with origin):
@@ -755,9 +757,11 @@ git tag -a vX.Y.Z -m "vX.Y.Z"           # annotated — this repo's git config r
 git push origin main --follow-tags       # pushes the release commit AND the tag
 gh release create vX.Y.Z --title "vX.Y.Z — <summary>" --latest --notes "<changelog>"
 #   notes convention: highlights + a compare link, vPREV...vX.Y.Z
+#   → this triggers publish.yml, which publishes to npm automatically.
 
-# Optional — publish to npm (needs a current 2FA OTP):
-npm publish --otp=<code>
+# Confirm the automated publish landed (plain `npm view` can serve a stale cache):
+gh run watch <run-id> --exit-status
+npm view lastlight@X.Y.Z version --prefer-online   # note: no `v` prefix on npm versions
 ```
 
 Notes:
