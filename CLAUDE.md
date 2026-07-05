@@ -737,10 +737,18 @@ lastlight server start agent       # after REMOVING an .env var (recreate)
 
 ### Cutting a release (npm + GitHub)
 
-**Only release when the CLI changes** — harness/dashboard/asset/doc changes
-reach prod via `lastlight server update`, not npm (see the npm-release-policy
-note in local agent memory). A release is a version bump + a `vX.Y.Z` tag + a
-GitHub release. **npm publish is automated** — creating the GitHub release
+**Release when the CLI *or* the `lastlight/evals` barrel surface changes.**
+Pure prod-facing harness/dashboard/asset/doc changes reach prod via `lastlight
+server update`, not npm — those alone don't need a release. But the standalone
+`lastlight-evals` repo (`~/work/lastlight-evals`) consumes core as an npm
+dependency through the `lastlight/evals` barrel (`src/evals-api.ts` — workflow
+driving + overlay bootstrap symbols), so a harness change that alters how those
+symbols run workflows (e.g. the workflow runner, `phase-executor.ts`, the
+sandbox port, config resolution) must be published for evals to pick it up —
+cut a release even though the CLI is untouched. When in doubt, if the change
+affects the workflow-execution path that evals drives, release it. (See the
+npm-release-policy note in local agent memory.) A release is a version bump + a
+`vX.Y.Z` tag + a GitHub release. **npm publish is automated** — creating the GitHub release
 fires the `publish.yml` workflow, which typechecks + tests + builds + publishes
 to npm using a repo token (no 2FA). Do NOT run `npm publish` or prompt for an
 OTP; just watch the release run and confirm the version went live.
