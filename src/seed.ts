@@ -130,6 +130,59 @@ function ignoreBuildArtifacts(workDir: string): void {
   }
 }
 
+/** Fences the harness-injected context block inside the target file, so it's
+ * identifiable (and could be stripped/replaced) and clearly not part of the repo. */
+const INJECT_BEGIN = "<!-- lastlight-evals: injected repo context (not committed) -->";
+const INJECT_END = "<!-- /lastlight-evals -->";
+
+/**
+ * Inject synthetic repo-level context into a seeded checkout so the reviewing
+ * agent actually reads it. The Pi runtime auto-loads the FIRST of
+ * `AGENTS.md > CLAUDE.md` it finds walking up from the agent cwd (= this repo
+ * dir), so we must write to the file it will actually read:
+ *   - append to an existing `AGENTS.md` (the winner it already loads), else
+ *   - append to an existing `CLAUDE.md` (creating `AGENTS.md` would SHADOW it and
+ *     hide the repo's real content), else
+ *   - create a fresh `AGENTS.md`.
+ * A freshly-created file is added to `.git/info/exclude` so it doesn't show as
+ * untracked (append-into-existing shows as a modified tracked file, which is
+ * harmless for the review-only pr-review tier — the graded diff is committed
+ * `base..head`, never the working tree). Best-effort: returns the repo-relative
+ * filename written, or undefined on empty input / failure.
+ *
+ * This mirrors exactly what a repo MAINTAINER could commit (an `AGENTS.md`), which
+ * is the whole point — a kept improvement here is a portable "add this to your
+ * repo" recommendation, not a harness-only hack.
+ */
+export function injectRepoContext(workDir: string, text: string): string | undefined {
+  const body = text.trim();
+  if (!body) return undefined;
+  const block = `\n${INJECT_BEGIN}\n${body}\n${INJECT_END}\n`;
+  try {
+    let target: string;
+    let created = false;
+    if (existsSync(join(workDir, "AGENTS.md"))) {
+      target = "AGENTS.md";
+    } else if (existsSync(join(workDir, "CLAUDE.md"))) {
+      target = "CLAUDE.md";
+    } else {
+      target = "AGENTS.md";
+      created = true;
+    }
+    appendFileSync(join(workDir, target), block);
+    if (created) {
+      try {
+        appendFileSync(join(workDir, ".git", "info", "exclude"), `\n/${target}\n`);
+      } catch {
+        /* best-effort: a missing exclude just means the created file shows as untracked */
+      }
+    }
+    return target;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface SeedResult {
   workDir: string;
   originDir: string;

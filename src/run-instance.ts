@@ -17,7 +17,7 @@
  * agent loop are exactly what ships.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, renameSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -33,7 +33,7 @@ import {
 import type { SweBenchInstance, InstanceResult, PhaseSession } from "./schema.js";
 import type { Arm } from "./arm.js";
 import { startFakeGitHub } from "./fake-github.js";
-import { seedWorkspace, seedWorkspaceFromGit, seedWorkspacePrReview, prFilesFromGit, isRealSha, type SeedResult } from "./seed.js";
+import { seedWorkspace, seedWorkspaceFromGit, seedWorkspacePrReview, prFilesFromGit, isRealSha, injectRepoContext, type SeedResult } from "./seed.js";
 import { collectMetrics, drainSessions, readSessionLog, listSessionFiles, concatJsonl } from "./metrics.js";
 import { gradeBehavioral, gradeExecution, gradeTriage, gradeReview } from "./grade.js";
 
@@ -49,8 +49,18 @@ export interface RunInstanceOptions {
   arm: Arm;
   /** Base dir for the run's sandbox/sessions (a fresh temp dir if omitted). */
   stateDir?: string;
-  /** Dataset dir holding `repos/<id>` (fixture) + `tests/<id>` (held-out). */
+  /** Dataset dir holding `repos/<id>` (fixture) + `tests/<id>` (held-out), and —
+   * for pr-review context injection — `context/<id>/`. */
   datasetDir?: string;
+  /** The active deployment overlay dir (`--overlay`), used to resolve a GENERIC
+   * repo-context block from `<overlayDir>/repo-context/AGENTS.md|CLAUDE.md` that
+   * is injected into EVERY pr-review checkout. Undefined ⇒ no generic block. */
+  overlayDir?: string;
+  /** Inject synthetic repo-context (`<overlay>/repo-context/` +
+   * `<datasetDir>/context/<id>/`) into the pr-review checkout so the reviewing
+   * agent reads it (see {@link injectRepoContext}). Defaults to `true`; set false
+   * (`--no-inject-context`) for a clean control run in an A/B. */
+  injectContext?: boolean;
   /** Default workflow when the instance doesn't name one. */
   defaultWorkflow?: string;
   keepWorkspace?: boolean;
@@ -217,6 +227,31 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
     // files via the API gets the real changed set instead of a 404.
     if (isPrReview && inst.pr && seed) {
       fake.setPullFiles(inst.pr.number, prFilesFromGit(repoDir, inst.pr.base_commit, inst.pr.head_commit));
+    }
+
+    // 2b. Inject synthetic repo-context into the pr-review checkout so the
+    //     reviewing agent reads it — a GENERIC block from the overlay (applies to
+    //     every repo) + a PER-REPO block from the tier dataset. The Pi runtime
+    //     auto-loads AGENTS.md/CLAUDE.md walking up from the agent cwd (= the repo
+    //     dir), so this reaches the model with no prompt change. Faithful to what a
+    //     maintainer could commit, so a kept improvement is a portable "add this to
+    //     your repo" recommendation. Records provenance for inspectability.
+    if (isPrReview && seed && (opts.injectContext ?? true)) {
+      const sources = resolveInjectedContext({
+        overlayDir: opts.overlayDir,
+        datasetDir: opts.datasetDir,
+        instanceId: inst.instance_id,
+      });
+      if (sources.length) {
+        const combined = sources.map((s) => s.text.trim()).filter(Boolean).join("\n\n");
+        if (injectRepoContext(seed.workDir, combined)) {
+          result.injectedContext = sources.map((s) => ({
+            source: s.source,
+            path: s.path,
+            bytes: Buffer.byteLength(s.text, "utf8"),
+          }));
+        }
+      }
     }
 
     // 3. Real workflow definition + run context.
@@ -536,6 +571,38 @@ export async function runInstance(inst: SweBenchInstance, opts: RunInstanceOptio
 
 export function slug(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 40);
+}
+
+/**
+ * Resolve the synthetic repo-context blocks to inject for a pr-review case, in
+ * generic-then-per-repo order:
+ *   1. GENERIC — `<overlayDir>/repo-context/AGENTS.md|CLAUDE.md` (applies to every
+ *      repo; the cross-cutting "add this everywhere" recommendation).
+ *   2. PER-REPO — `<datasetDir>/context/<instance_id>/AGENTS.md|CLAUDE.md` (scoped
+ *      to this repo; the "add this to YOUR repo" recommendation). `datasetDir` is
+ *      the discovered tier root, so an overlay-hosted dataset's own `context/`
+ *      wins by the same overlay-by-name rule as `instances.json`.
+ * Within a dir, `AGENTS.md` wins over `CLAUDE.md`. Missing files are simply
+ * skipped — injection is presence-based, zero-config.
+ */
+function resolveInjectedContext(opts: {
+  overlayDir?: string;
+  datasetDir?: string;
+  instanceId: string;
+}): { source: "overlay" | "instance"; path: string; text: string }[] {
+  const pick = (dir: string): string | undefined => {
+    for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+      const p = join(dir, name);
+      if (existsSync(p)) return p;
+    }
+    return undefined;
+  };
+  const out: { source: "overlay" | "instance"; path: string; text: string }[] = [];
+  const generic = opts.overlayDir ? pick(join(opts.overlayDir, "repo-context")) : undefined;
+  if (generic) out.push({ source: "overlay", path: generic, text: readFileSync(generic, "utf8") });
+  const perRepo = opts.datasetDir ? pick(join(opts.datasetDir, "context", opts.instanceId)) : undefined;
+  if (perRepo) out.push({ source: "instance", path: perRepo, text: readFileSync(perRepo, "utf8") });
+  return out;
 }
 
 function snapshotEnv(keys: string[]): Record<string, string | undefined> {

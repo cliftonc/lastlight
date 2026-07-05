@@ -10,12 +10,12 @@
 
 import { describe, it, expect } from "vitest";
 import { GitHubClient } from "agentic-pi/dist/extensions/github/client.js";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { startFakeGitHub } from "./fake-github.js";
-import { seedWorkspace, seedWorkspaceFromGit, prFilesFromGit } from "./seed.js";
+import { seedWorkspace, seedWorkspaceFromGit, prFilesFromGit, injectRepoContext } from "./seed.js";
 import { gitDiffAgainstBase } from "./run-instance.js";
 import { execFileSync } from "node:child_process";
 import { gradeExecution, gradeBehavioral, gradeTriage, gradeReview, fBeta } from "./grade.js";
@@ -260,6 +260,62 @@ describe("prFilesFromGit — GitHub /pulls/:n/files payload from a real git diff
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("injectRepoContext — synthetic repo-context lands in the file Pi loads", () => {
+  // Pi's runtime auto-loads the FIRST of AGENTS.md > CLAUDE.md walking up from the
+  // agent cwd (= the repo dir), so the injection MUST write to that winning file —
+  // never a sibling the loader would ignore, and never one that shadows real content.
+  const withGitDir = (fn: (dir: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), "inject-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: dir, stdio: "ignore" });
+      fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("creates a fresh AGENTS.md and git-excludes it when neither file exists", () => {
+    withGitDir((dir) => {
+      const target = injectRepoContext(dir, "Review with an eye for concurrency.");
+      expect(target).toBe("AGENTS.md");
+      expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toContain("concurrency");
+      // Created file is hidden from `git status` via .git/info/exclude.
+      expect(readFileSync(join(dir, ".git", "info", "exclude"), "utf8")).toContain("/AGENTS.md");
+    });
+  });
+
+  it("appends into an existing AGENTS.md, preserving the repo's real content", () => {
+    withGitDir((dir) => {
+      writeFileSync(join(dir, "AGENTS.md"), "# Real repo guidance\nRun `make test`.\n");
+      const target = injectRepoContext(dir, "Also: prefer small PRs.");
+      expect(target).toBe("AGENTS.md");
+      const out = readFileSync(join(dir, "AGENTS.md"), "utf8");
+      expect(out).toContain("Real repo guidance"); // preserved
+      expect(out).toContain("prefer small PRs"); // injected
+    });
+  });
+
+  it("appends into an existing CLAUDE.md rather than creating a shadowing AGENTS.md", () => {
+    withGitDir((dir) => {
+      writeFileSync(join(dir, "CLAUDE.md"), "# Real CLAUDE guidance\n");
+      const target = injectRepoContext(dir, "Injected note.");
+      // AGENTS.md would win the loader and hide the real CLAUDE.md — so we must NOT create it.
+      expect(target).toBe("CLAUDE.md");
+      expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+      const out = readFileSync(join(dir, "CLAUDE.md"), "utf8");
+      expect(out).toContain("Real CLAUDE guidance");
+      expect(out).toContain("Injected note");
+    });
+  });
+
+  it("is a no-op on empty/whitespace text", () => {
+    withGitDir((dir) => {
+      expect(injectRepoContext(dir, "   \n  ")).toBeUndefined();
+      expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+    });
   });
 });
 

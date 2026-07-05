@@ -451,6 +451,13 @@ async function runEval(): Promise<number> {
   }
   const judge = { beta: fBeta, withDiff: process.argv.includes("--judge-with-diff") };
 
+  // Repo-context injection (pr-review): a synthetic AGENTS.md/CLAUDE.md is dropped
+  // into the seeded checkout from `<overlay>/repo-context/` (generic, every repo) +
+  // `<datasetDir>/context/<id>/` (per-repo) so the reviewing agent reads it — see
+  // run-instance's injection step. ON by default; `--no-inject-context` (or
+  // `EVAL_INJECT_CONTEXT=0`) forces a clean control run for an A/B.
+  const injectContext = !process.argv.includes("--no-inject-context") && process.env.EVAL_INJECT_CONTEXT !== "0";
+
   // Execution sandbox backend (or EVAL_SANDBOX). Default `none` (in-process, no
   // QEMU dependency — the fast/CI path). `gondolin` isolates the agent's tools
   // in a QEMU micro-VM so it can't read host gold data, while keeping the fake
@@ -789,6 +796,11 @@ async function runEval(): Promise<number> {
         // the axis label; runInstance calls its prepare()/recordPhaseModel().
         arm: w.arm,
         datasetDir: w.datasetDir,
+        // Generic repo-context lives in the (primary) overlay; per-repo context in
+        // the tier dataset. In config mode with per-arm overlays this uses the
+        // primary — generic injection is aimed at the models-mode improvement loop.
+        overlayDir,
+        injectContext,
         defaultWorkflow: w.defaultWorkflow,
         manageEnv: false,
         // Per-trial dir: `full.jsonl` (consolidated, live) + `NN-<phase>.jsonl`.
@@ -1029,6 +1041,10 @@ Run options:
   --f-beta <n>         pr-review F-beta β (default 1 = F1; 0.5 = precision 2×). Or EVAL_F_BETA.
   --judge-with-diff    pr-review: feed the PR diff to the judge (higher fidelity,
                        off by default — Martian's offline judge is diff-blind)
+  --no-inject-context  pr-review: DON'T inject synthetic repo-context (an AGENTS.md
+                       from <overlay>/repo-context/ + <datasets>/<tier>/context/<id>/)
+                       into the checkout. On by default; off for a clean A/B control.
+                       Or EVAL_INJECT_CONTEXT=0.
   --sandbox <backend>  Agent execution sandbox: none (default) | gondolin. none is
                        in-process (fast, CI). gondolin isolates the agent's tools
                        in a QEMU micro-VM so it can't read host gold data (needs

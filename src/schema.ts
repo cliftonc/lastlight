@@ -318,4 +318,12 @@ export interface InstanceResult {
    * outcome — the case is unresolved, but this is NOT a harness error and does
    * not affect the exit code. */
   blocked?: boolean;
+  /** Provenance of any synthetic repo-context injected into the seeded checkout
+   * before the agent ran (pr-review tier). Empty/absent when nothing was
+   * injected. `overlay` = a GENERIC block shipped in `<overlay>/repo-context/`
+   * (applies to every repo); `instance` = a PER-REPO block from the tier dataset
+   * (`<datasetDir>/context/<instance_id>/`). Recorded so a run is inspectable —
+   * which context produced which score — without re-reading the workspace. See
+   * `injectRepoContext` in seed.ts. */
+  injectedContext?: { source: "overlay" | "instance"; path: string; bytes: number }[];
 }
