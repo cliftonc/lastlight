@@ -140,7 +140,14 @@ deterministic `bash` / `script` pair (a command, no LLM).
 
 Both deterministic types share the agent phase's dedup ledger
 (`runCommandPhase` → `runPhaseLedger`), so they get an `executions` row and
-dedup on resume like everything else.
+dedup on resume like everything else. They also inherit the run's minted
+`GITHUB_TOKEN` (scoped by the workflow's permission profile), so a
+`review-write` command phase can create PR reviews — this is how
+`pr-review`'s `post-review` step posts. When the harness configures a GitHub
+API base-url override (`config.githubApiBaseUrl`, set only by the eval harness
+to point at its mock), `runSandboxedCommand` forwards it into the command env as
+`GITHUB_API_URL`; in production it is unset, so a GitHub-mutating script falls
+back to `api.github.com`.
 
 ## Linear vs DAG
 

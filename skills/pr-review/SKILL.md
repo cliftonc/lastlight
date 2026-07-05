@@ -1,36 +1,42 @@
 ---
 name: pr-review
 description: Review a GitHub pull request and post one formal review — advance the existing discussion and give precision-first, high-signal feedback. A pure code review — no building. Use when asked to review a PR or on a cron PR scan.
-version: 5.0.0
+version: 6.0.0
 tags: [github, review, code-quality]
 ---
 
 # PR Review
 
-Review an open PR and post **one formal review** — high-signal findings only.
-This is a **pure code review**: read the change and reason about it. Do **not**
-install dependencies, build, or run tests — that is CI's job, and it validates
-whether the change actually works far more reliably than you re-running it here.
-Your job is judgement on the diff, not a build gate. A noisy review gets muted,
-so precision matters more than volume.
+Review an open PR — high-signal findings only. This is a **pure code review**:
+read the change and reason about it. Do **not** install dependencies, build, or
+run tests — that is CI's job, and it validates whether the change actually works
+far more reliably than you re-running it here. Your job is judgement on the diff,
+not a build gate. A noisy review gets muted, so precision matters more than
+volume.
+
+You do **not** post the review yourself. You write your findings to a JSON file
+(`.lastlight/pr-review/findings.json`) and a deterministic follow-up step posts
+one formal review, anchoring each finding to its diff line as an inline comment
+(§4).
 
 This skill is the PR-specific procedure. It uses the **code-review** skill for
 the precision bar and what-to-check rubric.
 
 ## Workspace
 
-The harness pre-clones the PR's head ref into a `<repo>/` **subdirectory** of
-your cwd (the cwd holds `AGENTS.md`; the repo is one level deeper). `ls -la` —
-if you see `<repo>/.git/`, `cd <repo>` and use git directly. To refresh:
+The harness pre-clones the PR's head ref and drops you **inside the checkout** —
+your cwd **is** the repo (`ls -la` shows `.git/` directly; `AGENTS.md` is the
+sibling one level up at `../`). Use `git`/`read`/`grep` from here. To refresh:
 `git fetch origin <branch> --depth 50 && git reset --hard FETCH_HEAD`. If the
-pre-clone is missing, `git clone https://github.com/{{owner}}/{{repo}}.git {{repo}}`.
+checkout is somehow missing, `git clone https://github.com/{{owner}}/{{repo}}.git .`.
 
 **Read code from this local checkout, never the API.** Use `git`/`read`/`grep`
 on disk for the diff and file contents. Do **not** call
 `github_get_pull_request_diff`, `github_list_pull_request_files`, or
 `github_get_file_contents` — the API patch is a large redundant payload that
 re-bloats context every turn. The `github_*` tools are for *API* operations only
-(metadata, comments, posting the review).
+(reading metadata + prior comments in §1–2). You never post the review via a
+tool — you write the findings file and the follow-up step posts it.
 
 ## Procedure
 
@@ -66,33 +72,75 @@ git diff --stat origin/<baseRef>...HEAD    # churn
 git diff origin/<baseRef>...HEAD           # the patch
 ```
 
-### 4. Assess and submit
+### 4. Assess and write your findings
 
 Apply the **code-review** skill's rubric — read each changed file in context;
 check correctness / edge-cases / security / regression-risk / test-coverage.
 Reason about the code statically; **don't build or run it** — trust CI to catch
 what only running reveals, and spend your effort on what a human reviewer sees.
-Follow that skill's **precision-first** rule: post **only Critical and Important**
-findings, each with a `path:line` reference and a one-line concrete impact (what
-breaks, for which input or caller) plus an inline code suggestion where it helps.
-Drop Suggestions and Nits.
+Follow that skill's **precision-first** rule: keep **only Critical and Important**
+findings, each anchored to a `path:line` with a one-line concrete impact (what
+breaks, for which input or caller). Drop Suggestions and Nits.
 
-Before submitting, run the **confidence gate**: re-read each finding against the
-actual code and try to refute it; drop any you can't defend against what the code
-really does. A clean PR should be approved with few or no comments — that is a
-good review, not a lazy one.
+Before writing anything, run the **confidence gate**: re-read each finding
+against the actual code and try to refute it; drop any you can't defend against
+what the code really does. A clean PR should be approved with few or no
+findings — that is a good review, not a lazy one.
 
-Then write the review:
+**Do not call `github_create_pull_request_review` (or any review-submitting
+tool).** Write your findings to `.lastlight/pr-review/findings.json` instead. A
+deterministic follow-up step reads that file and posts one formal review with
+your findings as inline comments anchored to the diff. The full contract with
+worked examples is in [references/findings-schema.md](references/findings-schema.md);
+the shape is:
 
-- One or two sentences on what the PR does.
-- The surviving Critical/Important findings, each with its `path:line` + impact.
-- For a complex PR, an impact note (affected paths, regression risks).
-- An overall assessment, and thanks to the contributor.
+```json
+{
+  "skip": false,
+  "summary": "One or two sentences on what the PR does + overall assessment.",
+  "event": "COMMENT",
+  "base_ref": "main",
+  "head_sha": "<PR head SHA>",
+  "findings": [
+    {
+      "path": "src/foo.ts",
+      "line": 42,
+      "side": "RIGHT",
+      "severity": "Critical",
+      "title": "Short label for the finding",
+      "body": "Concrete impact — what breaks, for which input or caller.",
+      "suggestion": "exact replacement text for the anchored line(s)"
+    }
+  ]
+}
+```
 
-Submit with `github_create_pull_request_review` (a **formal** review, not a plain
-issue comment), event `APPROVE` / `REQUEST_CHANGES` / `COMMENT` to match what
-survived the gate.
+Rules:
+- **Anchor precisely.** `path` must match the diff path exactly; `line`/`side`
+  must point at a line that appears in the diff (added/context → `side: RIGHT`;
+  removed/context → `side: LEFT`). A finding whose line isn't in the diff is
+  demoted to the summary body, so get the anchor right. Use optional `start_line`
+  (same side) for a multi-line range.
+- `severity` is `Critical` or `Important` only.
+- `suggestion` is optional — include it only when a concrete one-to-few-line fix
+  is obvious. It must be the exact replacement text for the anchored line(s),
+  nothing else; GitHub renders it as an applyable suggestion.
+- `event` is `APPROVE` / `REQUEST_CHANGES` / `COMMENT`, matching what survived
+  the gate. A clean PR is an `APPROVE` with an empty `findings` array and a short
+  `summary`.
+- `base_ref` and `head_sha` come from the `github_get_pull_request` call in §1 —
+  no extra API call. They are **mandatory**: without them the follow-up step
+  can't compute the diff and demotes every finding to the body.
+- Create the dir and keep the file out of git first:
+  `mkdir -p .lastlight/pr-review && echo '.lastlight/' >> .git/info/exclude`.
+
+**Stop / skip:** if a stop condition in §1 holds (bot-authored, merged, already
+reviewed at the current head SHA), write `{"skip": true, "summary": "<reason>"}`
+and stop — the follow-up step then posts nothing.
 
 ## Verification
 
-Confirm the review posted by checking the PR's reviews list.
+Confirm `.lastlight/pr-review/findings.json` is valid JSON, has `base_ref` +
+`head_sha`, and every finding carries `path` + `line`. The deterministic
+follow-up step posts the review and logs how many findings landed inline vs in
+the body.

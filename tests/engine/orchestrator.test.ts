@@ -213,6 +213,39 @@ describe("Sandbox orchestrator (FakeSandbox)", () => {
     );
   });
 
+  it("forwards config.githubApiBaseUrl into the command env as GITHUB_API_URL", async () => {
+    // The eval harness sets githubApiBaseUrl to the fake GitHub URL. Command/
+    // script phases (e.g. pr-review's post-review) must receive it so a
+    // GitHub-mutating script hits the fake instead of api.github.com.
+    const fake = new FakeSandbox({
+      commandResult: { exitCode: 0, stdout: "", stderr: "", timedOut: false },
+    });
+
+    await executeCommand(
+      { kind: "script", script: "console.log(1)", runtime: "js", name: "post" },
+      { sandbox: "none", stateDir, sessionsDir, githubApiBaseUrl: "http://127.0.0.1:5599" },
+      { sandboxFactory: fake.asFactory() },
+    );
+
+    expect(fake.receivedCommandOpts?.sandboxEnv?.GITHUB_API_URL).toBe("http://127.0.0.1:5599");
+  });
+
+  it("injects no GITHUB_API_URL when githubApiBaseUrl is unset (prod parity)", async () => {
+    const fake = new FakeSandbox({
+      commandResult: { exitCode: 0, stdout: "", stderr: "", timedOut: false },
+    });
+
+    await executeCommand(
+      { kind: "bash", command: "true" },
+      { sandbox: "none", stateDir, sessionsDir },
+      { sandboxFactory: fake.asFactory() },
+    );
+
+    // sandboxEnv is undefined (no upstream env, no base-url override) — so the
+    // script falls back to api.github.com with its minted token in prod.
+    expect(fake.receivedCommandOpts?.sandboxEnv?.GITHUB_API_URL).toBeUndefined();
+  });
+
   it("skips the session jsonl when writeSession is false", async () => {
     const fake = new FakeSandbox({
       commandResult: { exitCode: 0, stdout: "ok", stderr: "", timedOut: false },

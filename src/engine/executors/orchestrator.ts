@@ -349,9 +349,18 @@ export async function runSandboxedCommand(
       toolInput = { command, runtime: spec.runtime };
     }
 
+    // Forward the GitHub API base-url override (evals fake) into the command env.
+    // The agent path already threads `githubApiBaseUrl` (see runSandboxedAgent);
+    // command/script phases need the same so a GitHub-mutating script (e.g.
+    // pr-review's post-review step) hits the fake in evals. Prod-inert:
+    // `githubApiBaseUrl` is undefined outside the eval harness, so nothing is
+    // injected and the script falls back to api.github.com with its minted token.
+    const sandboxEnv = config.githubApiBaseUrl
+      ? { ...(cmdOpts.sandboxEnv ?? {}), GITHUB_API_URL: config.githubApiBaseUrl }
+      : cmdOpts.sandboxEnv;
     const res = await sandbox.runCommand(ctx.taskId, command, {
       cwd: prov.agentCwd,
-      sandboxEnv: cmdOpts.sandboxEnv,
+      sandboxEnv,
       timeoutSeconds,
     });
     const durationMs = Date.now() - startTime;
