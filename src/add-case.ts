@@ -28,33 +28,43 @@ import { join, resolve } from "node:path";
 
 import chalk from "chalk";
 
-import type { SweBenchInstance, IssueSeed } from "./schema.js";
+import type { SweBenchInstance, IssueSeed, PullSeed, GoldComment } from "./schema.js";
 import { ensureRepoCache } from "./seed.js";
 
-const ADD_CASE_USAGE = `lastlight-evals add-case --pr <url> | --issue <url> [options]
+const ADD_CASE_USAGE = `lastlight-evals add-case --pr <url> --review|--code-fix | --issue <url> [options]
 
-Scaffold an eval instance from a real GitHub PR (code-fix) or issue (triage).
+Scaffold an eval instance from a real GitHub PR (pr-review / code-fix) or issue (triage).
+
+A PR can seed two different evals, so --pr requires a kind:
+  --pr <url> --review    PR-review case: the human review is the gold set (pr-review tier)
+  --pr <url> --code-fix  Code-fix case: hide the fix, the agent must reproduce it (build)
+  --issue <url>          Triage case (issue-triage)
 
 Options:
-  --pr <url>            GitHub PR url → a code-fix (build) case
+  --pr <url>            GitHub PR url (pick --review or --code-fix)
+  --review             With --pr → a pr-review case (gold = the PR's human review)
+  --code-fix           With --pr → a code-fix (build) case
   --issue <url>         GitHub issue url → a triage case
-  --tier <name>         Target tier dir (default: code-fix for --pr, triage for --issue)
+  --tier <name>         Target tier dir (default: pr-review/code-fix for --pr, triage for --issue)
   --id <slug>           instance_id (default: derived from repo + number)
   --datasets <dir>      Datasets root to write into (a <tier>/ subdir)
   --overlay <dir>       Write into <dir>/evals/datasets instead
-  --test-cmd "<cmd>"    Held-out test command (default: node --test). Stored as test_cmd.
-  --setup-cmd "<cmd>"   Install/build run before tests (e.g. "npm ci"). Stored as setup_cmd.
-  --hold-out            SWE-bench style: hold the PR's test files out of the agent's
-                        repo and apply them only at grade time, scored by named
+  --severity <level>    (--review) default severity for candidate gold comments
+                        (low|medium|high|critical; default medium — refine after).
+  --include-bots        (--review) keep review comments from bots (default: skipped)
+  --test-cmd "<cmd>"    (--code-fix) Held-out test command (default: node --test). Stored as test_cmd.
+  --setup-cmd "<cmd>"   (--code-fix) Install/build run before tests (e.g. "npm ci"). Stored as setup_cmd.
+  --hold-out            (--code-fix) SWE-bench style: hold the PR's test files out of the
+                        agent's repo and apply them only at grade time, scored by named
                         FAIL_TO_PASS. Default is SUITE mode — grade on the repo's own
                         test_cmd run against the agent's final tree (nothing held out).
-  --pass-list           (hold-out only) Enumerate every green test in PASS_TO_PASS.
+  --pass-list           (--code-fix, hold-out only) Enumerate every green test in PASS_TO_PASS.
                         Default is PASS_TO_PASS=["*"] (the whole suite must stay green).
-  --no-validate         Don't run the repo's tests to validate the case (just scaffold)
+  --no-validate         (--code-fix) Don't run the repo's tests to validate the case (just scaffold)
   --dry-run             Print the proposed instance JSON; don't write
   -h, --help            Show this help
 
-The repo's tests/setup run real code — only use trusted repos.`;
+--code-fix runs the repo's tests/setup (real code) — only use trusted repos.`;
 
 // ── small shells ────────────────────────────────────────────────────────────
 
@@ -95,6 +105,19 @@ function parseRepoFromUrl(url: string): { owner: string; name: string; number: n
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+}
+
+/** The `prreview__<slug>-<n>` id slug — case-preserving, keeps `_`/`-`. Matches
+ * `scripts/import-martian.ts`'s `slug` so authored + imported ids are identical. */
+function reviewSlug(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+}
+
+/** Trim to n chars with an ellipsis marker (port of import-martian's `truncate`,
+ * so `pr.body`/gold descriptions match the imported dataset's bounds). */
+function truncate(s: string | undefined, n: number): string {
+  const t = (s ?? "").trim();
+  return t.length > n ? t.slice(0, n) + "\n\n[…truncated]" : t;
 }
 
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|[._-](test|spec)\.[a-z0-9]+$/i;
@@ -272,6 +295,178 @@ async function fromPr(url: string, o: Options): Promise<number> {
   };
 
   return emit(inst, "code-fix", "build", o);
+}
+
+// ── PR → pr-review case ─────────────────────────────────────────────────────
+
+interface PrReviewView {
+  number: number;
+  title: string;
+  body?: string;
+  baseRefName: string;
+  headRefName: string;
+  baseRefOid: string;
+  headRefOid: string;
+  author?: { login?: string };
+  reviews?: { author?: { login?: string }; body?: string; state?: string }[];
+}
+
+/** A PR inline review comment (`GET /pulls/:n/comments`). `line` is the position
+ * in the head diff; when a comment is outdated (its hunk moved) GitHub nulls
+ * `line` and keeps `original_line`. */
+interface ReviewComment {
+  path?: string;
+  line?: number | null;
+  original_line?: number | null;
+  body?: string;
+  user?: { login?: string; type?: string };
+  in_reply_to_id?: number | null;
+}
+
+/** Approve/LGTM/empty-class noise we don't want as gold findings. */
+const NOISE = /^\s*(lgtm|looks good(?: to me)?|approved?|ship it|\+1|👍|:\+1:|nit)?\s*[.!]?\s*$/i;
+function isNoise(body: string | undefined): boolean {
+  return NOISE.test((body ?? "").trim());
+}
+
+const BOT_LOGIN = /\[bot\]$|^(coderabbitai|github-actions|dependabot|codecov|sonarcloud|renovate|greptile)/i;
+function isBot(user?: { login?: string; type?: string }): boolean {
+  return user?.type === "Bot" || BOT_LOGIN.test(user?.login ?? "");
+}
+
+interface Candidate extends GoldComment {
+  /** Provenance for the evidence block (never serialized into the instance). */
+  who: string;
+  outdated: boolean;
+  bot: boolean;
+}
+
+/** Build candidate `review_gold` from the PR's human review — inline comments
+ * (the substance) + substantive top-level review bodies. Skips reply threads,
+ * approve/LGTM noise, and (unless --include-bots) bot comments; keeps outdated
+ * comments (via `original_line`) but flags them for the curator. Dedups by
+ * file + the comment's first 120 chars. */
+function candidateGold(comments: ReviewComment[], reviews: PrReviewView["reviews"], o: Options): Candidate[] {
+  const sev = o.severity ?? "medium";
+  const out: Candidate[] = [];
+  const seen = new Set<string>();
+  const push = (c: Candidate) => {
+    const key = `${c.file ?? ""}::${c.description.slice(0, 120)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(c);
+  };
+
+  for (const c of comments) {
+    if (c.in_reply_to_id != null) continue; // keep only thread roots
+    const bot = isBot(c.user);
+    if (bot && !o.includeBots) continue;
+    const body = (c.body ?? "").trim();
+    if (!body || isNoise(body)) continue;
+    const outdated = c.line == null && c.original_line != null;
+    const line = c.line ?? c.original_line ?? undefined;
+    push({
+      ...(c.path ? { file: c.path } : {}),
+      ...(line != null ? { line } : {}),
+      severity: sev,
+      description: truncate(body, 2000),
+      who: c.user?.login ?? "?",
+      outdated,
+      bot,
+    });
+  }
+
+  for (const r of reviews ?? []) {
+    if ((r.state ?? "").toUpperCase() === "APPROVED") continue; // approve summaries aren't findings
+    const bot = isBot(r.author);
+    if (bot && !o.includeBots) continue;
+    const body = (r.body ?? "").trim();
+    if (!body || isNoise(body)) continue;
+    push({ severity: sev, description: truncate(body, 2000), who: r.author?.login ?? "?", outdated: false, bot });
+  }
+
+  return out;
+}
+
+/**
+ * Author a `pr-review` case from a real PR: the PR's human review is the gold
+ * set. Pure metadata extraction — no clone/worktree/test run (there's nothing to
+ * validate). Byte-compatible with `scripts/import-martian.ts`: the `pr` seed uses
+ * `baseRefOid`/`headRefOid` (not a merge-base) and the id uses `reviewSlug`.
+ *
+ * Anti-spoil: the review goes ONLY into `review_gold`. We never populate
+ * `pr.reviews`/`pr.review_comments` — the fake GitHub would serve those to the
+ * agent (see `seedWorkspacePrReview`), handing it the answer.
+ */
+async function fromPrReview(url: string, o: Options): Promise<number> {
+  const { owner, name, number } = parseRepoFromUrl(url);
+  const repo = `${owner}/${name}`;
+  console.log(chalk.dim(`Resolving PR ${repo}#${number} (pr-review)…`));
+
+  const view = ghJson<PrReviewView>([
+    "pr", "view", url,
+    "--json", "number,title,body,baseRefName,headRefName,baseRefOid,headRefOid,author,reviews",
+  ]);
+  const pr: PullSeed = {
+    number: view.number ?? number,
+    title: view.title ?? "",
+    body: truncate(view.body, 6000),
+    base_ref: view.baseRefName,
+    head_ref: view.headRefName,
+    base_commit: view.baseRefOid,
+    head_commit: view.headRefOid,
+    user: view.author?.login,
+  };
+
+  const comments = ghJson<ReviewComment[]>([
+    "api", "--paginate", `repos/${owner}/${name}/pulls/${pr.number}/comments`,
+  ]);
+  const candidates = candidateGold(comments, view.reviews, o);
+
+  // Evidence block — the raw review signal the skill/human turns into curated
+  // review_gold (assign severity, prune bot/nit/outdated noise). Mirrors the
+  // triage evidence block.
+  console.log(chalk.bold(`\n# PR-review evidence for ${repo}#${pr.number}`));
+  if (candidates.length) {
+    console.log(chalk.dim(`\nCandidate review_gold (${candidates.length}) — refine severity + prune non-actionable:`));
+    for (const c of candidates) {
+      const loc = c.file ? `${c.file}${c.line != null ? `:${c.line}` : ""}` : "(summary)";
+      const tags = [c.outdated ? "outdated" : "", c.bot ? "bot" : ""].filter(Boolean).join(",");
+      const first = c.description.split("\n")[0].slice(0, 100);
+      console.log(
+        `  ${chalk.cyan(c.who)} · ${loc}  ${chalk.dim(`[${c.severity}]`)} ${first}${tags ? chalk.yellow(`  (${tags})`) : ""}`,
+      );
+    }
+  } else {
+    console.log(
+      chalk.yellow(
+        "\n⚠ No usable human review comments — review_gold is EMPTY. Author it by hand from the PR diff " +
+          "before running, or the case can't be judged.",
+      ),
+    );
+  }
+  console.log(
+    chalk.yellow(
+      "\n⚠ Severity is a default guess (GitHub comments carry none) — set it per real impact, and drop " +
+        "comments that aren't concrete findings, before running.",
+    ),
+  );
+
+  // Strip the evidence-only fields to leave clean GoldComment entries.
+  const review_gold: GoldComment[] = candidates.map(({ who, outdated, bot, ...g }) => g);
+
+  const id = o.id ?? `prreview__${reviewSlug(name)}-${pr.number}`;
+  const inst: SweBenchInstance = {
+    instance_id: id,
+    repo,
+    workflow: "pr-review",
+    problem_statement: pr.title,
+    pr,
+    review_gold,
+    expect_github: { review_submitted: {} },
+  };
+
+  return emit(inst, "pr-review", "pr-review", o);
 }
 
 /** Run the held-out tests at base (red) and head (green); diff TAP to verdicts. */
@@ -527,6 +722,10 @@ interface Options {
   id?: string;
   datasets?: string;
   overlay?: string;
+  review: boolean;
+  codeFix: boolean;
+  severity?: GoldComment["severity"];
+  includeBots: boolean;
   testCmd?: string[];
   setupCmd?: string[];
   holdOut: boolean;
@@ -549,11 +748,20 @@ export async function runAddCase(args: string[] = []): Promise<number> {
   };
   const pr = val("--pr");
   const issue = val("--issue");
+  const severityArg = val("--severity");
+  if (severityArg && !["low", "medium", "high", "critical"].includes(severityArg)) {
+    console.error(`add-case: --severity must be one of low|medium|high|critical (got "${severityArg}").`);
+    return 2;
+  }
   const o: Options = {
     tier: val("--tier"),
     id: val("--id"),
     datasets: val("--datasets"),
     overlay: val("--overlay"),
+    review: args.includes("--review"),
+    codeFix: args.includes("--code-fix"),
+    severity: severityArg as GoldComment["severity"] | undefined,
+    includeBots: args.includes("--include-bots"),
     testCmd: parseCmd(val("--test-cmd")),
     setupCmd: parseCmd(val("--setup-cmd")),
     holdOut: args.includes("--hold-out"),
@@ -564,6 +772,26 @@ export async function runAddCase(args: string[] = []): Promise<number> {
 
   if ((pr && issue) || (!pr && !issue)) {
     console.error("add-case: pass exactly one of --pr <url> or --issue <url>.\n");
+    console.error(ADD_CASE_USAGE);
+    return 2;
+  }
+  // A PR seeds two different evals (pr-review vs code-fix) — require an explicit
+  // kind so an old `--pr`-only command fails loudly, never silently emitting the
+  // wrong case type.
+  if (pr) {
+    if (o.review && o.codeFix) {
+      console.error("add-case: pass only one of --review or --code-fix with --pr.\n");
+      console.error(ADD_CASE_USAGE);
+      return 2;
+    }
+    if (!o.review && !o.codeFix) {
+      console.error("add-case: --pr needs a kind — pass --review (pr-review) or --code-fix (build).\n");
+      console.error(ADD_CASE_USAGE);
+      return 2;
+    }
+  }
+  if (issue && (o.review || o.codeFix)) {
+    console.error("add-case: --review / --code-fix apply to --pr, not --issue.\n");
     console.error(ADD_CASE_USAGE);
     return 2;
   }
@@ -585,7 +813,8 @@ export async function runAddCase(args: string[] = []): Promise<number> {
   }
 
   try {
-    return pr ? await fromPr(pr, o) : await fromIssue(issue!, o);
+    if (pr) return o.review ? await fromPrReview(pr, o) : await fromPr(pr, o);
+    return await fromIssue(issue!, o);
   } catch (err) {
     console.error(chalk.red(`add-case failed: ${(err as Error).message}`));
     return 1;
