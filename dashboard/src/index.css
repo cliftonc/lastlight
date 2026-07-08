@@ -18,6 +18,44 @@ body {
   @apply font-sans text-sm text-base-content bg-base-100;
 }
 
+/* Light-theme muted-text lift.
+   The UI was designed dark-first with heavily translucent secondary text
+   (text-base-content/40–60). On the near-black dark bg those read fine, but on
+   the neaform white bg the same low alphas wash out. Scope a bump to the light
+   theme only, lifting the faint tiers while preserving the /40 < /50 < /60
+   hierarchy. daisyUI exposes base-content as `oklch(var(--bc) / <alpha>)`, so
+   we override with matching oklch(); the `[data-theme]` prefix out-specifies
+   the generated utility, so no !important is needed. */
+[data-theme="neaform"] .text-base-content\/25 { color: oklch(var(--bc) / 0.5); }
+[data-theme="neaform"] .text-base-content\/30 { color: oklch(var(--bc) / 0.55); }
+[data-theme="neaform"] .text-base-content\/40 { color: oklch(var(--bc) / 0.62); }
+[data-theme="neaform"] .text-base-content\/45 { color: oklch(var(--bc) / 0.66); }
+[data-theme="neaform"] .text-base-content\/50 { color: oklch(var(--bc) / 0.7); }
+[data-theme="neaform"] .text-base-content\/55 { color: oklch(var(--bc) / 0.73); }
+[data-theme="neaform"] .text-base-content\/60 { color: oklch(var(--bc) / 0.78); }
+
+/* Inline code. `.ll-prose code` is text-accent on a bg-base-300 chip — the
+   bright mint green + grey chip reads fine on the dark theme but is muddy and
+   low-contrast on the light one. In light mode, drop the chip background and
+   just colour the text a high-contrast dark green.
+   `:not(pre) > code` leaves fenced blocks (pre > code, Prism-styled) alone. */
+[data-theme="neaform"] .ll-prose :not(pre) > code {
+  background-color: transparent;
+  padding: 0;
+  color: #05684a;
+}
+
+/* Content surface — readable blocks (message transcripts, JSON/config/prompt
+   displays, info callouts) that lift off the page as a subtle card in dark
+   mode but should sit flat on the white page in light mode, separated only by
+   their border. Pair with a `border-base-300` utility. */
+.ll-surface {
+  @apply bg-base-200;
+}
+[data-theme="neaform"] .ll-surface {
+  background-color: #ffffff;
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   width: 10px;

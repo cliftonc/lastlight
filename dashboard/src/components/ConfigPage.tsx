@@ -21,7 +21,7 @@ function OverridesPane({ data }: { data: OverridesBundle | null }) {
   if (!data) return <div className="text-sm text-base-content/60">Loading overrides…</div>;
   if (data.overrides.length === 0) {
     return (
-      <div className="rounded border border-base-300 bg-base-200 p-3 text-sm text-base-content/70">
+      <div className="rounded border border-base-300 ll-surface p-3 text-sm text-base-content/70">
         No overlay overrides active.{" "}
         {data.overlayDir ? (
           <>Fork a built-in with <code className="text-xs">lastlight fork &lt;name&gt;</code>.</>
@@ -121,11 +121,11 @@ export function ConfigPage() {
         ) : !config ? (
           <div className="text-sm text-base-content/60">Loading configuration…</div>
         ) : value === null ? (
-          <div className="rounded border border-base-300 bg-base-200 p-3 text-sm text-base-content/70">
+          <div className="rounded border border-base-300 ll-surface p-3 text-sm text-base-content/70">
             No overlay config is active.
           </div>
         ) : (
-          <pre className="whitespace-pre-wrap rounded border border-base-300 bg-base-200 p-4 text-xs leading-relaxed text-base-content overflow-auto">
+          <pre className="whitespace-pre-wrap rounded border border-base-300 ll-surface p-4 text-xs leading-relaxed text-base-content overflow-auto">
             {pretty(value)}
           </pre>
         )}

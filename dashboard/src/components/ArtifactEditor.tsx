@@ -17,6 +17,7 @@ import {
 } from "@mdxeditor/editor";
 import "@mdxeditor/editor/style.css";
 import { api } from "../api";
+import { useTheme } from "../hooks/useTheme";
 
 interface ArtifactEditorProps {
   /** GitHub owner. */
@@ -46,20 +47,23 @@ export function ArtifactEditor({ owner, repo, docKey, doc }: ArtifactEditorProps
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   const editorRef = useRef<MDXEditorMethods>(null);
+  const { isDark } = useTheme();
   const dirty = content !== savedContent;
   const ready = !!owner && !!repo && !!docKey && !!doc;
   const repoFull = owner && repo ? `${owner}/${repo}` : "";
 
-  // ── Dark-theme the portaled toolbar popups ───────────────────────────────
+  // ── Match the portaled toolbar popups to the active theme ────────────────
   // MDXEditor's BlockTypeSelect (and other Radix selects) render their dropdown
-  // into a portal on document.body — outside the editor's own `dark-theme`
-  // root. The `.dark-theme` class defines only CSS variables consumed by
-  // MDXEditor, so scoping it to <body> while an editor is mounted recolors the
-  // portaled popups without affecting the rest of the app.
+  // into a portal on document.body — outside the editor's own theme root. The
+  // `.dark-theme` class defines only CSS variables consumed by MDXEditor, so
+  // scoping it to <body> while a dark-theme editor is mounted recolors the
+  // portaled popups without affecting the rest of the app. In the light
+  // (neaform) theme we leave it off so MDXEditor uses its default light styling.
   useEffect(() => {
+    if (!isDark) return;
     document.body.classList.add("dark-theme");
     return () => { document.body.classList.remove("dark-theme"); };
-  }, []);
+  }, [isDark]);
 
   // ── Load the selected doc into the editor ────────────────────────────────
   useEffect(() => {
@@ -165,7 +169,7 @@ export function ArtifactEditor({ owner, repo, docKey, doc }: ArtifactEditorProps
             key={`${owner}/${repo}/${docKey}/${doc}`}
             markdown={content}
             onChange={(md) => setContent(md)}
-            className="dark-theme"
+            className={isDark ? "dark-theme" : undefined}
             contentEditableClassName="ll-prose ll-prose-editor"
             plugins={[
               headingsPlugin(),

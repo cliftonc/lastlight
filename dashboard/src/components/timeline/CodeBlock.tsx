@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import clsx from "clsx";
 import DOMPurify from "dompurify";
 import Prism from "prismjs";
 import "prismjs/components/prism-bash";
@@ -67,7 +68,12 @@ export function CodeBlock({ code, language = "text", maxHeight }: Props) {
 
   return (
     <pre
-      className="m-0 font-mono text-xs bg-base-300/60 rounded overflow-auto"
+      className={clsx(
+        "m-0 font-mono text-xs rounded overflow-auto",
+        // base-300 chip reads as a subtle surface on the dark page; on the light
+        // page it's a heavy grey block, so use a much lighter tint there.
+        isDark ? "bg-base-300/60" : "bg-base-200/50",
+      )}
       style={maxHeight ? { maxHeight } : undefined}
     >
       {hasAnsi ? (

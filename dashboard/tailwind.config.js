@@ -71,10 +71,10 @@ export default {
           "accent-content": "#00321f",
           neutral: "#000e38",
           "neutral-content": "#e7ecf5",
-          "base-100": "#ffffff", // card / main surface
-          "base-200": "#f4f6f8", // page bg (nf-bg)
-          "base-300": "#e2e6ea", // borders (nf-border)
-          "base-content": "#1b2330", // text (nf-text)
+          "base-100": "#ffffff", // card / main content surface
+          "base-200": "#eceff3", // headers / sidebar / list — separated from base-100
+          "base-300": "#cbd5e1", // borders + dividers — clearly visible on white
+          "base-content": "#0f1a2e", // near-black navy text — crisp on white
           info: "#0b3b63",
           "info-content": "#ffffff",
           success: "#07a06f",

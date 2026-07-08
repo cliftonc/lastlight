@@ -118,7 +118,7 @@ export function FocusedApprovalView({ approvalId, onClose }: Props) {
               />
             ) : artifactRef?.mode === "repo" ? (
               <div className="p-6">
-                <div className="rounded-lg border border-base-300 bg-base-200 p-4">
+                <div className="rounded-lg border border-base-300 ll-surface p-4">
                   <p className="text-sm text-base-content/70">
                     This artifact is committed to the repository. Review it on GitHub:
                   </p>
