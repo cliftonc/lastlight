@@ -11,9 +11,15 @@
  */
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
-import { githubAppClient, type GitHubAppClientConfig } from "./github-app-client.js";
+import { githubAppClient, githubTokenClient, type GitHubAppClientConfig } from "./github-app-client.js";
 
-export interface ChatGitHubAuth extends GitHubAppClientConfig {}
+/**
+ * Auth for the read-only chat GitHub tools. Either a GitHub App config or a
+ * raw Personal Access Token (the PAT fallback). Both resolve to an Octokit.
+ */
+export type ChatGitHubAuth =
+  | GitHubAppClientConfig
+  | { token: string; baseUrl?: string };
 
 export interface ChatGitHubToolset {
   tools: Tool[];
@@ -42,7 +48,9 @@ function tool<P extends TSchema>(
 }
 
 export function buildChatGitHubTools(auth: ChatGitHubAuth): ChatGitHubToolset {
-  const octokit = githubAppClient(auth);
+  const octokit = "token" in auth
+    ? githubTokenClient(auth.token, auth.baseUrl)
+    : githubAppClient(auth);
 
   const entries: ToolEntry[] = [
     tool(

@@ -126,6 +126,14 @@ export interface LastLightConfig {
     privateKeyPath: string;
     installationId: string;
   };
+  /**
+   * Fallback GitHub auth: a raw Personal Access Token, used ONLY when no GitHub
+   * App is configured. Enables read-only GitHub in chat + CLI-driven read-only
+   * workflows without the full App + webhook setup. Secret / env-only — never
+   * surfaced by the public-config endpoint. A PAT is static (no per-run
+   * downscoping), so a read-only fine-grained PAT is the safe default.
+   */
+  githubToken?: string;
   slack?: SlackConfig;
   approval?: Record<string, boolean>;
   bootstrapLabel: string;
@@ -315,6 +323,11 @@ export function loadConfig(): LastLightConfig {
       }
     : undefined;
 
+  // PAT fallback: only when no App is configured. App always wins.
+  const githubToken = !githubApp && process.env.GITHUB_TOKEN
+    ? process.env.GITHUB_TOKEN
+    : undefined;
+
   const slack = process.env.SLACK_BOT_TOKEN
     ? ((): SlackConfig => {
         // Mode resolution: an explicit SLACK_MODE always wins. Otherwise
@@ -373,6 +386,7 @@ export function loadConfig(): LastLightConfig {
       sources: redactPublic(clonePublic(mergedSources)!),
     },
     githubApp,
+    githubToken,
     slack,
     approval,
     bootstrapLabel: fileCfg.bootstrapLabel,
@@ -686,4 +700,22 @@ export function resolveModel(models: ModelConfig, taskType: string): string {
 
 export function resolveVariant(variants: VariantConfig, taskType: string): string | undefined {
   return variants[taskType] || variants.default;
+}
+
+/**
+ * Resolved GitHub auth, discriminated by mechanism. GitHub App wins when
+ * configured; the PAT is a fallback. `undefined` means no GitHub auth at all
+ * (chat-only mode). Keeps the App-vs-token precedence in one place so every
+ * construction site (chat tools, harness client) branches identically.
+ */
+export type ResolvedGithubAuth =
+  | { kind: "app"; appId: string; privateKeyPath: string; installationId: string }
+  | { kind: "token"; token: string };
+
+export function resolveGithubAuth(
+  config: Pick<LastLightConfig, "githubApp" | "githubToken">,
+): ResolvedGithubAuth | undefined {
+  if (config.githubApp) return { kind: "app", ...config.githubApp };
+  if (config.githubToken) return { kind: "token", token: config.githubToken };
+  return undefined;
 }

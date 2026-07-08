@@ -1,15 +1,25 @@
 import { EventEmitter } from "events";
 import { Hono } from "hono";
-import { serve } from "@hono/node-server";
 import { createHmac, timingSafeEqual } from "crypto";
 import type { Connector, EventEnvelope, EventType } from "./types.js";
 import { isManagedRepo } from "../managed-repos.js";
 
 export interface GitHubWebhookConfig {
+  /**
+   * Port the harness HTTP server listens on. Retained for compatibility with
+   * existing callers/tests; the connector no longer opens the listener itself
+   * — `main()` owns the shared Hono app + `serve()` lifecycle now.
+   */
   port: number;
   webhookSecret: string;
   /** Bot login name to ignore self-events */
   botLogin: string;
+  /**
+   * Shared Hono app to register `/webhooks/github` onto. When omitted, the
+   * connector creates its own app (used by unit tests that drive it via
+   * `honoApp.request(...)` standalone).
+   */
+  app?: Hono;
   /** GitHub App MCP client for posting replies */
   replyFn?: (owner: string, repo: string, issueNumber: number, body: string) => Promise<void>;
 }
@@ -44,13 +54,13 @@ const IGNORED_ACTIONS = new Set([
 export class GitHubWebhookConnector extends EventEmitter implements Connector {
   readonly name = "github";
   private app: Hono;
-  private server: ReturnType<typeof serve> | null = null;
   private config: GitHubWebhookConfig;
 
   constructor(config: GitHubWebhookConfig) {
     super();
     this.config = config;
-    this.app = new Hono();
+    // Register onto the shared app when given one; otherwise self-create (tests).
+    this.app = config.app ?? new Hono();
     this.setupRoutes();
   }
 
@@ -63,10 +73,8 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
   }
 
   private setupRoutes() {
-    // Health check
-    this.app.get("/health", (c) => c.json({ status: "ok", connector: "github" }));
-
-    // GitHub webhook endpoint
+    // GitHub webhook endpoint. (`/health` is owned by main()'s shared app so it
+    // exists in chat-only mode too — see src/index.ts.)
     this.app.post("/webhooks/github", async (c) => {
       const body = await c.req.text();
 
@@ -309,19 +317,14 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
   }
 
   async start(): Promise<void> {
-    this.server = serve({
-      fetch: this.app.fetch,
-      port: this.config.port,
-      hostname: "0.0.0.0",
-    });
-    console.log(`[github] Webhook listener started on port ${this.config.port}`);
+    // No-op: the HTTP listener is owned by main()'s shared server. Routes are
+    // already registered on the shared app at construction time. This connector
+    // stays registered purely so its `emit("event", …)` flows through the
+    // ConnectorRegistry.
+    console.log("[github] Webhook routes registered on shared HTTP server");
   }
 
   async stop(): Promise<void> {
-    if (this.server) {
-      this.server.close();
-      this.server = null;
-      console.log("[github] Webhook listener stopped");
-    }
+    // No-op: no server owned here to close.
   }
 }

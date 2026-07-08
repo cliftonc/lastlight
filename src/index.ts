@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { randomUUID } from "crypto";
-import { loadConfig, resolveModel, resolveVariant } from "./config/config.js";
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { loadConfig, resolveModel, resolveVariant, resolveGithubAuth } from "./config/config.js";
 import { ConnectorRegistry, GitHubWebhookConnector, SlackConnector, SessionManager, MessageDeliveryService } from "./connectors/index.js";
 import { dispatch, type DispatchDeps } from "./engine/dispatcher.js";
 import { MessageBatcher } from "./engine/chat/message-batcher.js";
-import { CHAT_SYSTEM_SUFFIX, handleChatMessage, loadAgentContext } from "./engine/chat/chat.js";
+import { chatSystemSuffix, handleChatMessage, loadAgentContext } from "./engine/chat/chat.js";
 import { configureWorkflowAssets, validateAssets, getWorkflow } from "./workflows/loader.js";
 import { ChatRunner } from "./engine/chat/chat-runner.js";
 import { buildReadSkillTool, loadChatSkillCatalogue } from "./engine/chat/chat-skills.js";
@@ -153,12 +155,28 @@ async function main() {
   // demand — same progressive-disclosure model the sandbox phases use.
   const chatSkills = loadChatSkillCatalogue();
   const readSkill = buildReadSkillTool(chatSkills.skills);
+  // Resolve GitHub auth once (App wins; PAT fallback; else none). Drives the
+  // chat GitHub tools, the harness client, and the chat prompt's tool section.
+  const githubAuth = resolveGithubAuth(config);
+  const chatGithubAuth =
+    githubAuth?.kind === "app"
+      ? {
+          appId: githubAuth.appId,
+          privateKeyPath: githubAuth.privateKeyPath,
+          installationId: githubAuth.installationId,
+        }
+      : githubAuth?.kind === "token"
+        ? { token: githubAuth.token }
+        : undefined;
   const chatRunner = new ChatRunner(
     {
       model: resolveModel(config.models, "chat"),
       thinking: resolveVariant(config.variants, "chat"),
-      systemPrompt: loadAgentContext() + CHAT_SYSTEM_SUFFIX + chatSkills.catalogueXml,
-      github: config.githubApp,
+      systemPrompt:
+        loadAgentContext() +
+        chatSystemSuffix(githubAuth !== undefined) +
+        chatSkills.catalogueXml,
+      github: chatGithubAuth,
       extraTools: chatSkills.skills.length > 0
         ? { tools: [readSkill.tool], execute: readSkill.execute }
         : undefined,
@@ -188,8 +206,14 @@ async function main() {
     }
   }
 
-  // GitHub API client for harness-level operations (posting comments, fetching issues)
-  const github = config.githubApp ? new GitHubClient(config.githubApp) : null;
+  // GitHub API client for harness-level operations (posting comments, fetching
+  // issues). App auth when configured; otherwise a PAT (read-only unless the
+  // token carries write scope); null in chat-only mode.
+  const github = config.githubApp
+    ? new GitHubClient(config.githubApp)
+    : config.githubToken
+      ? GitHubClient.withToken(config.githubToken)
+      : null;
 
   /**
    * Dispatch a workflow by name. Used by webhook events, cron jobs, and the
@@ -555,13 +579,24 @@ async function main() {
   // Message delivery service for cron output
   const delivery = new MessageDeliveryService();
 
-  // GitHub webhook connector (optional — requires both webhook secret and GitHub App)
+  // Shared HTTP server — always boots, independent of GitHub. `main()` owns the
+  // Hono app + serve() lifecycle that the webhook connector used to own, so the
+  // `lastlight` CLI + admin dashboard + /api/* work even with no GitHub App
+  // (chat-only / PAT modes). The root /health is what the CLI hits
+  // (src/cli/cli.ts, cli-server.ts).
+  const app = new Hono();
+  app.get("/health", (c) => c.json({ status: "ok" }));
+
+  // GitHub webhook connector (optional — requires both webhook secret and GitHub
+  // App). It registers /webhooks/github onto the shared app; it no longer owns
+  // the HTTP listener.
   let githubConnector: GitHubWebhookConnector | null = null;
   if (config.webhookSecret && config.githubApp) {
     githubConnector = new GitHubWebhookConnector({
       port: config.port,
       webhookSecret: config.webhookSecret,
       botLogin: config.botLogin,
+      app,
     });
     registry.register(githubConnector);
   }
@@ -576,7 +611,7 @@ async function main() {
         appToken: config.slack.appToken,
         signingSecret: config.slack.signingSecret,
         // Webhook mode mounts /webhooks/slack on the shared HTTP server.
-        honoApp: githubConnector?.honoApp,
+        honoApp: app,
         allowedUsers: config.slack.allowedUsers,
         deliveryChannel: config.slack.deliveryChannel,
         botIdentifier: "", // Will be resolved from Slack API on connect
@@ -608,9 +643,9 @@ async function main() {
     }
   });
 
-  // Mount admin dashboard (needs an HTTP server — use GitHub connector or create standalone)
-  if (githubConnector) {
-    mountAdmin(githubConnector.honoApp, db, {
+  // Mount admin dashboard on the shared HTTP server (always available).
+  {
+    mountAdmin(app, db, {
       cronScheduler: cron,
       stateDir: config.stateDir,
       sessionsDir: config.sessionsDir,
@@ -667,11 +702,6 @@ async function main() {
     console.log(`[admin] Dashboard mounted at /admin`);
   }
 
-  // API endpoints (require HTTP server from GitHub connector)
-  if (!githubConnector) {
-    console.log(`[api] No HTTP server — API endpoints disabled (Slack Socket Mode only)`);
-  }
-
   // Protect API endpoints with auth when any login method is configured
   // (password OR OAuth) — same gate as the dashboard, via the shared helper.
   const adminPassword = process.env.ADMIN_PASSWORD ?? "";
@@ -684,13 +714,13 @@ async function main() {
     githubOAuthClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET,
     githubAllowedOrg: process.env.GITHUB_ALLOWED_ORG,
   });
-  if (githubConnector && apiAuthEnabled) {
-    githubConnector.honoApp.use("/api/*", authMiddleware(apiAuthEnabled, adminSecret));
+  if (apiAuthEnabled) {
+    app.use("/api/*", authMiddleware(apiAuthEnabled, adminSecret));
     console.log(`[api] API endpoints protected with auth`);
   }
 
   // API endpoint for CLI triggers
-  githubConnector?.honoApp.post("/api/run", async (c) => {
+  app.post("/api/run", async (c) => {
     const body = await c.req.json();
     // Accept either `skill` (legacy) or `workflow` (preferred). They map 1:1
     // for the four agent skills (issue-triage, pr-review, repo-health,
@@ -716,7 +746,7 @@ async function main() {
   });
 
   // API endpoint for build cycle triggers (issue URL)
-  githubConnector?.honoApp.post("/api/build", async (c) => {
+  app.post("/api/build", async (c) => {
     const body = await c.req.json();
     const { owner, repo, issueNumber, issueTitle, issueBody, issueLabels, sender } = body;
 
@@ -785,7 +815,7 @@ async function main() {
   // handler), so the executions row, agent-session resume, and telemetry are
   // recorded identically and the turn shows up in the dashboard Chat tab. The
   // synthetic envelope's reply() just captures the assistant text to return.
-  githubConnector?.honoApp.post("/api/chat", async (c) => {
+  app.post("/api/chat", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const message = typeof body.message === "string" ? body.message : "";
     if (!message.trim()) return c.json({ error: "Missing 'message'" }, 400);
@@ -858,20 +888,34 @@ async function main() {
 
   // Cron jobs — fan out from each tick into one workflow run per managed repo
   // (see dispatchCronWorkflow). The scheduler itself was constructed earlier
-  // so the admin dashboard could be wired with it.
+  // so the admin dashboard could be wired with it. Every job (health/security
+  // reports + issue/PR polling) drives a GitHub-scoped workflow, so skip
+  // registration entirely without a GitHub client — a chat-only instance would
+  // otherwise fire periodic no-op dispatch failures.
   const webhooksEnabled = !!(config.webhookSecret && config.githubApp);
-  const jobs = getJobs({ webhooksEnabled, db });
-  for (const job of jobs) {
-    cron.register(job);
-  }
-  if (webhooksEnabled) {
-    console.log("[cron] Webhooks enabled — skipping issue/PR polling crons");
+  if (github) {
+    const jobs = getJobs({ webhooksEnabled, db });
+    for (const job of jobs) {
+      cron.register(job);
+    }
+    if (webhooksEnabled) {
+      console.log("[cron] Webhooks enabled — skipping issue/PR polling crons");
+    }
+  } else {
+    console.log("[cron] No GitHub client — skipping all cron jobs (chat-only mode)");
   }
 
   // Start everything
   await registry.startAll();
   console.log("[main] All connectors started");
   console.log("[main] Cron jobs registered");
+
+  // Open the shared HTTP listener. All routes (admin, /api/*, /health,
+  // /webhooks/github, /webhooks/slack) are registered synchronously above, so
+  // the port is ready the moment it opens. Always boots — chat-only, PAT, and
+  // full GitHub App modes alike.
+  const server = serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" });
+  console.log(`[http] Listening on port ${config.port}`);
 
   // Chat runs in-process via pi-ai — no long-lived server to boot.
 
@@ -912,6 +956,9 @@ async function main() {
     console.log("\n[main] Shutting down...");
     cron.stopAll();
     await registry.stopAll();
+    // The shared HTTP server is owned here now (no longer by the webhook
+    // connector's stop()), so close it explicitly.
+    server.close();
     if (!telemetryShutdownStarted) {
       telemetryShutdownStarted = true;
       await shutdownTelemetry();

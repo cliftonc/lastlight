@@ -101,6 +101,23 @@ async function prepareRun(
         `profile=${access.profile}): ${msg}`,
       );
     }
+  } else if (process.env.GITHUB_TOKEN && access) {
+    // PAT fallback: no GitHub App, but a static Personal Access Token is set.
+    // Forward it directly — a PAT can't be per-run downscoped like an App
+    // installation token, so it carries whatever scopes GitHub granted. A
+    // read-only fine-grained PAT is the safe default; warn on repo-write
+    // profiles so an operator running build/pr-fix under a PAT knows the
+    // requested downscope isn't being applied.
+    if (GITHUB_PERMISSION_PROFILES[access.profile]?.contents === "write") {
+      console.warn(
+        `[executor] Using a static GITHUB_TOKEN for a repo-write workflow ` +
+        `(profile=${access.profile}, repo=${access.repo || "none"}) — the PAT's ` +
+        `own scopes apply (no per-run downscoping).`,
+      );
+    }
+    mintedToken = process.env.GITHUB_TOKEN;
+    ghEnv.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+    ghEnv.GIT_TOKEN = process.env.GITHUB_TOKEN;
   }
 
   // Provider API keys.

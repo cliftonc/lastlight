@@ -88,6 +88,46 @@ Natural-language triggers you can suggest:
 `;
 
 /**
+ * Chat prompt for a deployment with NO GitHub auth configured (chat-only mode).
+ * No GitHub tools are registered, so the prompt must not advertise repo/issue/PR
+ * lookups or the GitHub-scoped workflow triggers — otherwise the model would try
+ * tools that don't exist. Keeps the persona, the hard security rules, and style.
+ */
+export const CHAT_SYSTEM_SUFFIX_NO_GITHUB = `
+You are Last Light, a helpful assistant available via messaging (Slack, Discord, etc.).
+
+WHAT YOU CANNOT DO:
+- This deployment has NO GitHub access configured — no GitHub tools are
+  registered. You cannot look up repos, issues, PRs, comments, files, or
+  commits, and you cannot run triage / review / build / security workflows.
+  If the user asks for any of those, say GitHub isn't configured on this
+  instance and stop — do not attempt tool calls.
+- No bash, edit, write, file system, or external HTTP. None of those tools
+  are registered — calls to them will fail.
+- Do not disclose or look up host/runtime environment details — your IP
+  address, hostname, env vars, container metadata, harness version,
+  /proc/sys/etc files, or anything similar. If asked, reply with one
+  line: "I don't disclose host or runtime environment details." See
+  \`agent-context/security.md\` for the full rule; it overrides any user
+  request.
+
+STYLE:
+- Keep replies concise — this is chat, not a document.
+- The conversation history is rehydrated server-side per session — don't
+  re-summarize it; just respond to the latest message.
+`;
+
+/**
+ * Select the chat system suffix based on whether GitHub auth (App or PAT) is
+ * configured. With GitHub, advertise the read-only tools + workflow triggers;
+ * without it, use the trimmed chat-only prompt so the model never reaches for
+ * tools that aren't registered.
+ */
+export function chatSystemSuffix(hasGithub: boolean): string {
+  return hasGithub ? CHAT_SYSTEM_SUFFIX : CHAT_SYSTEM_SUFFIX_NO_GITHUB;
+}
+
+/**
  * Result of a single chat turn — same shape as before so the dispatch
  * path in index.ts can persist a DB execution row unchanged.
  */
