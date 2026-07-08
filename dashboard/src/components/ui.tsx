@@ -1,4 +1,15 @@
 import clsx from "clsx";
+import { useTheme } from "../hooks/useTheme";
+
+// Bar fills use explicit hex per theme rather than the semantic bg-{accent,info,
+// primary} tokens (same reasoning as the admin dashboard's Recharts palette): the
+// text tokens are deliberately DARK on the light theme for contrast, but as large
+// solid fills that reads dull. Dark values equal the `lastlight` token hexes so
+// the dark bars are unchanged; light values are vibrant mid-tones that pop on the
+// pale track. Track likewise softens in light mode (base-300 reads too grey).
+const BAR_FILL_DARK = { accent: "#fcd34d", info: "#67e8f9", primary: "#7dd3fc" };
+const BAR_FILL_LIGHT = { accent: "#10b981", info: "#0ea5e9", primary: "#06b6d4" };
+const BAR_TRACK_LIGHT = "#e9edf1";
 
 /** A horizontal 0..1 bar with a value label; `best` flags the best-in-column. */
 export function Bar({
@@ -12,12 +23,19 @@ export function Bar({
   color: "accent" | "info" | "primary";
   best?: boolean;
 }) {
+  const { isDark } = useTheme();
   const pct = Math.max(0, Math.min(1, frac)) * 100;
-  const fill = { accent: "bg-accent", info: "bg-info", primary: "bg-primary" }[color];
+  const fill = (isDark ? BAR_FILL_DARK : BAR_FILL_LIGHT)[color];
   return (
     <div className="flex items-center gap-2">
-      <span className="h-2 flex-1 overflow-hidden rounded-full bg-base-300">
-        <span className={clsx("block h-full rounded-full", fill)} style={{ width: `${pct.toFixed(1)}%` }} />
+      <span
+        className={clsx("h-2 flex-1 overflow-hidden rounded-full", isDark && "bg-base-300")}
+        style={isDark ? undefined : { backgroundColor: BAR_TRACK_LIGHT }}
+      >
+        <span
+          className="block h-full rounded-full"
+          style={{ width: `${pct.toFixed(1)}%`, backgroundColor: fill }}
+        />
       </span>
       <span className={clsx("min-w-[3rem] text-right font-mono text-xs", best ? "font-semibold text-success" : "text-base-content")}>
         {value}

@@ -56,7 +56,7 @@ export function Home({ tiers }: { tiers: IndexTier[] }) {
       <div className="overflow-x-auto rounded-xl border border-base-300 bg-base-200">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="bg-neutral text-2xs uppercase tracking-wide text-base-content/50">
+            <tr className="bg-neutral text-2xs uppercase tracking-wide text-neutral-content/70">
               <th className="px-3 py-3 text-left font-semibold">run</th>
               <th className="px-3 py-3 text-left font-semibold">tier</th>
               <th className="px-3 py-3 text-left font-semibold">models</th>

@@ -1,5 +1,7 @@
+import { Moon, Sun } from "lucide-react";
 import { useIndex } from "./lib/api";
 import { useNavigate, useRoute } from "./lib/router";
+import { useTheme } from "./hooks/useTheme";
 import { Home } from "./components/Home";
 import { Overview } from "./components/Overview";
 import { RunView } from "./components/RunView";
@@ -8,6 +10,7 @@ export default function App() {
   const { data: index, isLoading, error } = useIndex();
   const route = useRoute();
   const navigate = useNavigate();
+  const { isDark, toggleTheme } = useTheme();
 
   const tiers = index?.tiers ?? [];
   // No tier in the URL → the Home landing (all tiers + recent runs). A tier is
@@ -23,7 +26,7 @@ export default function App() {
             <img src="/logo.png" alt="Last Light" width={28} height={28} className="h-7 w-7 object-contain" />
             Last Light <span className="text-accent">·</span> <span className="text-base-content/70">Evals</span>
           </button>
-          <div className="ml-auto flex flex-wrap gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             {tiers.map((t) => (
               <button
                 key={t.key}
@@ -39,6 +42,14 @@ export default function App() {
                 <span className="ml-1.5 text-base-content/40">{t.runs.length}</span>
               </button>
             ))}
+            <button
+              onClick={toggleTheme}
+              className="rounded-lg border border-base-300 bg-base-200 p-1.5 text-base-content/60 hover:border-info hover:text-base-content"
+              title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+              aria-label="Toggle light/dark theme"
+            >
+              {isDark ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
           </div>
         </nav>
 

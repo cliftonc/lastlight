@@ -63,3 +63,46 @@
 .ll-diff .diff-hunk-header-content {
   padding: 0.25rem 0.5rem;
 }
+
+/* Light (neaform) theme — same variable overrides mapped onto the light
+ * palette so the diff sits on white instead of the dark base. Dark stays the
+ * default above; this block only applies under `[data-theme="neaform"]`. */
+[data-theme="neaform"] .ll-diff .diff {
+  --diff-background-color: #ffffff; /* base-100 */
+  --diff-text-color: #1b2330; /* base-content */
+
+  /* additions — success-tinted */
+  --diff-code-insert-background-color: rgba(7, 160, 111, 0.1);
+  --diff-code-insert-text-color: #1b2330;
+  --diff-code-insert-edit-background-color: rgba(7, 160, 111, 0.24);
+  --diff-code-insert-edit-text-color: #05341f;
+  --diff-gutter-insert-background-color: rgba(7, 160, 111, 0.14);
+  --diff-gutter-insert-text-color: #07835c;
+
+  /* deletions — error-tinted */
+  --diff-code-delete-background-color: rgba(220, 38, 38, 0.09);
+  --diff-code-delete-text-color: #1b2330;
+  --diff-code-delete-edit-background-color: rgba(220, 38, 38, 0.22);
+  --diff-code-delete-edit-text-color: #5a0f0f;
+  --diff-gutter-delete-background-color: rgba(220, 38, 38, 0.13);
+  --diff-gutter-delete-text-color: #c11f1f;
+
+  /* selection / omit */
+  --diff-code-selected-background-color: rgba(11, 59, 99, 0.1);
+  --diff-gutter-selected-background-color: rgba(11, 59, 99, 0.1);
+  --diff-selection-background-color: rgba(11, 59, 99, 0.2);
+  --diff-omit-gutter-line-color: #e2e6ea; /* base-300 */
+}
+[data-theme="neaform"] .ll-diff .diff-gutter {
+  color: rgba(27, 35, 48, 0.42);
+  background: #ffffff;
+}
+[data-theme="neaform"] .ll-diff .diff-gutter-col {
+  background: #ffffff;
+}
+[data-theme="neaform"] .ll-diff .diff-hunk-header {
+  background: #f4f6f8; /* base-200 */
+  color: rgba(27, 35, 48, 0.6);
+  border-top: 1px solid #e2e6ea;
+  border-bottom: 1px solid #e2e6ea;
+}

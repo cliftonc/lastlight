@@ -7,6 +7,7 @@ import { summarizeModels } from "../lib/summarize";
 import { CompareTable } from "./CompareTable";
 import { InstanceTable } from "./InstanceTable";
 import { LiveBadge, RunTypeBadge } from "./ui";
+import { useTheme } from "../hooks/useTheme";
 
 /** One run's full scorecard: tier tabs, each with a model-comparison table and
  * the per-instance detail rows. Live runs poll + show running/queued rows. */
@@ -231,6 +232,7 @@ function MartianRankPanel({ ranking, labels }: { ranking: MartianRanking; labels
   ].sort((a, b) => b.f1 - a.f1);
   const maxF1 = Math.max(...rows.map((r) => r.f1), 0.01);
   const primary = ranking.models[0]; // single-model runs: the headline rank
+  const { isDark } = useTheme();
 
   return (
     <div className="mt-8 scroll-mt-4" id="martian-rank">
@@ -284,10 +286,17 @@ function MartianRankPanel({ ranking, labels }: { ranking: MartianRanking; labels
               >
                 {r.display}
               </span>
-              <div className="relative h-3 flex-1 overflow-hidden rounded bg-base-300/50">
+              <div
+                className={"relative h-3 flex-1 overflow-hidden rounded " + (isDark ? "bg-base-300/50" : "")}
+                style={isDark ? undefined : { backgroundColor: "#e9edf1" }}
+              >
                 <div
-                  className={"h-full rounded " + (r.us ? "bg-accent" : "bg-info/50")}
-                  style={{ width: `${pct}%` }}
+                  className={"h-full rounded " + (isDark ? (r.us ? "bg-accent" : "bg-info/50") : "")}
+                  style={
+                    isDark
+                      ? { width: `${pct}%` }
+                      : { width: `${pct}%`, backgroundColor: r.us ? "#10b981" : "#7cc7ef" }
+                  }
                 />
               </div>
               <span

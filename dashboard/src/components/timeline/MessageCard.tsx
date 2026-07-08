@@ -36,7 +36,10 @@ export function MessageCard({
     <div
       className={clsx(
         "border border-base-300/60 rounded-md overflow-hidden",
-        tint === "user" ? "bg-info/5" : "bg-base-200",
+        // Assistant/tool blocks use the shared content surface: a subtle card in
+        // dark mode, flat white on the page in light mode. User messages keep
+        // their faint info tint in both.
+        tint === "user" ? "bg-info/5" : "ll-surface",
         isNew && "message-new",
       )}
     >

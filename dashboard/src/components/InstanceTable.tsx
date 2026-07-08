@@ -83,7 +83,7 @@ export function InstanceTable({
     <div className="overflow-x-auto rounded-xl border border-base-300 bg-base-200">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="bg-neutral text-2xs uppercase tracking-wide text-base-content/50">
+          <tr className="bg-neutral text-2xs uppercase tracking-wide text-neutral-content/70">
             <th className="px-3 py-3 text-left font-semibold">instance</th>
             <th className="px-3 py-3 text-left font-semibold">model</th>
             {showCodeFix && <th className="px-3 py-3 text-left font-semibold">code-fix</th>}

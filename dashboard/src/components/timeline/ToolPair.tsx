@@ -12,6 +12,7 @@ import {
 } from "../../timeline/toolRenderers";
 import { summarizeResult, formatBytes } from "../../timeline/resultPreview";
 import { classifyTool, FAMILY_VISUAL, iconForTool } from "../../timeline/toolFamily";
+import { useTheme } from "../../hooks/useTheme";
 
 interface Props {
   pair: ToolPairType;
@@ -21,7 +22,6 @@ interface Props {
 const RESULT_TRUNCATE_CHARS = 8000;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[\d;]*m/;
-const ansiConverter = new AnsiToHtml({ fg: "#c9d1d9", bg: "transparent", escapeXML: true });
 
 function stringifyResultContent(content: unknown): { text: string; isJson: boolean } {
   if (content == null) return { text: "", isJson: false };
@@ -47,6 +47,19 @@ function stringifyResultContent(content: unknown): { text: string; isJson: boole
 export function ToolPair({ pair, isNew }: Props) {
   const [argsExpanded, setArgsExpanded] = useState(false);
   const [resultExpanded, setResultExpanded] = useState(false);
+  const { isDark } = useTheme();
+
+  // On the light neaform theme the result surface is white, so the dark-first
+  // light-gray ANSI fg has to darken to stay legible.
+  const ansiConverter = useMemo(
+    () =>
+      new AnsiToHtml({
+        fg: isDark ? "#c9d1d9" : "#1b2330",
+        bg: "transparent",
+        escapeXML: true,
+      }),
+    [isDark],
+  );
 
   const input = (pair.use.content as { input?: Record<string, unknown> })?.input ?? {};
   const resultContent = (pair.result?.content as { content?: unknown })?.content;
