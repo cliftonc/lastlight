@@ -15,10 +15,18 @@ not override it by eyeballing train alone.
 The split ids are fixed for the whole loop. If you re-split (e.g. to add cases),
 say so in the journal and treat prior held-out results as no longer comparable.
 
-## 2. One change per iteration
+## 2. One change *kept* per round
 
 Isolates causal effect. If two edits ship together and the number moves, you can't
-attribute it — and you can't tell an overfit edit riding along with a good one.
+attribute it — and you can't tell an overfit edit riding along with a good one. A
+round may *explore* K=2–4 minimal candidates, but each is measured on its own
+branch and at most one is kept.
+
+**Best-of-K must not consume the blind split K times.** Selecting the best of many
+candidates on held-out inflates it (max-of-K selection bias). So candidates are
+ranked on **TRAIN only**; the single winner gets **one** held-out confirmation.
+Keep K small — the more candidates you screen on train, the more optimistic the
+winner's train number, and only the one held-out run keeps it honest.
 
 ## 3. The generality + leak auditor (adversarial sub-agent)
 
@@ -72,8 +80,14 @@ and why the number moved — no silent wins.
 ## The keep/revert decision, precisely
 
 ```
+best-of-K selection (per round, before the gate below):
+    rank surviving candidates on TRAIN ONLY  ->  winner = highest trainΔ
+    (tie-break: lowest lever, smallest diff, fewest train per-case regressions)
+    then apply the gate below to the WINNER, consuming held-out ONCE.
 lever (a) generic:
     KEEP  iff  trainΔ > epsilon  AND  heldoutΔ >= -epsilon   (else REVERT)
+    (--symmetric variant, for a held-out-driven candidate:
+        KEEP iff trainΔ >= -epsilon AND heldoutΔ >= -epsilon AND max(both) > epsilon)
 lever (b) per-repo:
     KEEP  iff  that case improved  AND  auditor ACCEPTED  AND  human approved
               (recorded as a per-repo recommendation; no held-out claim)

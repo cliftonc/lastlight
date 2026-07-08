@@ -19,31 +19,42 @@ moved — keep it complete even for reverted iterations (a revert is a result).
 - Baseline: train F1 = 0.33, heldout F1 = 0.31   (runIds: <train>, <heldout>)
 ```
 
-## Per-iteration entry
+## Per-round entry
+
+A round mines one pattern, explores K candidates (ranked on TRAIN), and keeps at
+most one (confirmed on HELD-OUT once). A single-candidate round is just K=1.
 
 ```markdown
-## Iteration <N> — <one-line hypothesis>
+## Round <N> — <one-line hypothesis for the top pattern>
 
-- Pattern: <the systematic failure named in §3, e.g. "posts style nits the rubric suppresses (precision loss across 4 train cases)">
-- Lever: (a) generic | (b) per-repo | (c) gold   — <why this lever; why not lower>
-- Change:
+- Pattern: <the systematic failure named in §3, e.g. "misses security-relevant findings (recall·high, 4 train cases)"; from mine-failures.ts>
+- Candidates (ranked on TRAIN only):
+  | # | lever | change (file) | trainΔ | auditor |
+  |---|-------|---------------|--------|---------|
+  | 1 | (a)   | instance/skills/code-review/SKILL.md | +0.08 | ACCEPT |
+  | 2 | (a)   | instance/workflows/prompts/reviewer.md | +0.03 | ACCEPT |
+  | 3 | (a)   | instance/repo-context/AGENTS.md | -0.01 | REJECT (leak) |
+- Winner: #1 — <why (highest trainΔ; tie-break rule if used)>
+- Winner change:
     file: instance/skills/code-review/SKILL.md
     diff: |
       <the actual diff, or the injected-context text>
-- Auditor: ACCEPT | REJECT — <one-line reason>
 - Applied: auto | human-approved (<who/when>) | not applied (auditor rejected)
-- Result (diff-runs.ts):
+- Held-out confirmation (diff-runs.ts, winner only — held-out consumed ONCE):
+    gate:    default | --symmetric
     train:   0.33 -> 0.41   (Δ +0.08)
     heldout: 0.31 -> 0.31   (Δ +0.00)
-    per-case regressions: 0
+    per-case regressions: 0   (REGRESSED(train): none)
 - Decision: KEEP | REVERT | (b) recorded as per-repo recommendation
+- Reverted losers: #2, #3
 - Running best: train F1 = 0.41, heldout F1 = 0.31
 ```
 
 ## Rules
 
-- **One entry per iteration**, including reverts and auditor rejections — the tail
-  of no-keep iterations is the plateau signal.
+- **One entry per round**, including all-revert rounds and auditor rejections — the
+  tail of no-keep rounds is the plateau signal. Record every candidate's train Δ,
+  not just the winner's, so the best-of-K selection is auditable.
 - Paste the **actual diff / context text**, not a paraphrase — the point is
   reproducibility.
 - Always record **both** train and held-out deltas. A missing held-out number
