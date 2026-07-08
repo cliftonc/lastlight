@@ -25,6 +25,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { OVERLAY_GITIGNORE, detectGh, bootstrapOverlayRepo } from "../config/overlay-bootstrap.js";
 import { serverUpdate } from "./cli-server.js";
+import { PROVIDERS, providerByPrefix, DEFAULT_MODEL, type ProviderSpec } from "../providers.js";
 
 // ── Brand colors ───────────────────────────────────────────────────────────
 
@@ -53,12 +54,16 @@ export interface SetupConfig {
   DOMAIN: string;
   /** Model id consumed by agentic-pi / pi-ai, e.g. "anthropic/claude-sonnet-4-6" or "openai/gpt-5.5". */
   LASTLIGHT_MODEL: string;
-  /** Set when the chosen model uses an OpenAI-prefixed provider. */
-  OPENAI_API_KEY?: string;
-  /** Set when the chosen model uses an Anthropic-prefixed provider. */
-  ANTHROPIC_API_KEY?: string;
-  /** Set when the chosen model uses an OpenRouter-prefixed provider. */
-  OPENROUTER_API_KEY?: string;
+  /**
+   * The chosen provider's API key, set by the wizard. The runtime reads the
+   * matching env var (named per `ProviderSpec.envKey`), so we keep the raw
+   * value + the env var name and let `buildEnvContent()` serialise the right
+   * line. Older versions hard-coded `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
+   * `OPENROUTER_API_KEY` — those are now passed through verbatim when the
+   * user picks one of those providers, so existing .env files keep working.
+   */
+  providerApiKey: { envKey: string; value: string } | undefined;
+  /** Back-compat shims preserving the legacy fields for older callers/tests. */
   ADMIN_PASSWORD?: string;
   SLACK_BOT_TOKEN?: string;
   SLACK_APP_TOKEN?: string;
@@ -108,24 +113,6 @@ export function isPemFile(filePath: string): boolean {
     return false;
   }
 }
-
-export function isAnthropicKey(s: string): boolean {
-  return s.startsWith("sk-ant-");
-}
-
-export function isOpenaiKey(s: string): boolean {
-  return s.startsWith("sk-") && !s.startsWith("sk-ant-") && !s.startsWith("sk-or-");
-}
-
-export function isOpenrouterKey(s: string): boolean {
-  return s.startsWith("sk-or-");
-}
-
-/**
- * Default model — kept aligned with `config.ts`'s `DEFAULT_MODEL`.
- * Update both in lockstep when the canonical default changes.
- */
-export const DEFAULT_LASTLIGHT_MODEL = "anthropic/claude-sonnet-4-6";
 
 export function isSlackBotToken(s: string): boolean {
   return s.startsWith("xoxb-");
@@ -180,16 +167,14 @@ export function buildEnvContent(config: SetupConfig): string {
     "",
     "# ── Model + provider API key ────────────────────────────────",
     `LASTLIGHT_MODEL=${config.LASTLIGHT_MODEL}`,
-    "# Set whichever matches your LASTLIGHT_MODEL (anthropic/…, openai/…, or openrouter/…).",
+    "# Set the env var that matches your LASTLIGHT_MODEL's provider.",
+    "# See src/providers.ts for the full registry (anthropic, openai,",
+    "# openrouter, google, mistral, groq, cerebras, xai, huggingface,",
+    "# moonshotai, nvidia, fireworks, together, deepseek, zai,",
+    "# kimi-coding, minimax).",
   );
-  if (config.OPENAI_API_KEY) {
-    lines.push(`OPENAI_API_KEY=${config.OPENAI_API_KEY}`);
-  }
-  if (config.ANTHROPIC_API_KEY) {
-    lines.push(`ANTHROPIC_API_KEY=${config.ANTHROPIC_API_KEY}`);
-  }
-  if (config.OPENROUTER_API_KEY) {
-    lines.push(`OPENROUTER_API_KEY=${config.OPENROUTER_API_KEY}`);
+  if (config.providerApiKey) {
+    lines.push(`${config.providerApiKey.envKey}=${config.providerApiKey.value}`);
   }
   lines.push(
     "",
@@ -543,107 +528,116 @@ async function collectManagedRepos(): Promise<string[]> {
   return repos;
 }
 
+/**
+ * Result of the step-4 model+key collector. The wizard picks a provider from
+ * the shared registry (`src/providers.ts`), then asks for the model id and
+ * the provider's API key. The key is returned tagged with the env var name
+ * the runtime expects, so `buildEnvContent()` can serialise the right line.
+ */
 async function collectModelAndKey(): Promise<{
   model: string;
-  openaiKey?: string;
-  anthropicKey?: string;
-  openrouterKey?: string;
+  providerApiKey: { envKey: string; value: string };
 }> {
   p.log.step(gold("Model provider"));
   p.log.info(
-    dim("agentic-pi (pi-ai) is provider-agnostic. Pick the model you want the agent to use; ") +
-    dim("the wizard will ask for the matching API key."),
+    dim("agentic-pi (pi-ai) is provider-agnostic and supports 15+ providers — ") +
+    dim("Anthropic, OpenAI, Google, Mistral, Groq, Cerebras, xAI, Hugging Face, ") +
+    dim("Moonshot, NVIDIA, Fireworks, Together, DeepSeek, Z.AI, OpenRouter, …"),
   );
 
-  // Curated short list — extend as new defaults emerge. The custom escape
-  // hatch below lets the user enter any provider/model string pi-ai accepts.
-  const catalog = [
-    DEFAULT_LASTLIGHT_MODEL,
-    "anthropic/claude-sonnet-4-6-20251015",
-    "openai/gpt-5.5",
-    "openrouter/google/gemini-2.5-pro",
-    "openrouter/anthropic/claude-sonnet-4.5",
-  ];
-  // Deduplicate while preserving order (DEFAULT_LASTLIGHT_MODEL first).
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const m of catalog) {
-    if (!seen.has(m)) { seen.add(m); ordered.push(m); }
-  }
-
-  const choice = required(
+  // Provider picker — the registry is the single source of truth. Order is
+  // intentional: Anthropic (default) → OpenAI → Google → the rest grouped by
+  // family. The "custom" escape hatch lets the user enter any `provider/model`
+  // string pi-ai accepts even if we haven't surfaced a register entry.
+  const defaultPrefix = "anthropic";
+  const providerChoice = required(
     await p.select({
-      message: `LASTLIGHT_MODEL ${dim("(short list — pick 'other' for a custom value)")}`,
-      initialValue: DEFAULT_LASTLIGHT_MODEL,
+      message: `Provider ${dim("(model spec prefix)")}`,
+      initialValue: defaultPrefix,
       options: [
-        ...ordered.map((m) => ({
-          value: m,
-          label: m === DEFAULT_LASTLIGHT_MODEL ? `${m} ${dim("(default)")}` : m,
+        // Render every registered provider; the option value is the prefix.
+        ...PROVIDERS.map((spec) => ({
+          value: spec.prefix,
+          label:
+            spec.prefix === defaultPrefix
+              ? `${spec.displayName} ${dim("(default)")}`
+              : spec.displayName,
+          hint: spec.prefix,
         })),
-        { value: "__custom__", label: dim("Enter a different provider/model...") },
+        { value: "__custom__", label: dim("Enter a custom provider/model...") },
       ],
     }),
   ) as string;
 
-  let model = choice;
-  if (choice === "__custom__") {
-    model = required(
+  let spec: ProviderSpec;
+  let modelId: string;
+  if (providerChoice === "__custom__") {
+    const raw = required(
       await p.text({
         message: "provider/model",
         placeholder: "openai/gpt-5.3-codex or anthropic/claude-…",
-        validate: (v) =>
-          v && /^[a-z][\w-]*\/[A-Za-z][\w.-]+$/.test(v)
-            ? undefined
-            : "Format must be provider/model (e.g. openai/gpt-5.3-codex).",
+        validate: (v) => {
+          if (!v || !/^[a-z][\w-]*\//.test(v)) {
+            return "Format must be provider/model (e.g. openai/gpt-5.3-codex).";
+          }
+          const prefix = v.split("/")[0].toLowerCase();
+          if (!providerByPrefix(prefix)) {
+            return (
+              `Unknown provider prefix "${prefix}". Registered providers: ` +
+              PROVIDERS.map((s) => s.prefix).join(", ")
+            );
+          }
+          return undefined;
+        },
       }),
     ) as string;
+    const slashIdx = raw.indexOf("/");
+    const prefix = raw.slice(0, slashIdx).toLowerCase();
+    spec = providerByPrefix(prefix)!;
+    modelId = raw.slice(slashIdx + 1);
+  } else {
+    spec = providerByPrefix(providerChoice)!;
+    // Default to the canonical primary model for this provider (the user can
+    // override in the next prompt).
+    modelId = spec.sampleModel;
+    const customModelId = required(
+      await p.text({
+        message: `Model id for ${spec.displayName} ${dim("(provider prefix is added automatically)")}`,
+        placeholder: spec.sampleModel,
+        defaultValue: spec.sampleModel,
+        validate: (v) => {
+          if (!v || !v.trim()) return undefined; // accept the default on Enter
+          // The user enters the model id without the provider prefix; keep
+          // OpenRouter's nested `vendor/model` tail legal.
+          return /^[A-Za-z0-9][\w/.-]*$/.test(v) ? undefined : "Use the model id (e.g. claude-sonnet-4-6 or anthropic/claude-sonnet-4.5 for OpenRouter).";
+        },
+      }),
+    ) as string;
+    modelId = (customModelId || spec.sampleModel).trim();
   }
 
-  const provider = model.split("/")[0].toLowerCase();
-  if (provider === "anthropic") {
-    const key = required(
-      await p.text({
-        message: "ANTHROPIC_API_KEY",
-        placeholder: "sk-ant-...",
-        validate: (v) =>
-          v && isAnthropicKey(v) ? undefined : "Must start with sk-ant-",
-      }),
-    ) as string;
-    return { model, anthropicKey: key };
-  }
-  if (provider === "openai") {
-    const key = required(
-      await p.text({
-        message: "OPENAI_API_KEY",
-        placeholder: "sk-...",
-        validate: (v) =>
-          v && isOpenaiKey(v) ? undefined : "Must start with sk- (and not sk-ant- or sk-or-)",
-      }),
-    ) as string;
-    return { model, openaiKey: key };
-  }
-  if (provider === "openrouter") {
-    const key = required(
-      await p.text({
-        message: "OPENROUTER_API_KEY",
-        placeholder: "sk-or-v1-...",
-        validate: (v) =>
-          v && isOpenrouterKey(v) ? undefined : "Must start with sk-or-",
-      }),
-    ) as string;
-    return { model, openrouterKey: key };
-  }
-  // Unknown provider — prompt for any key and route by shape.
-  p.log.warn(`Provider "${provider}" isn't auto-detected. Enter the API key your model needs.`);
+  const model = `${spec.prefix}/${modelId}`;
+
+  // Provider-specific API key. We surface the right env var name + a
+  // known-prefix hint; validation is loose (the upstream will reject a wrong
+  // key with a clear error, so we don't gate the install on shape alone).
+  const keyPlaceholder = spec.keyPrefix ? `${spec.keyPrefix}…` : "paste your key";
   const key = required(
     await p.text({
-      message: "API key",
-      validate: (v) => (v && v.length > 0 ? undefined : "Enter a non-empty key."),
+      message: spec.envKey,
+      placeholder: keyPlaceholder,
+      validate: (v) => {
+        if (!v || !v.trim()) return "Enter a non-empty API key.";
+        if (spec.keyPrefix && !v.startsWith(spec.keyPrefix)) {
+          return `Keys for ${spec.displayName} usually start with "${spec.keyPrefix}". Paste yours to override.`;
+        }
+        return undefined;
+      },
     }),
   ) as string;
-  if (isAnthropicKey(key)) return { model, anthropicKey: key };
-  if (isOpenrouterKey(key)) return { model, openrouterKey: key };
-  return { model, openaiKey: key };
+
+  p.log.success(`Model: ${teal(model)} — key: ${dim(spec.envKey)}`);
+  return { model, providerApiKey: { envKey: spec.envKey, value: key.trim() } };
 }
 
 async function collectAdminPassword(): Promise<string | undefined> {
@@ -866,9 +860,9 @@ export async function runSetup(): Promise<void> {
   );
 
   const { domain, useCaddy } = await collectDomain();
-  // Managed repos are meaningful for App + PAT; chat-only has no repos to manage.
+// Managed repos are meaningful for App + PAT; chat-only has no repos to manage.
   const managedRepos = mode === "chat" ? [] : await collectManagedRepos();
-  const { model, openaiKey, anthropicKey, openrouterKey } = await collectModelAndKey();
+  const { model, providerApiKey } = await collectModelAndKey();
   const adminPassword = await collectAdminPassword();
   const { botToken, appToken, deliveryChannel, allowedUsers } = await collectSlack();
 
@@ -881,9 +875,7 @@ export async function runSetup(): Promise<void> {
     ADMIN_SECRET: adminSecret,
     DOMAIN: domain,
     LASTLIGHT_MODEL: model,
-    OPENAI_API_KEY: openaiKey,
-    ANTHROPIC_API_KEY: anthropicKey,
-    OPENROUTER_API_KEY: openrouterKey,
+    providerApiKey,
     ADMIN_PASSWORD: adminPassword,
     SLACK_BOT_TOKEN: botToken,
     SLACK_APP_TOKEN: appToken,

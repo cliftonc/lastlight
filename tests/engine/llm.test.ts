@@ -3,25 +3,30 @@ import { callLlm, chat, defaultFastModel, resolveProvider } from "#src/engine/ll
 
 describe("resolveProvider", () => {
   it("prefers explicit provider prefix", () => {
-    expect(resolveProvider("anthropic/claude-haiku-4-5")).toEqual({ provider: "anthropic", modelId: "claude-haiku-4-5" });
-    expect(resolveProvider("openai/gpt-4o-mini")).toEqual({ provider: "openai", modelId: "gpt-4o-mini" });
+    expect(resolveProvider("anthropic/claude-haiku-4-5")).toEqual({ provider: "anthropic", modelId: "claude-haiku-4-5", api: "anthropic-messages" });
+    expect(resolveProvider("openai/gpt-4o-mini")).toEqual({ provider: "openai", modelId: "gpt-4o-mini", api: "openai-completions" });
   });
   it("keeps the nested vendor/model tail for openrouter ids", () => {
     expect(resolveProvider("openrouter/anthropic/claude-sonnet-4.5"))
-      .toEqual({ provider: "openrouter", modelId: "anthropic/claude-sonnet-4.5" });
+      .toEqual({ provider: "openrouter", modelId: "anthropic/claude-sonnet-4.5", api: "openai-completions" });
     expect(resolveProvider("openrouter/google/gemini-2.5-flash"))
-      .toEqual({ provider: "openrouter", modelId: "google/gemini-2.5-flash" });
+      .toEqual({ provider: "openrouter", modelId: "google/gemini-2.5-flash", api: "openai-completions" });
   });
   it("infers from common naming for unprefixed model ids", () => {
-    expect(resolveProvider("claude-3-5-haiku")).toEqual({ provider: "anthropic", modelId: "claude-3-5-haiku" });
-    expect(resolveProvider("gpt-4o-mini")).toEqual({ provider: "openai", modelId: "gpt-4o-mini" });
+    expect(resolveProvider("claude-3-5-haiku")).toEqual({ provider: "anthropic", modelId: "claude-3-5-haiku", api: "anthropic-messages" });
+    expect(resolveProvider("gpt-4o-mini")).toEqual({ provider: "openai", modelId: "gpt-4o-mini", api: "openai-completions" });
   });
-  it("falls back to openai for unrecognized bare ids", () => {
-    expect(resolveProvider("mystery-model")).toEqual({ provider: "openai", modelId: "mystery-model" });
+  it("falls back to openai-completions for unrecognized bare ids", () => {
+    expect(resolveProvider("mystery-model")).toEqual({ provider: "openai", modelId: "mystery-model", api: "openai-completions" });
+  });
+  it("resolves providers registered in src/providers.ts (groq, xai, google, …)", () => {
+    expect(resolveProvider("groq/llama-3.3-70b-versatile")).toEqual({ provider: "groq", modelId: "llama-3.3-70b-versatile", api: "openai-completions" });
+    expect(resolveProvider("xai/grok-4")).toEqual({ provider: "xai", modelId: "grok-4", api: "openai-completions" });
+    expect(resolveProvider("google/gemini-2.5-pro")).toEqual({ provider: "google", modelId: "gemini-2.5-pro", api: "openai-completions" });
+    expect(resolveProvider("kimi-coding/kimi-latest")).toEqual({ provider: "kimi-coding", modelId: "kimi-latest", api: "anthropic-messages" });
   });
   it("throws on an explicit unsupported provider prefix instead of silently mis-routing", () => {
-    expect(() => resolveProvider("mistral/large-latest")).toThrow(/unsupported provider prefix "mistral"/);
-    expect(() => resolveProvider("google/gemini-pro")).toThrow(/unsupported provider prefix "google"/);
+    expect(() => resolveProvider("acme/sumo")).toThrow(/unsupported provider prefix "acme"/);
   });
 });
 

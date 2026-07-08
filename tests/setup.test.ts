@@ -5,9 +5,6 @@ import { tmpdir } from "node:os";
 import {
   isPositiveInt,
   isPemFile,
-  isAnthropicKey,
-  isOpenaiKey,
-  isOpenrouterKey,
   isSlackBotToken,
   isSlackAppToken,
   buildEnvContent,
@@ -82,53 +79,6 @@ describe("isPemFile", () => {
   });
 });
 
-describe("isAnthropicKey", () => {
-  it("accepts keys with sk-ant- prefix", () => {
-    expect(isAnthropicKey("sk-ant-api03-abc123")).toBe(true);
-    expect(isAnthropicKey("sk-ant-xyz")).toBe(true);
-  });
-
-  it("rejects keys without sk-ant- prefix", () => {
-    expect(isAnthropicKey("sk-abc123")).toBe(false);
-    expect(isAnthropicKey("xoxb-abc")).toBe(false);
-    expect(isAnthropicKey("")).toBe(false);
-    expect(isAnthropicKey("sk-ant")).toBe(false); // no dash after ant
-  });
-});
-
-describe("isOpenaiKey", () => {
-  it("accepts sk- keys that aren't sk-ant- or sk-or-", () => {
-    expect(isOpenaiKey("sk-proj-abc123")).toBe(true);
-    expect(isOpenaiKey("sk-abcdef")).toBe(true);
-  });
-
-  it("rejects sk-ant- (anthropic) keys", () => {
-    expect(isOpenaiKey("sk-ant-foo")).toBe(false);
-  });
-
-  it("rejects sk-or- (openrouter) keys", () => {
-    expect(isOpenaiKey("sk-or-v1-foo")).toBe(false);
-  });
-
-  it("rejects non-sk- inputs", () => {
-    expect(isOpenaiKey("")).toBe(false);
-    expect(isOpenaiKey("xoxb-foo")).toBe(false);
-  });
-});
-
-describe("isOpenrouterKey", () => {
-  it("accepts sk-or- keys", () => {
-    expect(isOpenrouterKey("sk-or-v1-abcdef")).toBe(true);
-    expect(isOpenrouterKey("sk-or-abc")).toBe(true);
-  });
-
-  it("rejects other key shapes", () => {
-    expect(isOpenrouterKey("sk-ant-foo")).toBe(false);
-    expect(isOpenrouterKey("sk-proj-foo")).toBe(false);
-    expect(isOpenrouterKey("")).toBe(false);
-  });
-});
-
 describe("isSlackBotToken", () => {
   it("accepts xoxb- tokens", () => {
     expect(isSlackBotToken("xoxb-12345-67890-abc")).toBe(true);
@@ -163,7 +113,7 @@ describe("buildEnvContent", () => {
     ADMIN_SECRET: "cafebabe89abcdef",
     DOMAIN: "lastlight.example.com",
     LASTLIGHT_MODEL: "openai/gpt-5.3-codex",
-    OPENAI_API_KEY: "sk-test-openai",
+    providerApiKey: { envKey: "OPENAI_API_KEY", value: "sk-test-openai" },
     useCaddy: true,
     pemSourcePath: "/tmp/app.pem",
     managedRepos: [],
@@ -183,12 +133,11 @@ describe("buildEnvContent", () => {
     expect(content).toContain("LASTLIGHT_OVERLAY_DIR=/app/instance");
   });
 
-  it("writes ANTHROPIC_API_KEY only when an anthropic model is chosen", () => {
+  it("writes ANTHROPIC_API_KEY when the anthropic provider is chosen", () => {
     const config: SetupConfig = {
       ...baseConfig,
       LASTLIGHT_MODEL: "anthropic/claude-sonnet-4-6-20251015",
-      OPENAI_API_KEY: undefined,
-      ANTHROPIC_API_KEY: "sk-ant-test",
+      providerApiKey: { envKey: "ANTHROPIC_API_KEY", value: "sk-ant-test" },
     };
     const content = buildEnvContent(config);
     expect(content).toContain("LASTLIGHT_MODEL=anthropic/claude-sonnet-4-6-20251015");
@@ -196,18 +145,37 @@ describe("buildEnvContent", () => {
     expect(content).not.toMatch(/^OPENAI_API_KEY=/m);
   });
 
-  it("writes OPENROUTER_API_KEY only when an openrouter model is chosen", () => {
+  it("writes OPENROUTER_API_KEY when the openrouter provider is chosen", () => {
     const config: SetupConfig = {
       ...baseConfig,
       LASTLIGHT_MODEL: "openrouter/anthropic/claude-sonnet-4.5",
-      OPENAI_API_KEY: undefined,
-      OPENROUTER_API_KEY: "sk-or-v1-test",
+      providerApiKey: { envKey: "OPENROUTER_API_KEY", value: "sk-or-v1-test" },
     };
     const content = buildEnvContent(config);
     expect(content).toContain("LASTLIGHT_MODEL=openrouter/anthropic/claude-sonnet-4.5");
     expect(content).toContain("OPENROUTER_API_KEY=sk-or-v1-test");
     expect(content).not.toMatch(/^OPENAI_API_KEY=/m);
     expect(content).not.toMatch(/^ANTHROPIC_API_KEY=/m);
+  });
+
+  it("writes a non-builtin provider key (groq) under its registry env var", () => {
+    const config: SetupConfig = {
+      ...baseConfig,
+      LASTLIGHT_MODEL: "groq/llama-3.3-70b-versatile",
+      providerApiKey: { envKey: "GROQ_API_KEY", value: "gsk_test" },
+    };
+    const content = buildEnvContent(config);
+    expect(content).toContain("LASTLIGHT_MODEL=groq/llama-3.3-70b-versatile");
+    expect(content).toContain("GROQ_API_KEY=gsk_test");
+    expect(content).not.toMatch(/^OPENAI_API_KEY=/m);
+    expect(content).not.toMatch(/^ANTHROPIC_API_KEY=/m);
+  });
+
+  it("omits the provider key line entirely when providerApiKey is undefined", () => {
+    const config: SetupConfig = { ...baseConfig, providerApiKey: undefined };
+    const content = buildEnvContent(config);
+    expect(content).not.toMatch(/^OPENAI_API_KEY=/m);
+    expect(content).not.toMatch(/^GROQ_API_KEY=/m);
   });
 
   it("includes optional ADMIN_PASSWORD when provided", () => {
@@ -284,6 +252,7 @@ describe("buildOverlayConfig", () => {
     ADMIN_SECRET: "a",
     DOMAIN: "d.example.com",
     LASTLIGHT_MODEL: "anthropic/claude-sonnet-4-6",
+    providerApiKey: { envKey: "ANTHROPIC_API_KEY", value: "sk-ant-x" },
     useCaddy: true,
     pemSourcePath: "/tmp/app.pem",
     managedRepos,

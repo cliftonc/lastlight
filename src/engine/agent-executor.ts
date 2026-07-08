@@ -11,6 +11,7 @@ import type { SandboxBackend } from "../config/config.js";
 import type { PrePopulateSpec, SandboxFactory } from "../sandbox/sandbox.js";
 import { getDockerSandboxOtelEnv, getOtelEnvForSandbox, safeSpanAttributes, withSpan } from "../telemetry/index.js";
 import { DEFAULT_MODEL } from "./executors/shared.js";
+import { PROVIDER_ENV_KEYS } from "../providers.js";
 import {
   runSandboxedAgent,
   runSandboxedCommand,
@@ -120,11 +121,14 @@ async function prepareRun(
     ghEnv.GIT_TOKEN = process.env.GITHUB_TOKEN;
   }
 
-  // Provider API keys.
-  if (process.env.OPENAI_API_KEY) ghEnv.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  if (process.env.ANTHROPIC_API_KEY) ghEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  if (process.env.OPENROUTER_API_KEY) ghEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  if (process.env.FIREWORKS_API_KEY) ghEnv.FIREWORKS_API_KEY = process.env.FIREWORKS_API_KEY;
+  // Provider API keys. Forwarded in registry order — see `src/providers.ts`
+  // (the single source of truth for wizard-able providers). Every entry a
+  // user can pick in the setup wizard is reachable from the sandbox because
+  // the egress firewall list is also derived from the same registry's hosts.
+  for (const envKey of PROVIDER_ENV_KEYS) {
+    const v = process.env[envKey];
+    if (v) ghEnv[envKey] = v;
+  }
 
   // Web-search provider keys. Forwarded only when the workflow opted into
   // web search (scoped to explore today; see webSearchEnabledForWorkflow
