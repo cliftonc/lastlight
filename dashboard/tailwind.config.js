@@ -59,6 +59,32 @@ export default {
           "error-content": "#1a0505",
         },
       },
+      {
+        // Nearform brand light theme. Palette from ~/work/ainative-comps
+        // (src/styles/legacy.css) mapped onto daisyUI's semantic tokens.
+        neaform: {
+          primary: "#07a06f", // nf dark green
+          "primary-content": "#ffffff",
+          secondary: "#000e38", // nf deep navy
+          "secondary-content": "#e7ecf5",
+          accent: "#00e6a4", // nf bright green
+          "accent-content": "#00321f",
+          neutral: "#000e38",
+          "neutral-content": "#e7ecf5",
+          "base-100": "#ffffff", // card / main surface
+          "base-200": "#f4f6f8", // page bg (nf-bg)
+          "base-300": "#e2e6ea", // borders (nf-border)
+          "base-content": "#1b2330", // text (nf-text)
+          info: "#0b3b63",
+          "info-content": "#ffffff",
+          success: "#07a06f",
+          "success-content": "#ffffff",
+          warning: "#b45309",
+          "warning-content": "#ffffff",
+          error: "#dc2626",
+          "error-content": "#ffffff",
+        },
+      },
     ],
     darkTheme: "lastlight",
   },

@@ -1,8 +1,25 @@
 <!doctype html>
-<html lang="en" data-theme="lastlight">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Apply the theme before first paint to avoid a flash of the wrong one.
+      // Saved choice wins; otherwise follow the OS (dark OS -> lastlight, light
+      // OS -> neaform). Kept in sync with src/hooks/useTheme.tsx (key "ll-theme").
+      (function () {
+        try {
+          var saved = localStorage.getItem("ll-theme");
+          var sysDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme = saved || (sysDark ? "lastlight" : "neaform");
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "lastlight");
+        }
+      })();
+    </script>
     <link rel="icon" type="image/png" href="/admin/logo.png" />
     <link rel="preconnect" href="https://rsms.me/" />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />

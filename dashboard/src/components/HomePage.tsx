@@ -12,14 +12,16 @@ import {
 } from "recharts";
 import { api, type WorkflowRun, type ContainerStats } from "../api";
 import { useStatsSeries } from "../hooks/useDailyStats";
+import { useTheme } from "../hooks/useTheme";
 import clsx from "clsx";
 
 type StatRange = "today" | "7d" | "30d";
 
 // Recharts can't resolve `hsl(var(--p))` because it parses fill strings
-// internally for tooltip swatches and gradients. Use literal hex matching
-// the daisyUI `lastlight` theme so the chart renders.
-const CHART = {
+// internally for tooltip swatches and gradients. Use literal hex per theme so
+// the chart renders — CHART_DARK matches the daisyUI `lastlight` theme,
+// CHART_LIGHT matches `neaform`. Selected in-component via useTheme().
+const CHART_DARK = {
   success: "#86efac",
   error: "#fca5a5",
   primary: "#7dd3fc",
@@ -30,6 +32,19 @@ const CHART = {
   axis: "rgba(230, 237, 243, 0.45)",
   tooltipBg: "#161b22",
   tooltipBorder: "#21262d",
+};
+
+const CHART_LIGHT = {
+  success: "#07a06f",
+  error: "#dc2626",
+  primary: "#0b3b63",
+  secondary: "#7c3aed",
+  accent: "#b45309",
+  info: "#0b3b63",
+  grid: "#e2e6ea",
+  axis: "rgba(27, 35, 48, 0.55)",
+  tooltipBg: "#ffffff",
+  tooltipBorder: "#e2e6ea",
 };
 
 function timeAgo(iso: string): string {
@@ -324,6 +339,8 @@ function RecentWorkflowsSection({
 
 function StatsChartsSection() {
   const [range, setRange] = useState<StatRange>("7d");
+  const { isDark } = useTheme();
+  const CHART = isDark ? CHART_DARK : CHART_LIGHT;
   const granularity = range === "today" ? "hour" : "day";
   const count = range === "today" ? 24 : range === "7d" ? 7 : 30;
   const { series, loading } = useStatsSeries(granularity, count);

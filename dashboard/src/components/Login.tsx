@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { Moon, Sun } from "lucide-react";
 import { api, auth } from "../api";
+import { useTheme } from "../hooks/useTheme";
 
 interface Props {
   onAuthed: () => void;
@@ -39,6 +41,7 @@ export function Login({ onAuthed, slackOAuth, githubOAuth, passwordLogin = true,
   const [busy, setBusy] = useState(false);
   const [slackRedirecting, setSlackRedirecting] = useState(false);
   const [githubRedirecting, setGithubRedirecting] = useState(false);
+  const { isDark, toggleTheme } = useTheme();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,9 +72,27 @@ export function Login({ onAuthed, slackOAuth, githubOAuth, passwordLogin = true,
     <div className="h-full flex items-center justify-center bg-base-100">
       <div className="card bg-base-200 border border-base-300 w-80 shadow-sm">
         <div className="card-body gap-4">
-          <div>
-            <div className="text-lg font-semibold tracking-tight">Last Light</div>
-            <div className="text-xs text-base-content/50">Sign in to continue</div>
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/admin/logo.png"
+              alt="Last Light"
+              width="32"
+              height="32"
+              style={{ width: 32, height: 32, objectFit: "contain" }}
+            />
+            <div className="flex-1">
+              <div className="text-lg font-semibold tracking-tight">Last Light</div>
+              <div className="text-xs text-base-content/50">Sign in to continue</div>
+            </div>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="btn btn-ghost btn-xs h-7 min-h-0 px-2 text-base-content/50 hover:text-base-content"
+              title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+              aria-label="Toggle light/dark theme"
+            >
+              {isDark ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
           </div>
 
           {error && (

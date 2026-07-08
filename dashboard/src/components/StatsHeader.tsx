@@ -1,6 +1,7 @@
 import clsx from "clsx";
-import { Clock, LogOut, Radio } from "lucide-react";
+import { Clock, LogOut, Moon, Radio, Sun } from "lucide-react";
 import type { StreamStatus } from "../hooks/useSessionStream";
+import { useTheme } from "../hooks/useTheme";
 
 interface Props {
   timeRange: string;
@@ -40,6 +41,7 @@ export function StatsHeader({
   onLogout,
 }: Props) {
   const statusInfo = STATUS_LABEL[streamStatus];
+  const { isDark, toggleTheme } = useTheme();
 
   return (
     <header className="bg-base-200 border-b border-base-300 flex items-center gap-3 px-4 h-12 shrink-0">
@@ -116,6 +118,15 @@ export function StatsHeader({
       </div>
 
       <div className="flex-1" />
+
+      <button
+        onClick={toggleTheme}
+        className="btn btn-ghost btn-xs h-7 min-h-0 px-2 text-base-content/50 hover:text-base-content"
+        title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+        aria-label="Toggle light/dark theme"
+      >
+        {isDark ? <Sun size={14} /> : <Moon size={14} />}
+      </button>
 
       {onLogout && (
         <button

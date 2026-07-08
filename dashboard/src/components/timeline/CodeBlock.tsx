@@ -9,6 +9,7 @@ import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-markdown";
 import "../../prism-theme.css";
 import AnsiToHtml from "ansi-to-html";
+import { useTheme } from "../../hooks/useTheme";
 
 // Register a `template-block` token on markdown + yaml so the mustache-style
 // `{{ ... }}` placeholders our prompt templates and workflow definitions use
@@ -27,13 +28,6 @@ for (const lang of ["markdown", "yaml"] as const) {
   }
 }
 
-const ansiConverter = new AnsiToHtml({
-  fg: "#c9d1d9",
-  bg: "transparent",
-  newline: true,
-  escapeXML: true,
-});
-
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[\d;]*m/;
 
@@ -47,14 +41,28 @@ export function CodeBlock({ code, language = "text", maxHeight }: Props) {
   const ref = useRef<HTMLElement>(null);
   const lang = Prism.languages[language] ? language : "text";
   const hasAnsi = useMemo(() => ANSI_RE.test(code), [code]);
+  const { isDark } = useTheme();
 
   useEffect(() => {
     if (ref.current && !hasAnsi) Prism.highlightElement(ref.current);
   }, [code, lang, hasAnsi]);
 
+  // The code-block background is `base-300`, which is light in the neaform
+  // theme — so the default light-gray fg needs to darken there to stay legible.
+  const ansiConverter = useMemo(
+    () =>
+      new AnsiToHtml({
+        fg: isDark ? "#c9d1d9" : "#1b2330",
+        bg: "transparent",
+        newline: true,
+        escapeXML: true,
+      }),
+    [isDark],
+  );
+
   const ansiHtml = useMemo(
     () => (hasAnsi ? DOMPurify.sanitize(ansiConverter.toHtml(code), { ADD_ATTR: ["style"] }) : ""),
-    [code, hasAnsi],
+    [code, hasAnsi, ansiConverter],
   );
 
   return (
