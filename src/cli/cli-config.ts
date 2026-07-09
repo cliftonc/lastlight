@@ -119,6 +119,19 @@ export function resolveServerHome(override?: string): string {
 }
 
 /**
+ * Which precedence tier supplied the resolved server home. Lets callers warn
+ * when the working dir came from a *saved* serverHome (not the flag/env or the
+ * directory the user is standing in) — the common "it wrote somewhere else"
+ * surprise.
+ */
+export function serverHomeSource(override?: string): "flag" | "env" | "saved" | "default" {
+  if (override) return "flag";
+  if (process.env.LASTLIGHT_HOME) return "env";
+  if (readRaw()?.serverHome) return "saved";
+  return "default";
+}
+
+/**
  * Read a bearer token's expiry (unix seconds) WITHOUT verifying its signature —
  * the CLI lacks the server secret, it only needs the timestamp to decide when
  * to proactively refresh. Returns null if the token shape is unparseable.

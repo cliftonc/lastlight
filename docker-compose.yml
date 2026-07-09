@@ -1,6 +1,11 @@
 services:
   agent:
     build: .
+    # Pin the built image tag so it's independent of the compose project name
+    # (which otherwise defaults to the checkout directory's basename). The
+    # `egress-init` service references this exact tag, so without the pin the
+    # stack only worked when the directory happened to be named `lastlight`.
+    image: lastlight-agent
     restart: unless-stopped
     ports:
       - "127.0.0.1:8644:8644"

@@ -444,7 +444,12 @@ lastlight setup                        # first-run wizard (asks: client | server
 lastlight server setup                 # scaffold/adopt the working dir (clone core; clone OR
                                         # create the instance/ overlay — fresh overlay offers a
                                         # private `gh repo create` via src/config/overlay-bootstrap.ts)
+lastlight server build                 # build the docker images (agent + sandbox + sandbox-qa)
+                                        # without starting anything — the explicit first-run step
+                                        # so `server start` has a `lastlight-agent` image to run
 lastlight server start|stop|restart [service]   # docker compose up -d / stop|down / restart
+                                        # (start pre-checks the lastlight-agent image exists; if
+                                        # not it points at `server build`)
 lastlight server update                # the canonical deploy: pull core+overlay, build
                                         # (agent + sandbox + sandbox-qa), up -d --remove-orphans,
                                         # restart sidecars, health-check

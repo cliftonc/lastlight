@@ -265,6 +265,7 @@ ${chalk.bold("Debug")} (read the running instance instead of SSH)
 
 ${chalk.bold("Server")} (host-local — run on the server; manages the docker stack)
   lastlight server setup             Scaffold/adopt the working dir; create or clone the overlay (+ gh repo)
+  lastlight server build             Build the docker images (run before the first start)
   lastlight server start [service]   docker compose up -d
   lastlight server stop [service]    Stop one service, or the whole stack (down)
   lastlight server restart [service] Restart a service (default: agent)
@@ -802,13 +803,14 @@ async function cmdServer(): Promise<void> {
   // ── host-local lifecycle (run on the server, not over HTTP) ──────────────
   // setup | start | stop | restart | update | status operate on the working
   // directory (checkout + overlay) via git + docker compose. See cli-server.ts.
-  if (sub === "setup" || sub === "start" || sub === "stop" || sub === "restart" || sub === "update" || sub === "status") {
+  if (sub === "setup" || sub === "build" || sub === "start" || sub === "stop" || sub === "restart" || sub === "update" || sub === "status") {
     const home = typeof flags.home === "string" ? flags.home : undefined;
     const yes = flags.yes === true;
     const service = positionals[2];
     const srv = await import("./cli-server.js");
     switch (sub) {
       case "setup":   return srv.serverSetup({ home, yes });
+      case "build":   return srv.serverBuild({ home });
       case "start":   return srv.serverStart(service, { home });
       case "stop":    return srv.serverStop(service, { home });
       case "restart": return srv.serverRestart(service, { home });
@@ -829,7 +831,7 @@ async function cmdServer(): Promise<void> {
   die(
     "Usage:\n" +
       "  lastlight server list|logs [service|container] [--tail n] [--since dur] [--follow]\n" +
-      "  lastlight server setup|start|stop|restart|update|status [service] [--home dir]\n" +
+      "  lastlight server setup|build|start|stop|restart|update|status [service] [--home dir]\n" +
       "    update flags: --no-core --no-overlay --no-build --yes",
   );
 }

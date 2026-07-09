@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { resolveServerHome, saveServerHome } from "./cli-config.js";
+import { resolveServerHome, saveServerHome, serverHomeSource } from "./cli-config.js";
 import { detectGh, scaffoldOverlayFiles, bootstrapOverlayRepo } from "../config/overlay-bootstrap.js";
 import { enumerateOverlayAssets, type OverlayAsset } from "../config/overlay-assets.js";
 
@@ -272,6 +272,15 @@ function requireHome(opts: ServerOpts): string {
 export async function serverSetup(opts: ServerOpts): Promise<void> {
   p.intro(chalk.bold("lastlight server setup"));
   let home = resolveServerHome(opts.home);
+  // A saved serverHome silently wins over the directory you're standing in —
+  // the common "it set up somewhere else" surprise. Say so loudly before the
+  // prompt (which defaults to it) so it's obvious this is NOT your cwd.
+  if (serverHomeSource(opts.home) === "saved") {
+    p.log.warn(
+      `Defaulting to your saved working directory ${chalk.bold(home)} ` +
+        `(not the current folder). Edit the prompt below or pass ${chalk.cyan("--home <dir>")} to change it.`,
+    );
+  }
   if (!opts.yes) {
     const answer = await p.text({
       message: "Working directory for the server (checkout + overlay)",
@@ -323,12 +332,17 @@ export async function serverSetup(opts: ServerOpts): Promise<void> {
       }
     } else if (choice === "create") {
       const { created } = scaffoldOverlayFiles(instance);
+      // Print the ABSOLUTE instance path — the message used to read "in
+      // instance/" which looks cwd-relative, but it's <home>/instance and
+      // `home` may be a saved serverHome, not the directory you're standing in.
       p.log.success(
-        `Scaffolded ${created.length} file${created.length === 1 ? "" : "s"} in instance/ ` +
-          chalk.dim(`(${created.join(", ") || "all present"})`),
+        created.length > 0
+          ? `Scaffolded ${created.length} file${created.length === 1 ? "" : "s"} in ${chalk.bold(instance)} ` +
+              chalk.dim(`(${created.join(", ")})`)
+          : `Overlay files already present in ${chalk.bold(instance)}`,
       );
       p.log.warn(
-        "Fill in instance/secrets/.env and drop your GitHub App *.pem into instance/secrets/ before starting.",
+        `Fill in ${chalk.bold(path.join(instance, "secrets", ".env"))} and drop your GitHub App *.pem into ${chalk.bold(path.join(instance, "secrets"))} before starting.`,
       );
       await bootstrapOverlayRepo(instance, { gh: await detectGh() });
     } else {
@@ -355,8 +369,25 @@ export async function serverSetup(opts: ServerOpts): Promise<void> {
 /** `lastlight server start [service]`. */
 export async function serverStart(service: string | undefined, opts: ServerOpts): Promise<void> {
   const home = requireHome(opts);
+  // The agent image is built locally (never published), and several services
+  // reference the `lastlight-agent` tag. Starting before it exists yields an
+  // opaque "pull access denied" from docker — pre-check and point at the build
+  // step instead. Only gate the whole-stack start; a single-service start may
+  // legitimately target something else.
+  if (!service && !(await agentImageExists())) {
+    p.log.error(
+      `The ${chalk.bold("lastlight-agent")} image isn't built yet.\n` +
+        `  Run ${chalk.cyan("lastlight server build")} first (or ${chalk.cyan("lastlight server update")} to build + start).`,
+    );
+    process.exit(1);
+  }
   await composeRun(home, service ? `Start ${service}` : "Start stack", startArgv(service));
   p.log.success("Started.");
+}
+
+/** Whether the locally-built `lastlight-agent` image exists. */
+async function agentImageExists(): Promise<boolean> {
+  return (await captureSoft("docker", ["image", "inspect", "lastlight-agent"])) !== null;
 }
 
 /** `lastlight server stop [service]`. */
@@ -372,6 +403,36 @@ export async function serverRestart(service: string | undefined, opts: ServerOpt
   const target = service ?? "agent";
   await composeRun(home, `Restart ${target}`, restartArgv(service));
   p.log.success(`Restarted ${target}.`);
+}
+
+/**
+ * Build the agent + sandbox images (stamping the core SHA) plus the browser-QA
+ * sandbox (non-fatal — a failure just means browser-QA phases skip). Shared by
+ * `server build` and `server update`.
+ */
+async function buildImages(home: string): Promise<void> {
+  const sha = (await captureSoft("git", ["rev-parse", "HEAD"], home)) ?? "";
+  await composeRun(home, "Build images", buildArgv(sha));
+  // Browser-QA sandbox (FROM lastlight-sandbox:latest) — build after the base
+  // image, and non-fatally: a failure just means browser-QA phases skip
+  // (graceful degradation) rather than blocking the whole deploy.
+  try {
+    await composeRun(home, "Build browser-QA sandbox", buildQaArgv());
+  } catch (err) {
+    p.log.warn(`sandbox-qa build failed — browser QA will skip until rebuilt: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * `lastlight server build` — build the docker images without starting anything.
+ * The explicit first-run step so `server start` has images to run; `server
+ * update` folds this in (pull + build + up). Does not pull git or bring the
+ * stack up.
+ */
+export async function serverBuild(opts: ServerOpts): Promise<void> {
+  const home = requireHome(opts);
+  await buildImages(home);
+  p.log.success(`Built. Start with: ${chalk.cyan("lastlight server start")}`);
 }
 
 /** `lastlight server update` — the deploy.sh-equivalent flow. */
@@ -396,16 +457,7 @@ export async function serverUpdate(opts: UpdateOpts): Promise<void> {
   ensureOverrideSymlink(home);
 
   if (doBuild) {
-    const sha = (await captureSoft("git", ["rev-parse", "HEAD"], home)) ?? "";
-    await composeRun(home, "Build images", buildArgv(sha));
-    // Browser-QA sandbox (FROM lastlight-sandbox:latest) — build after the base
-    // image, and non-fatally: a failure just means browser-QA phases skip
-    // (graceful degradation) rather than blocking the whole deploy.
-    try {
-      await composeRun(home, "Build browser-QA sandbox", buildQaArgv());
-    } catch (err) {
-      p.log.warn(`sandbox-qa build failed — browser QA will skip until rebuilt: ${(err as Error).message}`);
-    }
+    await buildImages(home);
   }
 
   await composeRun(home, "Recreate services", upArgv());
