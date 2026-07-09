@@ -26,8 +26,11 @@ The setup wizard walks you through:
 1. **GitHub App** — enter your App ID, Installation ID, and PEM key path
 2. **Domain & TLS** — optional Caddy config for automatic HTTPS
 3. **Managed repositories** — the `owner/repo` list the bot operates on
-4. **Provider API key** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `OPENROUTER_API_KEY`,
-   whichever your `LASTLIGHT_MODEL` points at
+4. **Model provider + API key** — pick from any of pi-ai's 15+ supported
+   providers (Anthropic, OpenAI, Google Gemini, Mistral, Groq, Cerebras, xAI,
+   Hugging Face, Moonshot, NVIDIA, Fireworks, Together, DeepSeek, Z.AI,
+   Kimi for Coding, MiniMax, OpenRouter), then enter the model id and the
+   matching API key. See `src/providers.ts` for the full registry.
 5. **Webhook secret** — auto-generated if you don't have one
 6. **Slack** — optional bot token and app token for Slack integration
 7. **Admin dashboard** — optional password protection
@@ -54,8 +57,11 @@ For a Docker-free production install (systemd unit, gondolin sandbox), see [Nati
 - Node.js 20+
 - Docker Desktop (or compatible) — only needed for `LASTLIGHT_SANDBOX=docker`; gondolin runs without it on macOS/Linux
 - A GitHub App (see [Create a GitHub App](#1-create-a-github-app) below)
-- An API key for whichever provider your chosen `LASTLIGHT_MODEL` uses
-  (`OPENAI_API_KEY` for openai/…, `ANTHROPIC_API_KEY` for anthropic/…, `OPENROUTER_API_KEY` for openrouter/…)
+- An API key for whichever provider your chosen `LASTLIGHT_MODEL` uses.
+  The wizard surfaces pi-ai's 15+ providers — see `src/providers.ts` for the
+  full registry (e.g. `ANTHROPIC_API_KEY` for anthropic/…, `OPENAI_API_KEY`
+  for openai/…, `GROQ_API_KEY` for groq/…, `GEMINI_API_KEY` for google/…,
+  `OPENROUTER_API_KEY` for the openrouter/… aggregator).
 
 ### Setup
 
@@ -82,11 +88,15 @@ GITHUB_APP_INSTALLATION_ID=789012
 # Webhook secret (required for webhook mode)
 WEBHOOK_SECRET=your-secret-here
 
-# Model + provider — pick one matching your key
+# Model + provider — the wizard surfaces pi-ai's 15+ providers. The
+# registry lives in src/providers.ts; pick any `provider/model` it lists.
 LASTLIGHT_MODEL=anthropic/claude-sonnet-4-6
 ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 # OPENROUTER_API_KEY=sk-or-...
+# GROQ_API_KEY=gsk_...      GEMINI_API_KEY=AIza...   HF_TOKEN=hf_...
+# XAI_API_KEY=...
+# ZAI_API_KEY=...        MISTRAL_API_KEY=...    FIREWORKS_API_KEY=...
 
 # Sandbox backend (default: gondolin; alternatives: docker, none)
 # LASTLIGHT_SANDBOX=gondolin
@@ -151,7 +161,7 @@ The default for a single-issue/PR shorthand is the **cheap** action (triage or r
 
 ### Authentication
 
-pi-ai picks credentials from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `OPENROUTER_API_KEY` on the harness env. The harness forwards them into each sandbox container (or VM) so workflow runs can reach the API.
+pi-ai picks credentials from the provider env vars the harness forwards (the full listed set lives in `src/providers.ts` — Anthropic / OpenAI / OpenRouter / Google / Mistral / Groq / Cerebras / xAI / HuggingFace / Moonshot / NVIDIA / Fireworks / Together / DeepSeek / Z.AI / Kimi / MiniMax). The harness forwards them into each sandbox container (or VM) so workflow runs can reach the API.
 
 ---
 
@@ -326,9 +336,24 @@ Legacy `OPENCODE_*` names are still read as fallbacks for the corresponding `LAS
 | `GITHUB_APP_PRIVATE_KEY_PATH` | Yes | Path to `.pem` file |
 | `GITHUB_APP_INSTALLATION_ID` | Yes | Installation ID |
 | `WEBHOOK_SECRET` | Yes | GitHub webhook signature secret |
-| `OPENAI_API_KEY` | One of | API key when using `openai/…` models |
-| `ANTHROPIC_API_KEY` | One of | API key when using `anthropic/…` models |
-| `OPENROUTER_API_KEY` | One of | API key when using `openrouter/…` models |
+| `OPENAI_API_KEY` | One of | API key for an `openai/…` model |
+| `ANTHROPIC_API_KEY` | One of | API key for an `anthropic/…` model |
+| `OPENROUTER_API_KEY` | One of | API key for the `openrouter/…` aggregator |
+| `GEMINI_API_KEY` | One of | API key for a `google/…` model |
+| `MISTRAL_API_KEY` | One of | API key for `mistral/…` |
+| `GROQ_API_KEY` | One of | API key for `groq/…` |
+| `CEREBRAS_API_KEY` | One of | API key for `cerebras/…` |
+| `XAI_API_KEY` | One of | API key for `xai/…` (Grok) |
+| `HF_TOKEN` | One of | API key for `huggingface/…` |
+| `MOONSHOT_API_KEY` | One of | API key for `moonshotai/…` (Kimi) |
+| `NVIDIA_API_KEY` | One of | API key for `nvidia/…` |
+| `FIREWORKS_API_KEY` | One of | API key for `fireworks/…` |
+| `TOGETHER_API_KEY` | One of | API key for `together/…` |
+| `DEEPSEEK_API_KEY` | One of | API key for `deepseek/…` |
+| `ZAI_API_KEY` | One of | API key for `zai/…` (GLM) |
+| `KIMI_API_KEY` | One of | API key for `kimi-coding/…` |
+| `MINIMAX_API_KEY` | One of | API key for `minimax/…` |
+| _… or any other `provider/model` whose key is forwarded by `src/providers.ts`_ | | The wizard surfaces the registered set; see `src/providers.ts` for the full list. |
 | `LASTLIGHT_OVERLAY_DIR` | No | Trusted deployment overlay directory (the docker-compose stack mounts `instance/` here as `/app/instance`). Startup loads `config/default.yaml`, optional `$LASTLIGHT_OVERLAY_DIR/config.yaml`, then env overrides; overlay assets under `workflows/`, `workflows/prompts/`, `skills/`, and `agent-context/` replace built-ins. Secrets live in `$LASTLIGHT_OVERLAY_DIR/secrets/`. Restart required after changes. See [Deployment overlay](#deployment-overlay). |
 | `LASTLIGHT_MODEL` | No | Default model (default: `anthropic/claude-sonnet-4-6`). Legacy: `OPENCODE_MODEL`. |
 | `LASTLIGHT_MODELS` | No | Per-task model overrides as JSON, e.g. `{"chat":"openai/gpt-5.1-mini","architect":"openai/gpt-5.5"}`. Legacy: `OPENCODE_MODELS`. |

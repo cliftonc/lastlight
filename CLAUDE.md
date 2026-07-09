@@ -22,8 +22,13 @@ phase-by-phase.
 OpenCode is provider-agnostic. The harness defaults to
 `openai/gpt-5.5` and accepts any `provider/model` string OpenCode
 supports (`anthropic/…`, `openai/…`, `openrouter/<vendor>/<model>`, etc.).
-API credentials are read from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-and/or `OPENROUTER_API_KEY` on the harness env; set whichever provider(s)
+API credentials are read from the provider env vars in the registry at
+`src/providers.ts` — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`,
+`GROQ_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `HF_TOKEN`,
+`MOONSHOT_API_KEY`, `NVIDIA_API_KEY`, `FIREWORKS_API_KEY`,
+`TOGETHER_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
+`KIMI_API_KEY`, `MINIMAX_API_KEY`. Set whichever provider(s)
 match your `OPENCODE_MODEL` / `OPENCODE_MODELS`. No `claude` CLI, no
 Anthropic SDK in the runtime path.
 
@@ -488,9 +493,11 @@ Required:
 
 - `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 - `WEBHOOK_SECRET` — must match the GitHub App webhook secret
-- One of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`
-  matching your `OPENCODE_MODEL` (set multiple if `OPENCODE_MODELS` routes
-  phases to different providers)
+- One of the provider API-key env vars from `src/providers.ts`
+  (Anthropic / OpenAI / OpenRouter / Google / Mistral / Groq / Cerebras /
+  xAI / Hugging Face / Moonshot / NVIDIA / Fireworks / Together / DeepSeek /
+  Z.AI / Kimi / MiniMax) matching your `OPENCODE_MODEL` (set multiple if
+  `OPENCODE_MODELS` routes phases to different providers)
 
 Models:
 

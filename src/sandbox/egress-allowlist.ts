@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { PROVIDER_HOSTS as REGISTRY_PROVIDER_HOSTS } from "../providers.js";
 
 /**
  * Single source of truth for sandbox HTTP egress allowlists.
@@ -52,14 +53,13 @@ export const GITHUB_HOSTS: readonly string[] = [
  * so the call originates from the host and these hosts aren't strictly
  * required inside the VM — they're kept here so a single allowlist can
  * cover both paths without surprises.
+ *
+ * The list is derived from the provider registry (`src/providers.ts`) —
+ * every wizard-able provider has a `host` entry there, so adding a new
+ * provider automatically seeds this allowlist. Each entry matches the
+ * apex AND all subdomains (see `normalizeAllowlistHost`).
  */
-export const PROVIDER_HOSTS: readonly string[] = [
-  "anthropic.com",
-  "openai.com",
-  "openrouter.ai",
-  // Fireworks — api.fireworks.ai is the inference endpoint.
-  "fireworks.ai",
-];
+export const PROVIDER_HOSTS: readonly string[] = REGISTRY_PROVIDER_HOSTS;
 
 /**
  * Public package registries the executor may hit during `npm install`,
