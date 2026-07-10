@@ -18,6 +18,12 @@ body {
   @apply font-sans text-sm text-base-content bg-base-100;
 }
 
+/* Nearform logo — the "N" letterform is `currentColor`; drive it to the exact
+   brand navy on the light theme and white on the dark theme so it reads on
+   both. The green bar in the mark is fixed and needs no override. */
+[data-theme="neaform"] .nf-logo { color: #000e38; }
+[data-theme="lastlight"] .nf-logo { color: #ffffff; }
+
 /* Light-theme muted-text lift.
    The UI was designed dark-first with heavily translucent secondary text
    (text-base-content/40–60). On the near-black dark bg those read fine, but on

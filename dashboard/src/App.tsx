@@ -3,6 +3,7 @@ import { useIndex } from "./lib/api";
 import { useNavigate, useRoute } from "./lib/router";
 import { useTheme } from "./hooks/useTheme";
 import { Home } from "./components/Home";
+import { NearformLogo } from "./components/NearformLogo";
 import { Overview } from "./components/Overview";
 import { RunView } from "./components/RunView";
 
@@ -23,7 +24,7 @@ export default function App() {
       <div className="mx-auto max-w-[1600px] px-8 pb-20 pt-10">
         <nav className="mb-7 flex flex-wrap items-center gap-x-3 gap-y-2">
           <button onClick={() => navigate()} className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-base-content">
-            <img src="/logo.png" alt="Last Light" width={28} height={28} className="h-7 w-7 object-contain" />
+            <NearformLogo size={28} className="nf-logo h-7 w-7" />
             Last Light <span className="text-accent">·</span> <span className="text-base-content/70">Evals</span>
           </button>
           <div className="ml-auto flex flex-wrap items-center gap-2">
