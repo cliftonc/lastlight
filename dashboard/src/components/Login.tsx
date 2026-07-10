@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import { api, auth } from "../api";
 import { useTheme } from "../hooks/useTheme";
+import { NearformLogo } from "./NearformLogo";
 
 interface Props {
   onAuthed: () => void;
@@ -73,13 +74,7 @@ export function Login({ onAuthed, slackOAuth, githubOAuth, passwordLogin = true,
       <div className="card bg-base-200 border border-base-300 w-80 shadow-sm">
         <div className="card-body gap-4">
           <div className="flex items-center gap-2.5">
-            <img
-              src="/admin/logo.png"
-              alt="Last Light"
-              width="32"
-              height="32"
-              style={{ width: 32, height: 32, objectFit: "contain" }}
-            />
+            <NearformLogo size={32} className="nf-logo" />
             <div className="flex-1">
               <div className="text-lg font-semibold tracking-tight">Last Light</div>
               <div className="text-xs text-base-content/50">Sign in to continue</div>

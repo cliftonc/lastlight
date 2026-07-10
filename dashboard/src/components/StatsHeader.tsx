@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Clock, LogOut, Moon, Radio, Sun } from "lucide-react";
 import type { StreamStatus } from "../hooks/useSessionStream";
 import { useTheme } from "../hooks/useTheme";
+import { NearformLogo } from "./NearformLogo";
 
 interface Props {
   timeRange: string;
@@ -46,13 +47,7 @@ export function StatsHeader({
   return (
     <header className="bg-base-200 border-b border-base-300 flex items-center gap-3 px-4 h-12 shrink-0">
       <div className="flex items-center gap-2.5 shrink-0">
-        <img
-          src="/admin/logo.png"
-          alt="Last Light"
-          width="28"
-          height="28"
-          style={{ width: 28, height: 28, objectFit: "contain" }}
-        />
+        <NearformLogo size={28} className="nf-logo" />
         <span className="text-base font-bold tracking-tight">Last Light</span>
         <span
           className={clsx("w-2 h-2 rounded-full", statusInfo.color)}
