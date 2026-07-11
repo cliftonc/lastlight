@@ -12,6 +12,7 @@ import type { PrePopulateSpec, SandboxFactory } from "../sandbox/sandbox.js";
 import { getDockerSandboxOtelEnv, getOtelEnvForSandbox, safeSpanAttributes, withSpan } from "../telemetry/index.js";
 import { DEFAULT_MODEL } from "./executors/shared.js";
 import { PROVIDER_ENV_KEYS } from "../providers.js";
+import { oauthEnvVarForProvider, oauthProviderIdForModel, resolveOAuthApiKey } from "./oauth.js";
 import {
   runSandboxedAgent,
   runSandboxedCommand,
@@ -128,6 +129,42 @@ async function prepareRun(
   for (const envKey of PROVIDER_ENV_KEYS) {
     const v = process.env[envKey];
     if (v) ghEnv[envKey] = v;
+  }
+
+  // OAuth-backed providers (subscription logins). agentic-pi resolves creds
+  // from env only — it has no apiKey/auth option — so we hand the sandbox the
+  // token via the env var pi-ai reads for that provider. Refreshed per run
+  // (getOAuthApiKey renews an expired token). Two providers have an env route
+  // (ANTHROPIC_OAUTH_TOKEN, COPILOT_GITHUB_TOKEN); Codex (chatgpt.com backend)
+  // has none, so a Codex model can't authenticate in the sandbox — surface
+  // that as an actionable warning rather than an opaque 401 mid-run.
+  const modelSpec = config.model || DEFAULT_MODEL;
+  const oauthId = oauthProviderIdForModel(modelSpec);
+  if (oauthId) {
+    const oauthEnvVar = oauthEnvVarForProvider(oauthId);
+    if (!oauthEnvVar) {
+      console.warn(
+        `[executor] Model '${modelSpec}' uses OAuth provider '${oauthId}', which has no ` +
+          `sandbox env-var route — the sandboxed run cannot authenticate. Use an API-key ` +
+          `provider for sandbox workflows (chat can use '${oauthId}').`,
+      );
+    } else if (!ghEnv[oauthEnvVar] && !process.env[oauthEnvVar]) {
+      // Only mint from stored creds when an explicit token isn't already set.
+      try {
+        const res = await resolveOAuthApiKey(oauthId, undefined, stateDir);
+        if (res) {
+          ghEnv[oauthEnvVar] = res.apiKey;
+        } else {
+          console.warn(
+            `[executor] Model '${modelSpec}' needs an OAuth login for '${oauthId}' but none is ` +
+              `stored. Run: lastlight oauth login ${oauthId}`,
+          );
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[executor] OAuth token refresh failed for '${oauthId}': ${msg}`);
+      }
+    }
   }
 
   // Web-search provider keys. Forwarded only when the workflow opted into
