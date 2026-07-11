@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`agentic-pi` is an opinionated wrapper around [earendil-works/pi](https://github.com/earendil-works/pi) that turns Pi into a one-shot, JSONL-emitting coding-agent worker for workflow orchestrators (target consumer: [lastlight](https://github.com/cliftonc/lastlight); designed to swap in for opencode). It is **not** a fork of Pi — it composes Pi's SDK (`@earendil-works/pi-coding-agent`) and adds extensions on top.
+`agentic-pi` is an opinionated wrapper around [earendil-works/pi](https://github.com/earendil-works/pi) that turns Pi into a one-shot, JSONL-emitting coding-agent worker for workflow orchestrators (target consumer: [lastlight](https://github.com/nearform/lastlight); designed to swap in for opencode). It is **not** a fork of Pi — it composes Pi's SDK (`@earendil-works/pi-coding-agent`) and adds extensions on top.
 
 Two entry points, same underlying behaviour:
 - **CLI** (`agentic-pi run`): reads stdin, emits JSONL on stdout, exits on `agent_end`.

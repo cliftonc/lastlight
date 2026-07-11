@@ -11,7 +11,7 @@ condensed orientation you need to be useful immediately.
 A pre-configured, opinionated wrapper around
 [earendil-works/pi](https://github.com/earendil-works/pi) that turns Pi into
 a one-shot, JSONL-emitting coding-agent worker for workflow orchestrators
-(target consumer: [lastlight](https://github.com/cliftonc/lastlight)).
+(target consumer: [lastlight](https://github.com/nearform/lastlight)).
 
 It is **not** a fork of Pi. It does not modify Pi. It composes Pi's SDK
 (`@earendil-works/pi-coding-agent`) with three extras:

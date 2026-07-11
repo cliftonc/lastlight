@@ -27,7 +27,7 @@ This plan is the standalone spec. Phase A is already on `main`.
 | Toolchain language tier | Conservative LTS: Node 22 LTS, Python 3.12, Rust stable |
 | Extra tools | `git`, `github-cli`, `openssh`, `openssh-client`, `bash`, `curl`, `wget`, `jq`, `ripgrep`, `fd`, `file`, `ca-certificates`, `build-base`, `musl-dev` |
 | Architectures | Both `aarch64` and `x86_64` |
-| Distribution | GitHub Releases on `cliftonc/agentic-pi`, separate `image-v*` tag stream |
+| Distribution | GitHub Releases on `nearform/agentic-pi`, separate `image-v*` tag stream |
 | Image ref | `agentic-pi-dev` (matches gondolin's image-naming convention) |
 | Default when `--sandbox gondolin` | Use `agentic-pi-dev` (not stock `alpine-base`) |
 | Fallback override | `--sandbox-image gondolin-builtin` for stock alpine, or `<path>` for a local build |
@@ -162,7 +162,7 @@ export const DEFAULT_IMAGE_MANIFEST = {
   version: "0.1.0",
   archives: {
     aarch64: {
-      url: "https://github.com/cliftonc/agentic-pi/releases/download/image-v0.1.0/agentic-pi-dev-aarch64.tar.gz",
+      url: "https://github.com/nearform/agentic-pi/releases/download/image-v0.1.0/agentic-pi-dev-aarch64.tar.gz",
       sha256: "…filled in after image-v0.1.0 ships…",
       uncompressedBytes: 0,
     },

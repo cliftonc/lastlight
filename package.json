@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cliftonc/agentic-pi.git"
+    "url": "git+https://github.com/nearform/agentic-pi.git"
   },
-  "homepage": "https://github.com/cliftonc/agentic-pi#readme",
+  "homepage": "https://github.com/nearform/agentic-pi#readme",
   "bugs": {
-    "url": "https://github.com/cliftonc/agentic-pi/issues"
+    "url": "https://github.com/nearform/agentic-pi/issues"
   },
   "keywords": [
     "agent",

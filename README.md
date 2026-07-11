@@ -2,7 +2,7 @@
 
 A pre-configured, opinionated wrapper around [earendil-works/pi](https://github.com/earendil-works/pi)
 that turns it into a **one-shot coding-agent worker** for workflow systems like
-[lastlight](https://github.com/cliftonc/lastlight).
+[lastlight](https://github.com/nearform/lastlight).
 
 If you already have an orchestrator that wants to spawn an agent for one
 phase (architect, build, review, triage, …), pipe a prompt in, and parse a
@@ -781,7 +781,7 @@ ones go through the workflow. To enable OIDC for this repo's publishes:
 1. Visit the package's "Trusted Publishers" page on
    <https://www.npmjs.com/package/agentic-pi/settings>.
 2. Add a GitHub Actions trusted publisher with:
-   - Organization: `cliftonc`
+   - Organization: `nearform`
    - Repository: `agentic-pi`
    - Workflow filename: `publish.yml`
    - Environment: leave empty (the workflow doesn't use one)
