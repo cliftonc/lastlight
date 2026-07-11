@@ -14,6 +14,19 @@ export interface RunConfig {
   /** GitHub tool profile. Phase 2 will use this. */
   profile?: string;
   /**
+   * Path to the credential store (`auth.json`) Pi's `AuthStorage` reads for
+   * model authentication — API keys AND OAuth tokens (Anthropic Pro/Max,
+   * ChatGPT/Codex, GitHub Copilot), which are refreshed and re-persisted here.
+   * Set via `--auth-file <path>`. Default: `<agent-dir>/auth.json`
+   * (`~/.pi/agent/auth.json`, or `$PI_CODING_AGENT_DIR/auth.json`).
+   *
+   * The model call always runs in THIS process (the sandbox executes only
+   * tools), so pointing this at a host store is all a subscription-login
+   * provider needs — no token ever has to enter the sandbox VM. A caller
+   * embedding agentic-pi in a container should mount its store and point here.
+   */
+  authFile?: string;
+  /**
    * Override the GitHub REST API base URL for the built-in `github_*` tools
    * (Octokit's `baseUrl`). Test/eval escape hatch — point at a fake GitHub
    * server. Falls back to `GITHUB_API_URL`. Production leaves it unset.
@@ -159,6 +172,11 @@ Flags:
   --model <provider/id>      e.g. anthropic/claude-opus-4-5, openai/gpt-4o
   --thinking <level>         off | minimal | low | medium | high | xhigh
   --profile <name>           GitHub tool profile (read|issues-write|review-write|repo-write)
+  --auth-file <path>         Credential store (auth.json) for model auth — API keys and
+                              OAuth tokens (Anthropic Pro/Max, ChatGPT/Codex, Copilot),
+                              refreshed + re-persisted here. Default: <agent-dir>/auth.json
+                              ($PI_CODING_AGENT_DIR or ~/.pi/agent). The model call runs in
+                              this process, so a host store suffices — no token enters the VM.
   --cwd <path>               Working directory (default: $PWD)
   --no-session               Do not persist session jsonl
   --session-dir <path>       Where to persist sessions
@@ -271,6 +289,12 @@ export function parseArgs(argv: string[]): RunConfig {
       case "--profile":
         config.profile = next();
         break;
+      case "--auth-file": {
+        const v = next().trim();
+        if (!v) throw new Error("--auth-file requires a non-empty path");
+        config.authFile = v;
+        break;
+      }
       case "--cwd":
         config.cwd = next();
         break;

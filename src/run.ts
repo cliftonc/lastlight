@@ -42,6 +42,18 @@ export interface RunOptions {
   /** GitHub profile: "read" | "issues-write" | "review-write" | "repo-write". */
   profile?: string;
   /**
+   * Path to the credential store (`auth.json`) Pi's `AuthStorage` reads for
+   * model authentication — API keys AND OAuth tokens (Anthropic Pro/Max,
+   * ChatGPT/Codex, GitHub Copilot). Expired OAuth tokens are refreshed and
+   * re-persisted here. Default: `<agent-dir>/auth.json` (`~/.pi/agent`, or
+   * `$PI_CODING_AGENT_DIR`).
+   *
+   * The model call runs in THIS process — the sandbox executes only tools — so
+   * pointing this at a host store is all a subscription-login provider (Codex,
+   * Claude Pro, Copilot) needs; no token has to cross into the sandbox VM.
+   */
+  authFile?: string;
+  /**
    * Override the GitHub REST API base URL for the built-in `github_*` tools
    * (Octokit's `baseUrl`). Test/eval escape hatch: point the real GitHub tools
    * at a fake GitHub server so a workflow runs unchanged with its `github_*`
@@ -321,6 +333,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     model: options.model,
     thinking: options.thinking,
     profile: options.profile,
+    authFile: options.authFile,
     githubApiBaseUrl: options.githubApiBaseUrl,
     cwd: options.cwd ?? process.cwd(),
     noSession: options.noSession ?? false,
