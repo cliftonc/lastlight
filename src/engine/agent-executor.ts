@@ -131,22 +131,28 @@ async function prepareRun(
     if (v) ghEnv[envKey] = v;
   }
 
-  // OAuth-backed providers (subscription logins). agentic-pi resolves creds
-  // from env only — it has no apiKey/auth option — so we hand the sandbox the
-  // token via the env var pi-ai reads for that provider. Refreshed per run
-  // (getOAuthApiKey renews an expired token). Two providers have an env route
-  // (ANTHROPIC_OAUTH_TOKEN, COPILOT_GITHUB_TOKEN); Codex (chatgpt.com backend)
-  // has none, so a Codex model can't authenticate in the sandbox — surface
-  // that as an actionable warning rather than an opaque 401 mid-run.
+  // OAuth-backed providers (subscription logins: Codex / Claude Pro / Copilot).
+  //
+  // In-process backends (none/gondolin) run the model call host-side, so the
+  // orchestrator hands agentic-pi `authFile` = our credential store and Pi's
+  // AuthStorage resolves EVERY OAuth provider (Codex included) from it. Nothing
+  // to do here for those backends.
+  //
+  // Container backends (docker/smol) run the model call inside the guest, where
+  // that host path can't be read — so we inject the refreshed token via the env
+  // var pi reads in-guest (ANTHROPIC_OAUTH_TOKEN / COPILOT_GITHUB_TOKEN). Codex
+  // has no in-guest env route (chatgpt.com backend), so it can't authenticate
+  // there — warn rather than 401 mid-run, and point at a host-side backend.
+  const inProcessBackend = backend === "none" || backend === "gondolin";
   const modelSpec = config.model || DEFAULT_MODEL;
   const oauthId = oauthProviderIdForModel(modelSpec);
-  if (oauthId) {
+  if (oauthId && !inProcessBackend) {
     const oauthEnvVar = oauthEnvVarForProvider(oauthId);
     if (!oauthEnvVar) {
       console.warn(
         `[executor] Model '${modelSpec}' uses OAuth provider '${oauthId}', which has no ` +
-          `sandbox env-var route — the sandboxed run cannot authenticate. Use an API-key ` +
-          `provider for sandbox workflows (chat can use '${oauthId}').`,
+          `in-guest env route — the '${backend}' sandbox can't authenticate it. Use the ` +
+          `gondolin/none backend (host-side auth via the credential store) or an API-key provider.`,
       );
     } else if (!ghEnv[oauthEnvVar] && !process.env[oauthEnvVar]) {
       // Only mint from stored creds when an explicit token isn't already set.
