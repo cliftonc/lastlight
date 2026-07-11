@@ -35,7 +35,7 @@ const description = "Last Light is a self-hostable, MIT-licensed AI coding agent
 	<!-- What it does -->
 	<section class="features" id="features">
 		<h2>Working after dark</h2>
-		<p class="section-desc">Issue triage, PR review, on-request builds, weekly health reports, Slack chat — all driven by YAML workflows you can fork and edit.</p>
+		<p class="section-desc">Issue triage, PR review, security scans, on-request builds, weekly health reports, Slack chat — all driven by YAML workflows you can fork and edit.</p>
 		<div class="feature-grid">
 			<div class="feature-card">
 				<div class="feature-icon">
@@ -254,19 +254,35 @@ SLACK_DELIVERY_CHANNEL=C01XYZ        # channel for health reports</code></pre>
 		<div class="skills-grid">
 			<div class="skill">
 				<code>/pr-review</code>
-				<p>Review a PR with structured, severity-ranked feedback</p>
+				<p>Precision-first PR review — only Critical &amp; Important findings, posted as line-anchored inline comments</p>
 			</div>
 			<div class="skill">
 				<code>/issue-triage</code>
-				<p>Label, deduplicate, and prioritize issues</p>
+				<p>Label, deduplicate, request missing info, and manage stale issues</p>
 			</div>
 			<div class="skill">
 				<code>/repo-health</code>
-				<p>Generate a health report with metrics and action items</p>
+				<p>Weekly health report — open/stale issues, PR velocity, and action items</p>
 			</div>
 			<div class="skill">
-				<code>/architect</code>
-				<p>Read-only deep analysis with file:line evidence</p>
+				<code>/security-review</code>
+				<p>Scan with npm audit, semgrep &amp; gitleaks plus AI review, filed as one grouped issue</p>
+			</div>
+			<div class="skill">
+				<code>/verify</code>
+				<p>Test a behaviour claim in the sandbox — reports CONFIRMED / REFUTED / INCONCLUSIVE with evidence</p>
+			</div>
+			<div class="skill">
+				<code>/qa-test</code>
+				<p>Drive a CLI or running app through a flow, with step-level pass/fail evidence</p>
+			</div>
+			<div class="skill">
+				<code>/demo</code>
+				<p>Record a short demo video of a PR — headless-browser capture composited to an mp4</p>
+			</div>
+			<div class="skill">
+				<code>/answer</code>
+				<p>Research repo docs + the web and post a single sourced answer to a question</p>
 			</div>
 			<a href="https://github.com/users/cliftonc/projects/4" class="skill skill-cta" target="_blank" rel="noopener">
 				<strong>Want more?</strong>
