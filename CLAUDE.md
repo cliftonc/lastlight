@@ -466,16 +466,19 @@ lastlight setup                        # first-run wizard (asks: client | server
 lastlight server setup                 # scaffold/adopt the working dir (clone core; clone OR
                                         # create the instance/ overlay — fresh overlay offers a
                                         # private `gh repo create` via src/config/overlay-bootstrap.ts)
-lastlight server build                 # build the docker images (agent + sandbox-base + sandbox + sandbox-qa)
-                                        # without starting anything — the explicit first-run step
-                                        # so `server start` has a `lastlight-agent` image to run
+lastlight server build                 # build the docker images FROM SOURCE (agent + sandbox-base
+                                        # + sandbox + sandbox-qa) without starting anything — the
+                                        # local-build escape hatch (server update pulls prebuilt)
 lastlight server start|stop|restart [service]   # docker compose up -d / stop|down / restart
                                         # (start pre-checks the lastlight-agent image exists; if
-                                        # not it points at `server build`)
-lastlight server update                # the canonical deploy: pull core+overlay, build
-                                        # (agent + sandbox + sandbox-qa), up -d --remove-orphans,
-                                        # restart sidecars, health-check
-                                        # [--no-core --no-overlay --no-build --yes]
+                                        # not it points at `server update`)
+lastlight server update                # the canonical deploy: pull core+overlay, then PULL the
+                                        # prebuilt images from GHCR (ghcr.io/nearform/lastlight-*)
+                                        # tagged by deploy.version (else :latest) + re-tag to the
+                                        # local names, up -d --remove-orphans, restart sidecars,
+                                        # health-check. --local builds from source instead (the
+                                        # old behaviour). [--no-core --no-overlay --no-build
+                                        # --local --yes]
 lastlight server status                # compose ps + core/overlay version drift +
                                         # forked-asset overrides (shadows default / added)
 
@@ -762,14 +765,28 @@ sudo -u lastlight -i lastlight server update
    running `lastlight server update` converges the host to it. `server setup`
    applies the same pin before its first build. Unset (or the sentinels
    `main`/`latest`) = track `main`.
-3. Builds in dependency waves (both `sandbox` and `sandbox-qa` are `FROM` the
-   shared `lastlight-sandbox-base`, and `docker compose build` builds one
-   invocation's services in parallel, so the base must be built first):
-   `docker compose build agent sandbox-base --build-arg GIT_SHA=<HEAD>` (stamps
-   the image so `GET /admin/api/server/info` + the dashboard drift banner work),
-   then `docker compose build sandbox`, then a non-fatal
-   `docker compose build sandbox-qa` (browser-QA image; skips gracefully on
-   failure). The sandbox images install agentic-pi from the committed
+3. **Fetches the images.** By default it *pulls* the prebuilt images from GHCR
+   rather than building them on the host — a release publishes
+   `ghcr.io/nearform/lastlight-{agent,sandbox-base,sandbox,sandbox-qa}` via
+   `.github/workflows/docker-publish.yml` (on GitHub Release + `workflow_dispatch`,
+   amd64, public). `server update` pulls the tag `resolveImageTag` returns — the
+   overlay's `deploy.version` pin (e.g. `v0.11.0`) when set, else `:latest` — and
+   re-tags each to its **local** name (`lastlight-agent`,
+   `lastlight-sandbox:latest`, …), which is what `docker-compose.yml` and the
+   harness (fixed names in `src/sandbox/images.ts`) reference. sandbox-qa is
+   non-fatal; a missing required image errors with a pointer to `--local`. This
+   moves the slow build OFF the deploy host — a pull is seconds. The stock
+   sidecar images (coredns/nginx/otel-collector/caddy) are pulled from Docker
+   Hub by compose and aren't published by us; `egress-init` reuses the agent
+   image. **`--local`** reverts to building from source in dependency waves (both
+   `sandbox` and `sandbox-qa` are `FROM` the shared `lastlight-sandbox-base`, and
+   `docker compose build` builds one invocation's services in parallel, so the
+   base must be built first): `docker compose build agent sandbox-base
+   --build-arg GIT_SHA=<HEAD>`, then `docker compose build sandbox`, then a
+   non-fatal `docker compose build sandbox-qa`. The CI publish workflow builds in
+   the same order and passes `GIT_SHA=<release SHA>` so a pulled image's stamped
+   version (`GET /admin/api/server/info` + the dashboard drift banner) is
+   correct. The sandbox images install agentic-pi from the committed
    `sandbox/agentic-pi.pin` (not the whole lockfile), so an ordinary version bump
    doesn't rebuild them — and sandbox-qa's ~300 MB Chromium stays cached unless
    its own inputs change.
@@ -792,8 +809,12 @@ vX.Y.Z" label.
 
 So a normal deploy is: **commit + push to `main`, then run `lastlight server
 update` on the host.** Code changes (anything under `src/`, `workflows/`,
-`skills/`, `agent-context/`, `config/default.yaml`) need the full update (image
-rebuild). Deployment-only config (the `instance/` overlay) can instead be
+`skills/`, `agent-context/`, `config/default.yaml`) reach prod through a
+**published image**: cut a release (which runs `docker-publish.yml`) and bump
+the overlay's `deploy.version` to that tag, then `server update` pulls it. To
+deploy un-released `main` (or local edits) build on the host with `server update
+--local` (or `server build`). Deployment-only config (the `instance/` overlay)
+can instead be
 edited + committed to the `lastlight-instance` repo and applied with just
 `lastlight server restart agent` — no image rebuild. (Caveat: *removing* an
 `.env` var needs a recreate, `lastlight server start agent`, not a restart —
@@ -831,7 +852,12 @@ npm-release-policy note in local agent memory.) A release is a version bump + a
 `vX.Y.Z` tag + a GitHub release. **npm publish is automated** — creating the GitHub release
 fires the `publish.yml` workflow, which typechecks + tests + builds + publishes
 to npm using a repo token (no 2FA). Do NOT run `npm publish` or prompt for an
-OTP; just watch the release run and confirm the version went live.
+OTP; just watch the release run and confirm the version went live. The same
+release event also fires **`docker-publish.yml`**, which builds + pushes the four
+Docker images to `ghcr.io/nearform/lastlight-*` tagged `vX.Y.Z` (and moves
+`:latest` for non-prerelease releases). This is what lets a deploy host
+`server update` *pull* the new version instead of building it — so after cutting
+the release, bump the overlay's `deploy.version` to the tag to roll it out.
 
 Patch for fixes/doc tweaks to the CLI surface; minor for new user-facing
 commands/features. The dance (run on a clean `main`, up to date with origin):

@@ -277,9 +277,16 @@ The CLI is also the host control plane: `lastlight server
 setup\|start\|stop\|restart\|update\|status` shell out to `git` + `docker
 compose` in `LASTLIGHT_HOME` (resolved `--home` → env → `serverHome` in
 `~/.lastlight/config.json` → `~/lastlight`). `server update` reproduces the
-production `deploy.sh` flow (pull overlay → converge core → build → `up -d
---remove-orphans` → restart egress sidecars → health-check). These run on the
-server, unlike the rest of the CLI which targets a remote instance over HTTP.
+production `deploy.sh` flow (pull overlay → converge core → **pull prebuilt
+images** → `up -d --remove-orphans` → restart egress sidecars → health-check).
+By default it *pulls* the four images from GHCR
+(`ghcr.io/nearform/lastlight-{agent,sandbox-base,sandbox,sandbox-qa}`, published
+on GitHub Release by `.github/workflows/docker-publish.yml`) at the tag
+`resolveImageTag` returns — the overlay `deploy.version` pin, else `:latest` —
+and re-tags each to its local name so compose + the harness (fixed names in
+`src/sandbox/images.ts`) find them unchanged; `--local` builds from source
+instead (the old `docker compose build` waves). These run on the server, unlike
+the rest of the CLI which targets a remote instance over HTTP.
 
 **Core-version pin.** The overlay drives *which core version* an instance runs
 via `deploy.version` in its `config.yaml` (or the `LASTLIGHT_CORE_VERSION` env

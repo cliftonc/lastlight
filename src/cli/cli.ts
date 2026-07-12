@@ -44,7 +44,7 @@ const BOOLEAN_FLAGS = new Set([
   "json", "follow", "f", "no-browser", "password", "help", "h", "full",
   "version", "v",
   // `server` lifecycle flags
-  "no-core", "no-overlay", "no-build", "yes",
+  "no-core", "no-overlay", "no-build", "yes", "local",
   // `setup` mode selectors (skip the interactive client/server prompt)
   "client", "server",
   // `fork` — overwrite existing overlay assets
@@ -265,12 +265,13 @@ ${chalk.bold("Debug")} (read the running instance instead of SSH)
 
 ${chalk.bold("Server")} (host-local — run on the server; manages the docker stack)
   lastlight server setup             Scaffold/adopt the working dir; create or clone the overlay (+ gh repo)
-  lastlight server build             Build the docker images (run before the first start)
+  lastlight server build             Build the docker images from source (run before the first start)
   lastlight server start [service]   docker compose up -d
   lastlight server stop [service]    Stop one service, or the whole stack (down)
   lastlight server restart [service] Restart a service (default: agent)
-  lastlight server update            Pull core + overlay, build, recreate, restart sidecars
-                                     [--no-core] [--no-overlay] [--no-build] [--yes]
+  lastlight server update            Pull core + overlay, fetch prebuilt images, recreate, restart sidecars
+                                     [--no-core] [--no-overlay] [--no-build] [--local] [--yes]
+                                     ${chalk.dim("(pulls prebuilt images from GHCR by default; --local builds from source)")}
   lastlight server status            Compose state + core/overlay version drift
   ${chalk.dim("Working dir resolves from --home, then LASTLIGHT_HOME, then ~/.lastlight, then ~/lastlight.")}
 
@@ -817,7 +818,7 @@ async function cmdServer(): Promise<void> {
     const service = positionals[2];
     const srv = await import("./cli-server.js");
     switch (sub) {
-      case "setup":   return srv.serverSetup({ home, yes });
+      case "setup":   return srv.serverSetup({ home, yes, local: flags.local === true });
       case "build":   return srv.serverBuild({ home });
       case "start":   return srv.serverStart(service, { home });
       case "stop":    return srv.serverStop(service, { home });
@@ -827,6 +828,7 @@ async function cmdServer(): Promise<void> {
         core: !flags["no-core"],
         overlay: !flags["no-overlay"],
         build: !flags["no-build"],
+        local: flags.local === true,
       });
       case "status": {
         const res = await srv.serverStatus({ home });
@@ -840,7 +842,8 @@ async function cmdServer(): Promise<void> {
     "Usage:\n" +
       "  lastlight server list|logs [service|container] [--tail n] [--since dur] [--follow]\n" +
       "  lastlight server setup|build|start|stop|restart|update|status [service] [--home dir]\n" +
-      "    update flags: --no-core --no-overlay --no-build --yes",
+      "    update flags: --no-core --no-overlay --no-build --local --yes\n" +
+      "    (update pulls prebuilt images from GHCR by default; --local builds from source)",
   );
 }
 

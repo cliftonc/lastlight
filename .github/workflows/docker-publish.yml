@@ -1,0 +1,109 @@
+name: Publish Docker images
+
+# Build the four locally-built images (agent + sandbox-base + sandbox +
+# sandbox-qa) once in CI and push them to GHCR, so `lastlight server update`
+# PULLS them on the deploy host instead of building from source (minutes →
+# seconds). Same deliberate trigger as npm publish: cutting a GitHub Release.
+# `workflow_dispatch` allows a manual (re)build of a specific tag.
+#
+# The stock sidecar images (coredns / nginx / otel-collector / caddy) are pulled
+# from Docker Hub by docker-compose and are NOT built here. `egress-init` reuses
+# the agent image, so it's covered too.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag/ref to check out AND image tag to publish (e.g. v0.11.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: docker-publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io/nearform
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      # Only move `:latest` on a real, non-prerelease Release — never when a
+      # workflow_dispatch rebuilds an arbitrary (possibly older) tag.
+      PUSH_LATEST: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build metadata
+        id: meta
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # Only the agent Dockerfile takes GIT_SHA / BUILD_DATE (drift banner).
+      - name: Build agent
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg BUILD_DATE=${{ steps.meta.outputs.date }} \
+            -t "$REGISTRY/lastlight-agent:$TAG" \
+            -t "$REGISTRY/lastlight-agent:latest" \
+            -f Dockerfile .
+
+      # Build order matters: sandbox + sandbox-qa are `FROM
+      # lastlight-sandbox-base:latest`. `docker build` loads into the local image
+      # store, so tagging the base `lastlight-sandbox-base:latest` here lets the
+      # leaf FROMs resolve it locally in the steps below.
+      - name: Build sandbox-base
+        run: |
+          docker build \
+            -t "$REGISTRY/lastlight-sandbox-base:$TAG" \
+            -t "$REGISTRY/lastlight-sandbox-base:latest" \
+            -t lastlight-sandbox-base:latest \
+            -f sandbox-base.Dockerfile .
+
+      - name: Build sandbox
+        run: |
+          docker build \
+            -t "$REGISTRY/lastlight-sandbox:$TAG" \
+            -t "$REGISTRY/lastlight-sandbox:latest" \
+            -f sandbox.Dockerfile .
+
+      # Non-fatal: browser-QA is an optional tier; a failure just means QA phases
+      # skip until the image is present (mirrors the CLI's buildImages).
+      - name: Build sandbox-qa (non-fatal)
+        continue-on-error: true
+        run: |
+          docker build \
+            -t "$REGISTRY/lastlight-sandbox-qa:$TAG" \
+            -t "$REGISTRY/lastlight-sandbox-qa:latest" \
+            -f sandbox-qa.Dockerfile .
+
+      - name: Push images
+        run: |
+          for repo in lastlight-agent lastlight-sandbox-base lastlight-sandbox; do
+            docker push "$REGISTRY/$repo:$TAG"
+            if [ "$PUSH_LATEST" = "true" ]; then
+              docker push "$REGISTRY/$repo:latest"
+            fi
+          done
+
+      - name: Push sandbox-qa (non-fatal)
+        continue-on-error: true
+        run: |
+          docker push "$REGISTRY/lastlight-sandbox-qa:$TAG"
+          if [ "$PUSH_LATEST" = "true" ]; then
+            docker push "$REGISTRY/lastlight-sandbox-qa:latest"
+          fi

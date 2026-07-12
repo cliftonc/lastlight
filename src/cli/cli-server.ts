@@ -49,6 +49,34 @@ export const SIDECARS = [
 /** Loopback health endpoint the harness serves (admin/routes.ts `GET /health`). */
 const HEALTH_URL = "http://127.0.0.1:8644/health";
 
+/** GHCR namespace the release CI (`docker-publish.yml`) publishes the four
+ *  locally-built images to. Public packages, so `docker pull` needs no login. */
+export const IMAGE_REGISTRY = "ghcr.io/nearform";
+/**
+ * The images `server build` produces locally, each mapped to the GHCR repo the
+ * release CI publishes it to. `server update` pulls these by tag and re-tags each
+ * back to its LOCAL name, so `docker-compose.yml` and the harness — which spawn
+ * sandboxes by the fixed `lastlight-sandbox:latest` / `lastlight-agent` names
+ * (`src/sandbox/images.ts`) — find them unchanged, without any compose/runtime
+ * change. `sandbox-qa` is optional: a miss just means browser-QA phases skip.
+ */
+export const PUBLISHED_IMAGES: { repo: string; localTag: string; optional?: boolean }[] = [
+  { repo: "lastlight-agent", localTag: "lastlight-agent" },
+  { repo: "lastlight-sandbox-base", localTag: "lastlight-sandbox-base:latest" },
+  { repo: "lastlight-sandbox", localTag: "lastlight-sandbox:latest" },
+  { repo: "lastlight-sandbox-qa", localTag: "lastlight-sandbox-qa:latest", optional: true },
+];
+
+/**
+ * The image tag `server update` pulls: the overlay's core-version pin (e.g.
+ * `v0.11.0`) when set, else `latest` (the newest published release). Mirrors the
+ * core checkout the same pin drives, so a pulled image's baked `GIT_SHA` lines
+ * up with the checked-out core and `server status` drift stays consistent.
+ */
+export function resolveImageTag(instance: string): string {
+  return readCorePin(instance) ?? "latest";
+}
+
 // ── pure argv builders (unit-tested) ─────────────────────────────────────────
 
 /** `docker compose` args for `server start [service]`. */
@@ -294,8 +322,10 @@ export interface UpdateOpts extends ServerOpts {
   core?: boolean;
   /** `--no-overlay` → don't pull the instance overlay. */
   overlay?: boolean;
-  /** `--no-build` → skip the docker build (just up + restart). */
+  /** `--no-build` → skip touching images entirely (just up + restart). */
   build?: boolean;
+  /** `--local` → build images from source instead of pulling prebuilt (default). */
+  local?: boolean;
 }
 
 /** Resolve the working dir and fail clearly if it isn't a checkout yet. */
@@ -314,7 +344,7 @@ function requireHome(opts: ServerOpts): string {
 // ── commands ─────────────────────────────────────────────────────────────────
 
 /** `lastlight server setup` — scaffold (or adopt) the working directory. */
-export async function serverSetup(opts: ServerOpts): Promise<void> {
+export async function serverSetup(opts: ServerOpts & { local?: boolean }): Promise<void> {
   p.intro(chalk.bold("lastlight server setup"));
   let home = resolveServerHome(opts.home);
   // A saved serverHome silently wins over the directory you're standing in —
@@ -406,10 +436,10 @@ export async function serverSetup(opts: ServerOpts): Promise<void> {
   const pin = readCorePin(instance);
   if (pin) await pinCore(home, pin);
 
-  // 4. Offer an initial build + launch.
-  const build = opts.yes
-    ? true
-    : await p.confirm({ message: "Build images and start the stack now?", initialValue: true });
+  // 4. Offer an initial fetch + launch. Defaults to pulling prebuilt images
+  // (fast); `--local` builds from source.
+  const prompt = opts.local ? "Build images and start the stack now?" : "Pull images and start the stack now?";
+  const build = opts.yes ? true : await p.confirm({ message: prompt, initialValue: true });
   if (!p.isCancel(build) && build) {
     await serverUpdate({ ...opts, home, core: false, overlay: false, build: true });
   } else {
@@ -427,8 +457,9 @@ export async function serverStart(service: string | undefined, opts: ServerOpts)
   // legitimately target something else.
   if (!service && !(await agentImageExists())) {
     p.log.error(
-      `The ${chalk.bold("lastlight-agent")} image isn't built yet.\n` +
-        `  Run ${chalk.cyan("lastlight server build")} first (or ${chalk.cyan("lastlight server update")} to build + start).`,
+      `The ${chalk.bold("lastlight-agent")} image isn't present yet.\n` +
+        `  Run ${chalk.cyan("lastlight server update")} to pull prebuilt images + start` +
+        ` (or ${chalk.cyan("lastlight server build")} / ${chalk.cyan("server update --local")} to build from source).`,
     );
     process.exit(1);
   }
@@ -480,10 +511,39 @@ async function buildImages(home: string): Promise<void> {
 }
 
 /**
- * `lastlight server build` — build the docker images without starting anything.
- * The explicit first-run step so `server start` has images to run; `server
- * update` folds this in (pull + build + up). Does not pull git or bring the
- * stack up.
+ * Pull the prebuilt images for `tag` from GHCR and re-tag each to its LOCAL name
+ * (`lastlight-agent`, `lastlight-sandbox:latest`, …), so docker-compose + the
+ * harness find them by the names they already use. This is the default
+ * (registry) alternative to `buildImages` — a pull is seconds where a build is
+ * minutes. `sandbox-qa` is non-fatal, mirroring the build path; a missing
+ * required image throws with a pointer to `--local`.
+ */
+async function pullImages(home: string, tag: string): Promise<void> {
+  for (const img of PUBLISHED_IMAGES) {
+    const remote = `${IMAGE_REGISTRY}/${img.repo}:${tag}`;
+    try {
+      await runStep(`Pull ${img.repo}:${tag}`, "docker", ["pull", remote], home);
+      // Re-tag to the local name the compose file + harness reference. Quiet —
+      // `docker tag` is instant and prints nothing worth a header.
+      await exec("docker", ["tag", remote, img.localTag], { cwd: home });
+    } catch (err) {
+      if (img.optional) {
+        p.log.warn(`${img.repo} pull failed — browser QA will skip until pulled/built: ${(err as Error).message}`);
+        continue;
+      }
+      throw new Error(
+        `Failed to pull ${remote}: ${(err as Error).message}\n` +
+          `  If this version isn't published yet, build from source with: ${chalk.cyan("lastlight server update --local")}`,
+      );
+    }
+  }
+}
+
+/**
+ * `lastlight server build` — build the docker images FROM SOURCE without starting
+ * anything. The local-build escape hatch: `server update` pulls prebuilt images
+ * by default (use `server update --local` to build + up). Does not pull git or
+ * bring the stack up.
  */
 export async function serverBuild(opts: ServerOpts): Promise<void> {
   const home = requireHome(opts);
@@ -532,8 +592,14 @@ export async function serverUpdate(opts: UpdateOpts): Promise<void> {
 
   ensureOverrideSymlink(home);
 
+  // Images: pull prebuilt from GHCR by default (seconds); `--local` builds from
+  // source (minutes). `--no-build` skips both — just recreate + restart.
   if (doBuild) {
-    await buildImages(home);
+    if (opts.local) {
+      await buildImages(home);
+    } else {
+      await pullImages(home, resolveImageTag(instance));
+    }
   }
 
   await composeRun(home, "Recreate services", upArgv());

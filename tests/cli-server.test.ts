@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
 import {
   startArgv,
   stopArgv,
@@ -9,6 +12,9 @@ import {
   upArgv,
   restartSidecarsArgv,
   parseLsRemoteSha,
+  resolveImageTag,
+  IMAGE_REGISTRY,
+  PUBLISHED_IMAGES,
   SIDECARS,
 } from "#src/cli/cli-server.js";
 
@@ -54,6 +60,50 @@ describe("cli-server argv builders", () => {
     expect(restartSidecarsArgv()).toEqual(["restart", ...SIDECARS]);
     expect(SIDECARS).toContain("coredns-strict");
     expect(SIDECARS).toContain("otel-collector");
+  });
+});
+
+describe("resolveImageTag", () => {
+  const prevEnv = process.env.LASTLIGHT_CORE_VERSION;
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.LASTLIGHT_CORE_VERSION;
+    else process.env.LASTLIGHT_CORE_VERSION = prevEnv;
+  });
+
+  it("falls back to `latest` when the overlay declares no pin", () => {
+    delete process.env.LASTLIGHT_CORE_VERSION;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ll-noinstance-"));
+    // No config.yaml → unpinned → latest.
+    expect(resolveImageTag(dir)).toBe("latest");
+  });
+
+  it("uses the overlay's deploy.version pin as the image tag", () => {
+    delete process.env.LASTLIGHT_CORE_VERSION;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ll-pin-"));
+    fs.writeFileSync(path.join(dir, "config.yaml"), "deploy:\n  version: v0.11.0\n");
+    expect(resolveImageTag(dir)).toBe("v0.11.0");
+  });
+
+  it("LASTLIGHT_CORE_VERSION overrides the file", () => {
+    process.env.LASTLIGHT_CORE_VERSION = "v9.9.9";
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ll-envpin-"));
+    fs.writeFileSync(path.join(dir, "config.yaml"), "deploy:\n  version: v0.11.0\n");
+    expect(resolveImageTag(dir)).toBe("v9.9.9");
+  });
+});
+
+describe("PUBLISHED_IMAGES", () => {
+  it("re-tags each GHCR repo to the LOCAL name compose + the harness expect", () => {
+    const byRepo = Object.fromEntries(PUBLISHED_IMAGES.map((i) => [i.repo, i.localTag]));
+    // The harness spawns sandboxes by these fixed names (src/sandbox/images.ts);
+    // compose references `lastlight-agent`. A pull must land under exactly these.
+    expect(byRepo["lastlight-agent"]).toBe("lastlight-agent");
+    expect(byRepo["lastlight-sandbox"]).toBe("lastlight-sandbox:latest");
+    expect(byRepo["lastlight-sandbox-qa"]).toBe("lastlight-sandbox-qa:latest");
+    // Only sandbox-qa is optional (browser tier).
+    expect(PUBLISHED_IMAGES.find((i) => i.repo === "lastlight-sandbox-qa")?.optional).toBe(true);
+    expect(PUBLISHED_IMAGES.find((i) => i.repo === "lastlight-agent")?.optional).toBeUndefined();
+    expect(IMAGE_REGISTRY).toBe("ghcr.io/nearform");
   });
 });
 
