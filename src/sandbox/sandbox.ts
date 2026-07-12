@@ -172,22 +172,26 @@ export interface SandboxFactoryOpts {
 
 export type SandboxFactory = (backend: SandboxBackend, opts: SandboxFactoryOpts) => Sandbox;
 
-/** Inner-run git identity, shared by every adapter's agent path. */
-const GIT_IDENTITY_ENV: Record<string, string> = {
-  GIT_AUTHOR_NAME: "last-light[bot]",
-  GIT_AUTHOR_EMAIL: "last-light[bot]@users.noreply.github.com",
-  GIT_COMMITTER_NAME: "last-light[bot]",
-  GIT_COMMITTER_EMAIL: "last-light[bot]@users.noreply.github.com",
-  // /workspace is a host-UID bind mount into a different-UID guest; git refuses
-  // to operate without an explicit safe-directory. GIT_CONFIG_* avoids needing
-  // a writeable ~/.gitconfig.
-  GIT_CONFIG_COUNT: "1",
-  GIT_CONFIG_KEY_0: "safe.directory",
-  GIT_CONFIG_VALUE_0: "*",
-};
-
-/** The base (git-identity) sandbox env the orchestrator passes to `runAgent`. */
-export const AGENT_GIT_IDENTITY_ENV: Record<string, string> = GIT_IDENTITY_ENV;
+/**
+ * Inner-run git identity, shared by every adapter's agent path. The author is
+ * derived from the configured bot slug (`botName`, e.g. `last-light` /
+ * `nearform-lastlight`) so agent commits are attributed to the actual App.
+ */
+export function agentGitIdentityEnv(botName: string): Record<string, string> {
+  const login = `${botName}[bot]`;
+  return {
+    GIT_AUTHOR_NAME: login,
+    GIT_AUTHOR_EMAIL: `${login}@users.noreply.github.com`,
+    GIT_COMMITTER_NAME: login,
+    GIT_COMMITTER_EMAIL: `${login}@users.noreply.github.com`,
+    // /workspace is a host-UID bind mount into a different-UID guest; git refuses
+    // to operate without an explicit safe-directory. GIT_CONFIG_* avoids needing
+    // a writeable ~/.gitconfig.
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "safe.directory",
+    GIT_CONFIG_VALUE_0: "*",
+  };
+}
 
 /**
  * The single factory replacing the `if (backend === …)` ladder. Given a
