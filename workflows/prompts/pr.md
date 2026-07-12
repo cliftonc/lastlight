@@ -4,7 +4,7 @@ Use the MCP tool github_create_pull_request with the following:
 - owner: {{owner}}
 - repo: {{repo}}
 - head: {{branch}}
-- base: main
+- base: {{baseBranch}}
 - title: A concise title describing the change (reference #{{issueNumber}})
 - body: A markdown body that includes EXACTLY these sections in order:
 
