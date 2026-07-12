@@ -17,5 +17,5 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "mcp-github-app", "skills", "deploy"]
+  "exclude": ["node_modules", "dist", "skills", "deploy"]
 }

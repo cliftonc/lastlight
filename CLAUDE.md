@@ -257,13 +257,6 @@ plugins/                Claude Code plugin (distinct from the internal
                         into ~/.claude/skills. Shipped in the npm package
                         (files: .claude-plugin + plugins).
 
-mcp-github-app/         Standalone MCP server exposing GitHub tools to the
-                        agent. Uses the GitHub App installation token by
-                        default; falls back to a GITHUB_TOKEN env var only
-                        when App env vars are unset (low-trust sandbox
-                        fallback). Wired into opencode via mcp.github in
-                        deploy/opencode-config.tmpl.json (sandbox) and the
-                        chat-server's generated opencode.json.
 deploy/                 Docker entrypoints, Caddyfile, systemd helpers.
 dashboard/              React+Vite admin SPA, served from /admin at runtime.
 ```
@@ -323,10 +316,13 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
     under `opencode-home/projects/-app/`.
 - **Permission profiles** (`src/engine/github/profiles.ts`) — each workflow maps to
   a `GitAccessProfile`: `read`, `issues-write`, `review-write`, `repo-write`.
-  `runner.ts` picks one per workflow name and `opencode-executor.ts` mints a
+  `runner.ts` picks one per workflow name and the agent-executor mints a
   downscoped installation token for the sandbox. Only `repo-write` runs see
-  the App PEM; everything else uses a pre-minted scoped token (static-token
-  mode in mcp-github-app).
+  the App PEM; everything else uses a pre-minted scoped token, which
+  agentic-pi's built-in github tools (its `github` extension — the
+  `github_*` tools, gated per profile) read from the sandbox env. The
+  standalone `mcp-github-app` MCP server that used to expose these tools was
+  removed with the OpenCode→agentic-pi migration.
 - **Approval gates** — phases can declare `approval_gate: post_architect`.
   When hit, the run persists with `status: paused`, a row in
   `workflow_approvals`, and the user can resolve it via GitHub comment
