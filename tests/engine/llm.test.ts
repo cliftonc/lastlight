@@ -1,5 +1,6 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { callLlm, chat, defaultFastModel, resolveProvider } from "#src/engine/llm.js";
+import { PROVIDER_ENV_KEYS } from "#src/providers.js";
 
 describe("resolveProvider", () => {
   it("prefers explicit provider prefix", () => {
@@ -32,36 +33,35 @@ describe("resolveProvider", () => {
 
 describe("defaultFastModel", () => {
   const ORIGINAL_ENV = { ...process.env };
+  // Provider selection walks the whole registry, so a stray provider key
+  // leaking in from the ambient environment (e.g. the sandbox injects the
+  // agent's own credentials) would mis-route these assertions. Clear every
+  // provider key + OPENCODE_MODELS before each case so each test sets only
+  // the keys it names.
+  beforeEach(() => {
+    for (const key of PROVIDER_ENV_KEYS) delete process.env[key];
+    delete process.env.OPENCODE_MODELS;
+  });
   afterEach(() => { process.env = { ...ORIGINAL_ENV }; });
 
   it("picks an OpenAI model when only OPENAI_API_KEY is set", () => {
-    delete process.env.ANTHROPIC_API_KEY;
     process.env.OPENAI_API_KEY = "k";
-    delete process.env.OPENCODE_MODELS;
     expect(defaultFastModel()).toMatch(/^openai\//);
   });
 
   it("picks an Anthropic model when only ANTHROPIC_API_KEY is set", () => {
     process.env.ANTHROPIC_API_KEY = "k";
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCODE_MODELS;
     expect(defaultFastModel()).toMatch(/^anthropic\//);
   });
 
   it("picks an OpenRouter model when only OPENROUTER_API_KEY is set", () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.OPENAI_API_KEY;
     process.env.OPENROUTER_API_KEY = "sk-or-k";
-    delete process.env.OPENCODE_MODELS;
     expect(defaultFastModel()).toMatch(/^openrouter\//);
   });
 
   it("prefers Anthropic over OpenRouter when both are set (avoids markup)", () => {
     process.env.ANTHROPIC_API_KEY = "k";
     process.env.OPENROUTER_API_KEY = "sk-or-k";
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENCODE_MODELS;
     expect(defaultFastModel()).toMatch(/^anthropic\//);
   });
 
@@ -69,7 +69,6 @@ describe("defaultFastModel", () => {
     process.env.ANTHROPIC_API_KEY = "k";
     process.env.OPENAI_API_KEY = "k";
     process.env.OPENROUTER_API_KEY = "sk-or-k";
-    delete process.env.OPENCODE_MODELS;
     expect(defaultFastModel()).toMatch(/^anthropic\//);
   });
 
@@ -82,7 +81,6 @@ describe("defaultFastModel", () => {
 
   it("ignores invalid OPENCODE_MODELS JSON", () => {
     process.env.OPENAI_API_KEY = "k";
-    delete process.env.ANTHROPIC_API_KEY;
     process.env.OPENCODE_MODELS = "not-json";
     expect(defaultFastModel("classifier")).toMatch(/^openai\//);
   });
