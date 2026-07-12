@@ -96,6 +96,20 @@ Architecture reference (read before any phase):
     concurrent creates for the same key are now possible under the async
     engine and must resolve to the same session.
 
+*Added after the 2026-07-09 pre-execution source + library re-verification:*
+
+12. **Transaction-exercising tests use per-test temp-FILE DBs, never
+    `:memory:`.** The libsql local client hands its single connection to each
+    `client.transaction()` and lazily opens a NEW connection for the next
+    query — on `:memory:` that new connection is a fresh, empty database, so
+    the whole DB silently vanishes after the first committed transaction
+    (verified empirically on `@libsql/client` 0.17). Same root cause:
+    connection-scoped pragmas (`busy_timeout`) do not survive the first
+    transaction, so the named-op mutex (decision 8) is the load-bearing
+    concurrency defense, not the pragma. `:memory:` remains correct for
+    suites that never run `client.transaction()` (schema-equivalence,
+    session-manager, the wire pin test).
+
 ## Hard constraints (verified against source at planning time)
 
 - **evals barrel** (`src/evals-api.ts`) exports no DB types; `runWorkflow`'s

@@ -285,11 +285,19 @@ compat step — the baseline's `CREATE INDEX IF NOT EXISTS` handles it.)
 spirit from `src/connectors/messaging/session-manager.ts:89-133` (SQLite's
 official table-rebuild recipe: `foreign_keys` OFF outside the transaction,
 copy → drop → rename, `foreign_key_check` **before** COMMIT, restore the
-pragma). Mark it `// TODO(remove after v0.11)` — it exists for exactly one
-more release.
+pragma). Mark it `// TODO(remove after v0.12)` — the migration ships in
+v0.11 and this exists for exactly one more release after that.
+
+**Do NOT use `executeMultiple()` inside the explicit `BEGIN`.** Verified
+empirically (`@libsql/client` 0.15 and 0.17 alike): `executeMultiple` has a
+`finally` block that force-rolls-back any open transaction when it returns,
+so `BEGIN` → `executeMultiple(...)` → `COMMIT` silently undoes the rebuild
+and the `COMMIT` then throws `cannot commit - no transaction is active` —
+boot would fail on exactly the legacy DBs this shim exists for. One
+`client.execute()` per statement instead:
 
 ```ts
-// TODO(remove after v0.11): one-shot rebuild for pre-partial-unique-index DBs.
+// TODO(remove after v0.12): one-shot rebuild for pre-partial-unique-index DBs.
 async function rebuildMessagingIfLegacyUnique(client: Client): Promise<void> {
   const master = await client.execute(
     `SELECT sql FROM sqlite_master WHERE type='table' AND name='messaging_sessions'`,
@@ -302,24 +310,24 @@ async function rebuildMessagingIfLegacyUnique(client: Client): Promise<void> {
   const fkWasOn = Number(fkRow.rows[0]?.foreign_keys ?? 0) === 1;
   await client.execute("PRAGMA foreign_keys = OFF");
   try {
+    // One execute() per statement — executeMultiple() force-rolls-back any
+    // open transaction in its finally block (see note above).
     await client.execute("BEGIN");
     try {
-      await client.executeMultiple(`
-        CREATE TABLE messaging_sessions__new (
-          id TEXT PRIMARY KEY, platform TEXT NOT NULL, channel_id TEXT NOT NULL,
-          thread_id TEXT, user_id TEXT NOT NULL, agent_session_id TEXT,
-          created_at TEXT NOT NULL, last_activity_at TEXT NOT NULL,
-          message_count INTEGER DEFAULT 0, active INTEGER DEFAULT 1
-        );
-        INSERT INTO messaging_sessions__new
-          SELECT id, platform, channel_id, thread_id, user_id, agent_session_id,
-                 created_at, last_activity_at, message_count, active
-          FROM messaging_sessions;
-        DROP TABLE messaging_sessions;
-        ALTER TABLE messaging_sessions__new RENAME TO messaging_sessions;
-        CREATE INDEX IF NOT EXISTS idx_msg_sessions_lookup
-          ON messaging_sessions(platform, channel_id, thread_id, user_id);
-      `);
+      await client.execute(`CREATE TABLE messaging_sessions__new (
+        id TEXT PRIMARY KEY, platform TEXT NOT NULL, channel_id TEXT NOT NULL,
+        thread_id TEXT, user_id TEXT NOT NULL, agent_session_id TEXT,
+        created_at TEXT NOT NULL, last_activity_at TEXT NOT NULL,
+        message_count INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+      )`);
+      await client.execute(`INSERT INTO messaging_sessions__new
+        SELECT id, platform, channel_id, thread_id, user_id, agent_session_id,
+               created_at, last_activity_at, message_count, active
+        FROM messaging_sessions`);
+      await client.execute("DROP TABLE messaging_sessions");
+      await client.execute("ALTER TABLE messaging_sessions__new RENAME TO messaging_sessions");
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_msg_sessions_lookup
+        ON messaging_sessions(platform, channel_id, thread_id, user_id)`);
       const violations = await client.execute("PRAGMA foreign_key_check");
       if (violations.rows.length > 0) {
         throw new Error(`FK check failed after messaging rebuild: ${JSON.stringify(violations.rows)}`);
@@ -335,9 +343,9 @@ async function rebuildMessagingIfLegacyUnique(client: Client): Promise<void> {
 }
 ```
 
-If `executeMultiple` refuses to run inside the explicit `BEGIN` on the local
-file client (watch-item — it shouldn't, statements share the one
-connection), fall back to individual `client.execute()` calls per statement.
+(The partial unique index is deliberately NOT recreated here — the baseline
+migrator runs immediately after and its `CREATE UNIQUE INDEX IF NOT EXISTS`
+covers it, same boot, before any writes.)
 
 ---
 
@@ -415,7 +423,11 @@ export class StateDb {
 
 `get database()` (db.ts:203-205) is **deleted** — the compiler will flag any
 straggler. `busy_timeout=5000` is new (the old code set only WAL,
-db.ts:74) — it's the first line of defense for the concurrency watch-item.
+db.ts:74) — but note it is **connection-scoped, and the libsql client
+silently opens a NEW connection after every `transaction()` call** (verified;
+same root cause as locked decision 12), so it only reliably covers the
+pre-first-transaction window. The named-op mutex (locked decision 8) is the
+real concurrency defense; keep the pragma as cheap best-effort.
 
 **Cron/workflow overrides** (StateDb's own methods) port to the builder with
 `onConflictDoUpdate`:
@@ -504,12 +516,12 @@ normalization where the record types use optionals.
 | `shouldRunPhase` :369 | two builder queries (running / done) with the scope condition | `eq(success, true)` |
 | `markStaleAsFailed` :393 | builder update; return `changes(result)` | `success: false` |
 | `markAllStaleForTrigger` :411 | builder update; `changes(result)` | |
-| `markLatestAsFailed` :427 | **sql`` via `run()`** — `UPDATE … WHERE id = (SELECT id … ORDER BY started_at DESC LIMIT 1)` correlated subquery; return `changes(await run(...))` | `success = 0` literal in raw SQL is fine (sqlite stores boolean as 0/1) — but write `${executions.success} = 0` via the column ref |
+| `markLatestAsFailed` :427 | **sql`` via `run()`** — `UPDATE … WHERE id = (SELECT id … ORDER BY started_at DESC LIMIT 1)` correlated subquery; return `changes(await run(...))` | set the failure via a **bound param**: `SET ${executions.success} = ${false}` (libsql binds `false` as 0, pg as boolean — verified portable). NEVER a literal `= 0`: PG rejects boolean=integer in both SET and WHERE |
 | `recentExecutions` :445 / `allExecutions` :472 / `runningExecutions` :603 | builder full-row select — **this fixes the latent snake_case-cast bug** (README "Known bugs"); rows come back as real `ExecutionRecord`s (camelCase, boolean `success`) after `nullsToUndefined` | json/boolean mapped by builder |
 | `consecutiveFailures` :455 | builder select `{ success }` desc limit 10; **`row.success === false`** (was `=== 0`, :465) | THE boolean-regression hotspot — pin with a test |
 | `searchErrors` :487 | **sql`` via `rows()`** — `LIKE ? ESCAPE '\'` ×3 (builder `like()` has no ESCAPE). Use `likeEscape()` from dialect.ts (delete the inline :499 escape). Keep the aliases (:508-512); raw `success` stays 0/1 → keep the `Boolean(r.success)` mapping at :525 | raw = unmapped |
 | `getExecutionsForWorkflowRun` :542 | **sql`` via `rows()`** — `(workflow_run_id = ? OR (workflow_run_id IS NULL AND trigger_id = ?)) AND skill LIKE ?`; keep the explicit aliased column list (:546-568) and the mapping block (:575-599) incl. `Boolean(r.success)` | raw = unmapped — the mapping block must now `JSON.parse` `extension_status`/`skills_status` into their object types (raw sql bypasses the json-mode mapping; `ExecutionRecord` types them as objects per Preconditions) |
-| `executionStats` :612 | counts → builder (`select({ c: count() })`); the per-skill CASE rollup (:627-632) and per-trigger GROUP BY (:639-641) → **sql`` via `rows()`** with the portable CASE forms — successes: `SUM(CASE WHEN ${executions.success} THEN 1 ELSE 0 END)` (truthiness works on sqlite 0/1 and pg boolean; NULL falls to ELSE); failures: `SUM(CASE WHEN ${executions.success} = 0 THEN 1 ELSE 0 END)` — do NOT write `WHEN NOT ${col}` for failures, because `NOT NULL` is NULL and still-running rows must fall to ELSE in both dialects (`= 0` compares false in pg via boolean literal comparison — use `${executions.success} = ${false}` if the fragment binds a param) | same CASE forms reused by `dailyStats`/`hourlyStats` |
+| `executionStats` :612 | counts → builder (`select({ c: count() })`); the per-skill CASE rollup (:627-632) and per-trigger GROUP BY (:639-641) → **sql`` via `rows()`** with the portable CASE forms — successes: `SUM(CASE WHEN ${executions.success} THEN 1 ELSE 0 END)` (truthiness works on sqlite 0/1 and pg boolean; NULL falls to ELSE); failures: `SUM(CASE WHEN ${executions.success} = ${false} THEN 1 ELSE 0 END)` — the `${false}` is a **bound param** (libsql binds it as 0, pg as boolean — verified portable). Do NOT write `WHEN NOT ${col}` (NOT NULL is NULL; still-running rows must fall to ELSE in both dialects) and do NOT write a literal `= 0`/`= 1` (PG errors loudly: `operator does not exist: boolean = integer`) | same CASE forms reused by `dailyStats`/`hourlyStats` — which run in the Phase 4 PG leg, so a literal here WILL turn that leg red |
 | `dailyStats` :652 / `hourlyStats` :721 | **sql`` via `rows()`** — replace `date(started_at)` / `strftime('%Y-%m-%dT%H', …)` with `${dayBucket(executions.startedAt)}` / `${hourBucket(executions.startedAt)}` in SELECT, WHERE and GROUP BY. The JS-side bucket-key generation (:673-677, :740-745) already emits matching `YYYY-MM-DD` / `YYYY-MM-DDTHH` keys — unchanged | success CASE as above |
 
 ### `ApprovalStore` (`src/state/approval-store.ts`)
@@ -570,7 +582,7 @@ Phase 1 baseline; the rebuild moved to `legacy-sqlite.ts`.
 
 ## Construction sites
 
-- **`src/index.ts:142-146`**:
+- **`src/index.ts:144-148`**:
 
   ```ts
   const db = await StateDb.open(config.dbPath);
@@ -579,7 +591,7 @@ Phase 1 baseline; the rebuild moved to `legacy-sqlite.ts`.
   ```
 
   (`main()` is already async.) Also reword the stale better-sqlite3 comment
-  at `src/index.ts:403-406` (ProgressNotifier timing rationale) — the
+  at `src/index.ts:422-430` (ProgressNotifier timing rationale) — the
   guarantee it describes now rests on `simple.ts` awaiting `onRunStart`
   before the first reporter call, not on driver synchrony.
 - **`src/workflows/simple.ts:320-325` (locked decision 10):** replace the
@@ -651,7 +663,8 @@ Verified against `dashboard/src/api.ts`:
 **Pin test** — new `tests/admin/executions-wire.test.ts` (follow the
 fixture pattern of `tests/admin/routes.test.ts`: `new Hono()` +
 `createAdminRoutes` + `app.request`, but with a REAL
-`await StateDb.open(":memory:")` instead of a fake). Seed one finished
+`await StateDb.open(":memory:")` instead of a fake — safe here because
+`recordStart`/`recordFinish` never transact, per locked decision 12). Seed one finished
 (success), one failed, and one still-running execution via
 `recordStart`/`recordFinish`, then `GET /executions` and assert the exact
 wire keys and values, notably:
@@ -684,15 +697,24 @@ text, fix the snapshot, not the code.
 
 ## Test changes
 
-- **Construction**: `new StateDb(":memory:")` → `db = await StateDb.open(":memory:")`
-  in `tests/state/db.test.ts:8` and `tests/state/workflow-run-store.test.ts:12`.
+- **Construction**: `new StateDb(":memory:")` in `tests/state/db.test.ts:8`
+  and `tests/state/workflow-run-store.test.ts:12` becomes
+  `db = await StateDb.open(tmpDbPath())` — a per-test **temp-FILE** DB
+  (`mkdtemp` under `os.tmpdir()` + a `state.db` inside it), NOT `:memory:`.
+  **Locked decision 12**: the libsql client opens a fresh connection after
+  every `transaction()`, and a fresh `:memory:` connection is an empty
+  database — both these files exercise the five named atomic ops, so on
+  `:memory:` the DB would vanish after the first committed transaction.
+  `:memory:` stays correct for suites that never transact (the
+  schema-equivalence test, the session-manager tests, the wire pin test).
   (These are the only two real-StateDb constructions;
   `tests/workflows/runner.test.ts`, `phase-executor.test.ts`,
   `tests/engine/dispatcher.test.ts`, `tests/admin/*.test.ts` use fakes typed
   `as unknown as StateDb` — untouched beyond what 2a already did.)
-- **`workflow-run-store.test.ts` rollback test** (:66-109, "injected
+- **`workflow-run-store.test.ts` rollback test** (:65-109, "injected
   collaborator"): the raw better-sqlite3 + `migrate()` construction becomes
-  a second `await StateDb.open(":memory:")` whose `client` is shared:
+  a second `await StateDb.open(tmpDbPath())` (file-backed — it transacts;
+  locked decision 12) whose `client` is shared:
   `new WorkflowRunStore(inner.client, { approvals: throwingApprovals })`.
   The throwing `ApprovalStore` fake **still works**: `create()` throwing
   inside the async transaction callback rejects the callback promise and
@@ -701,19 +723,22 @@ text, fix the snapshot, not the code.
   `import Database` lines.
 - **`tests/connectors/messaging/session-manager.test.ts`**:
   - Fresh-path fixture (:17-18): `db = await StateDb.open(":memory:")`;
-    `manager = new SessionManager(db.client, "sqlite")`. Direct
+    `manager = new SessionManager(db.client, "sqlite")` (`:memory:` is safe
+    here — SessionManager never opens a transaction). Direct
     `db.prepare(...)` assertions (e.g. :41-45) become libsql
     `raw.execute(...)` reads or builder queries — simplest is to keep a
     handle on a raw `createClient({ url: ":memory:" })`… which `open()`
     doesn't expose. Instead, do raw reads through
     `rows(db.client, sql\`SELECT …\`)`.
-  - **Legacy fixtures** (:54-84 FK-referencing messages; :106-125
+  - **Legacy fixtures** (:54-84 FK-referencing messages; :103-125
     unconditional UNIQUE) rebuild on libsql and now exercise
     `legacy-sqlite.ts` end-to-end:
 
     ```ts
     const raw = createClient({ url: ":memory:" });
-    await raw.executeMultiple(LEGACY_DDL_AND_SEED);        // the existing SQL strings, verbatim
+    await raw.executeMultiple(LEGACY_DDL_AND_SEED);        // fine OUTSIDE a transaction — the
+                                                           // finally-rollback hazard only bites
+                                                           // after an explicit BEGIN
     await applyLegacySqliteCompat(raw);                    // the rebuild under test
     const client = drizzle(raw, { schema: sqliteSchema });
     await migrate(client, { migrationsFolder: MIGRATIONS_DIR }); // baseline no-ops + partial index
@@ -747,7 +772,7 @@ text, fix the snapshot, not the code.
 Order matters — remove code first, then the package:
 
 1. `grep -rn better-sqlite3 src tests` → must return **empty**. Known
-   stragglers to sweep: `src/index.ts:403` (comment),
+   stragglers to sweep: `src/index.ts:422-430` (comment),
    `tests/connectors/slack/connector.test.ts:4`,
    `tests/connectors/messaging/session-manager.test.ts:2`,
    `tests/state/workflow-run-store.test.ts:2`, and the deleted
@@ -798,7 +823,8 @@ Beyond the standard `npm run build && npx vitest run` +
 
 Guards the libsql interactive-transaction risk. On a **file-backed** DB
 (`await StateDb.open(join(tmpDir, "probe.db"))` — `:memory:` can't surface
-cross-transaction contention):
+cross-transaction contention, and is destroyed by the first transaction
+anyway; locked decision 12):
 
 - Seed a run + `pauseForApproval`. Then race the responders:
 
@@ -839,12 +865,22 @@ transactions too (where the mutex is equally harmless).
 ## Risk watch-items
 
 - **libsql interactive-transaction BUSY errors** on the local file client:
-  drizzle's libsql transactions are real `BEGIN`-held transactions; two
-  overlapping ones on one process can surface `SQLITE_BUSY` where
-  better-sqlite3's sync transactions physically couldn't interleave.
-  Mitigations: the named-op mutex (shipped by design, locked decision 8),
-  `busy_timeout=5000` pragma (set in `open()`), the concurrency probe as
-  regression guard.
+  drizzle's libsql transactions are real `BEGIN`-held transactions
+  (`BEGIN IMMEDIATE` under the hood); two overlapping ones on one process
+  surface `SQLITE_BUSY` (verified empirically) where better-sqlite3's sync
+  transactions physically couldn't interleave. Mitigations: the named-op
+  mutex (shipped by design, locked decision 8 — the load-bearing one),
+  `busy_timeout=5000` pragma (best-effort only: it is connection-scoped and
+  the client swaps connections after each transaction — see the db.ts
+  section), the concurrency probe as regression guard.
+- **`:memory:` + `client.transaction()` is fatal** (locked decision 12):
+  after any transaction, the libsql client's next query runs on a NEW
+  lazily-opened connection — on `:memory:` that is a fresh empty database,
+  so the schema and all data silently vanish (verified: one committed
+  transaction, then `db.all` fails "no such table"). Nothing in production
+  uses `:memory:`; in tests, every suite that exercises the five named ops
+  must be file-backed. If a test inexplicably loses its tables mid-run, this
+  is the first suspect.
 - **Raw-vs-builder mapping mismatches** — the #1 regression class. Raw
   `rows()` results bypass ALL Drizzle mapping: booleans arrive as 0/1, json
   columns as strings, names as whatever the SQL aliases say. Every method in

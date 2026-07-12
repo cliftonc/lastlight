@@ -19,8 +19,9 @@ hand-maintained subset that silently diverges.
 
 - [ ] Phase 1 done (Drizzle sqlite schema + baseline migration exist).
 - [ ] Phase 2 done (the combined async-API + engine-swap phase: store API is
-  async; engine is libsql + Drizzle; tests construct via
-  `await StateDb.open(":memory:")`; `SessionManager` takes
+  async; engine is libsql + Drizzle; the state tests construct via
+  `await StateDb.open(<per-test temp file>)` — file-backed per locked
+  decision 12, since they exercise transactions; `SessionManager` takes
   `StateClient` + dialect; the legacy messaging fixtures run on libsql
   `executeMultiple` and exercise `legacy-sqlite.ts`; the concurrency probe
   test exists in `tests/state/concurrency.test.ts`; the `getOrCreateSession`
@@ -210,14 +211,27 @@ own layers against a sqlite `StateDb` and are out of scope — do not move them.
 
 ## The thin runners
 
-- **`tests/state/db.test.ts`** becomes the single sqlite runner (~6 lines):
+- **`tests/state/db.test.ts`** becomes the single sqlite runner (~10 lines):
 
   ```ts
+  import { mkdtempSync } from "node:fs";
+  import { tmpdir } from "node:os";
+  import { join } from "node:path";
   import { runStateDbSuite } from "./store-suite.js";
   import { StateDb } from "#src/state/db.js";
 
-  runStateDbSuite(() => StateDb.open(":memory:"), { dialect: "sqlite" });
+  // File-backed per test (locked decision 12): the suite exercises the five
+  // named atomic ops, and the libsql client opens a NEW connection after
+  // every transaction — a fresh `:memory:` connection is an empty database.
+  runStateDbSuite(
+    () => StateDb.open(join(mkdtempSync(join(tmpdir(), "ll-state-")), "state.db")),
+    { dialect: "sqlite" },
+  );
   ```
+
+  (Leaving the mkdtemp dirs to the OS tmp reaper is fine; if it bothers you,
+  have `makeDb` register the dir and `rmSync` it in the factory's
+  `afterEach` alongside `db.close()`.)
 
 - **`tests/state/workflow-run-store.test.ts`** is **deleted** — its bodies
   live in the factory and run via the runner above. (Two runners both calling
@@ -226,7 +240,9 @@ own layers against a sqlite `StateDb` and are out of scope — do not move them.
   sqlite runner for `runSessionManagerSuite`: its `makeCtx` opens a fresh
   in-memory client through the same construction path Phase 2b gave
   `src/index.ts` (migrated client → `new SessionManager(client, "sqlite")`),
-  with `close()` closing the client.
+  with `close()` closing the client. (`:memory:` is safe here —
+  SessionManager never opens a transaction; locked decision 12 applies only
+  to transacting suites.)
 - **`tests/connectors/messaging/session-manager.legacy.test.ts`** (new file):
   the two legacy-rebuild tests, verbatim as Phase 2b left them (libsql
   `executeMultiple` fixtures + `legacy-sqlite.ts`). Sqlite-only, no factory.

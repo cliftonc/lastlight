@@ -59,14 +59,14 @@ Three edits, matching how `buildAssets` / `explore` flow today:
 
    Keep `dbPath` — it remains the fallback and other surfaces may read it.
 
-2. **Env layer** — in `buildEnvConfigLayer` (~line 549), one line alongside
+2. **Env layer** — in `buildEnvConfigLayer` (~line 563), one line alongside
    the other env→path mappings:
 
    ```ts
    if (env.DATABASE_URL) layer.database = { url: env.DATABASE_URL };
    ```
 
-3. **File normalization** — in `normalizeFileConfig` (~line 392): add
+3. **File normalization** — in `normalizeFileConfig` (~line 406): add
    `database: { url?: string }` to the return type and:
 
    ```ts
@@ -77,8 +77,8 @@ Three edits, matching how `buildAssets` / `explore` flow today:
        : undefined;   // yaml `url: null` and absent both land here
    ```
 
-   Then in `loadConfig`'s config literal (~line 348), next to the existing
-   `dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db")` (line 355
+   Then in `loadConfig`'s config literal (~line 360), next to the existing
+   `dbPath: process.env.DB_PATH || join(stateDir, "lastlight.db")` (line 368
    — **unchanged**):
 
    ```ts
@@ -281,9 +281,10 @@ solely "migrations resolve from the installed package".
   (no-op on existing DBs) + `__drizzle_migrations` journal; the
   `legacy-sqlite.ts` pre-step (PRAGMA `table_info`-guarded column adds for
   pre-baseline operators + the messaging `UNIQUE(platform,…)` rebuild, kept
-  one release — **floor-version note**: the rebuild shim is removed after
-  v0.11, so messaging-era deployments older than that must pass through a
-  0.10/0.11 release first); boot pragmas `journal_mode=WAL` +
+  one release — **floor-version note**: the shim ships in the migration
+  release (v0.11) and is removed after v0.12, so messaging-era deployments
+  older than that must pass through a v0.11/v0.12 release first); boot
+  pragmas `journal_mode=WAL` +
   `busy_timeout=5000`; future migrations via `npm run db:generate:sqlite` /
   `db:generate:pg`. **Delete the stale claim** that
   `PRAGMA foreign_keys = ON` is set at connect (it never was — the sole
@@ -347,7 +348,9 @@ sudo -u lastlight -i lastlight server update
 # 3. Post-deploy checks
 sudo -u lastlight -i lastlight server logs agent --tail 200
 #    expect: legacy pre-step log + migrator applying/recording the baseline; no errors
-sqlite3 "$DB" "SELECT tag FROM __drizzle_migrations;"     # baseline row present
+# Journal columns are (id, hash, created_at) — there is NO `tag` column
+# (the tag lives only in meta/_journal.json), and `id` may be NULL on sqlite:
+sqlite3 "$DB" "SELECT hash, created_at FROM __drizzle_migrations;"   # exactly one row
 # Dashboard https://lastlight.drizby.com — historical workflow runs AND chat
 # threads listed (proves old rows read through Drizzle).
 # From your laptop, trigger a trivial workflow end-to-end:
@@ -357,7 +360,8 @@ sqlite3 "$DB" "SELECT tag FROM __drizzle_migrations;"     # baseline row present
 **Rollback story.** The baseline is schema-neutral on current prod — every
 CREATE no-ops; the only addition is the `__drizzle_migrations` table, which
 the old code ignores. So the previous image reads the same file unchanged:
-as `lastlight`, `git -C ~/lastlight checkout v0.9.0` (previous tag),
+as `lastlight`, `git -C ~/lastlight checkout <previous release tag>`
+(v0.10.1 at last verification — use whatever prod ran before the cutover),
 `docker compose build agent`, `docker compose up -d agent`. Restoring the
 `VACUUM INTO` backup (stop agent → copy over `lastlight.db`, delete
 `-wal`/`-shm` → start) is optional belt-and-braces, needed only if post-cutover
@@ -368,8 +372,10 @@ writes must be discarded.
 The workflow-execution path changed, so per the npm-release-policy the
 `lastlight/evals` barrel consumers need a release. **Minor bump**: verify
 the current version first (`node -p "require('./package.json').version"` —
-`0.9.0` at planning time → `0.10.0`; if it has drifted, bump minor from
-whatever it is).
+`0.10.1` at last verification → `0.11.0`; if it has drifted again, bump
+minor from whatever it is and substitute the real numbers below — the
+legacy-rebuild `TODO(remove after v0.12)` markers in `legacy-sqlite.ts`
+assume the migration ships as v0.11; re-anchor them too if not).
 
 Transcribed from CLAUDE.md "Cutting a release" — on a clean, up-to-date
 `main`:
@@ -380,15 +386,15 @@ npm version minor --no-git-tag-version      # package.json + package-lock.json
 #   → set "version" to the same X.Y.Z
 npm run build
 git add package.json package-lock.json plugins/lastlight/.claude-plugin/plugin.json
-git commit -m "chore(release): v0.10.0"
-git tag -a v0.10.0 -m "v0.10.0"             # annotated — lightweight tags rejected
+git commit -m "chore(release): v0.11.0"
+git tag -a v0.11.0 -m "v0.11.0"             # annotated — lightweight tags rejected
 git push origin main --follow-tags
-gh release create v0.10.0 --title "v0.10.0 — Drizzle state layer" --latest \
-  --notes "<highlights + compare link v0.9.0...v0.10.0>"
+gh release create v0.11.0 --title "v0.11.0 — Drizzle state layer" --latest \
+  --notes "<highlights + compare link v0.10.1...v0.11.0>"
 # Creating the release fires publish.yml → typecheck+test+build+npm publish.
 # NEVER run `npm publish` manually; no OTP prompts.
 gh run watch <run-id> --exit-status
-npm view lastlight@0.10.0 version --prefer-online   # no `v` prefix on npm
+npm view lastlight@0.11.0 version --prefer-online   # no `v` prefix on npm
 ```
 
 ## Verification
@@ -405,7 +411,7 @@ npm view lastlight@0.10.0 version --prefer-online   # no `v` prefix on npm
   `migrate.ts` claims; docs-sync run clean.
 - Prod: runbook executed; `__drizzle_migrations` has the baseline row;
   dashboard history intact; one trivial workflow ran end-to-end.
-- Release: `npm view lastlight@0.10.0` returns the version.
+- Release: `npm view lastlight@0.11.0` returns the version.
 
 ## Risk watch-items
 
@@ -442,6 +448,7 @@ npm view lastlight@0.10.0 version --prefer-online   # no `v` prefix on npm
       (state layer, DATABASE_URL, both-dialects regen workflow); docs-sync
       skill run before commit.
 - [ ] Prod cutover executed per runbook, checks green, backup retained.
-- [ ] v0.10.0 released: three files in lockstep, annotated tag, GitHub
-      release, publish.yml green, `npm view` confirms.
+- [ ] v0.11.0 released (or the drifted-forward equivalent): three files in
+      lockstep, annotated tag, GitHub release, publish.yml green,
+      `npm view` confirms.
 - [ ] Phase 5 checkbox ticked in README.md; deviations recorded below.

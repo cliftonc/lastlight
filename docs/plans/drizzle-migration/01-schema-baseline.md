@@ -44,9 +44,11 @@ npm i -D drizzle-kit
 ```
 
 Pin the latest **stable** lines (locked decision 5 — the finius reference is
-on a v1.0.0-rc; do NOT copy that). At planning time that meant approximately
-`drizzle-orm ^0.44`, `drizzle-kit ^0.31`, `@libsql/client ^0.15` — check npm
-at execution time and take the newest non-RC. Add to `package.json` scripts
+on a v1.0.0-rc; do NOT copy that). At last verification (2026-07-09) that
+meant `drizzle-orm ^0.45` (0.45.2 — note `^0.44` would never resolve to it),
+`drizzle-kit ^0.31` (0.31.10), `@libsql/client ^0.17` (0.17.4); drizzle v1
+was still RC-only (`1.0.0-rc.4`). Check npm at execution time and take the
+newest non-RC. Add to `package.json` scripts
 (currently `package.json:48-61`):
 
 ```json
@@ -170,10 +172,15 @@ indexes `:50-57`.
 Indexes: `index("idx_workflow_runs_trigger").on(t.triggerId, t.status)`,
 `index("idx_workflow_runs_status").on(t.status)`,
 `index("idx_workflow_runs_started_at").on(sql\`${t.startedAt} DESC\`)` — this
-one is **DESC** (`migrate.ts:56`); if the installed drizzle version supports
-`.on(t.startedAt.desc())`, prefer that form —
-`index("idx_workflow_runs_name_started").on(t.workflowName, <started_at DESC>)`
-(`migrate.ts:57`, second key also DESC).
+one is **DESC** (`migrate.ts:56`). sqlite-core has **no `.desc()` on index
+columns** — `t.startedAt.desc()` throws a TypeError at generate time (that
+API exists only in pg-core), so the `sql\`\`` expression form is the ONLY
+option; verify the generated baseline actually carries the `DESC` (the
+equivalence test compares index sql verbatim, so a silent drop fails loudly).
+`index("idx_workflow_runs_name_started").on(t.workflowName,
+sql\`${t.startedAt} DESC\`)` (`migrate.ts:57`, second key DESC — this mixed
+ASC+DESC composite is the one SQLite cannot satisfy by a reverse scan, so the
+DESC is load-bearing, not cosmetic).
 
 ### `cron_overrides` / `workflow_overrides`
 
@@ -373,13 +380,24 @@ Dashboard tsc not needed (no admin routes touched).
   known cases; any residue shows up as a test diff, not silent drift.
 - **Index name or DESC mismatches** — drizzle-kit uses exactly the names in
   the schema file; a typo surfaces as a missing/extra key in the index map.
-  Verify `idx_workflow_runs_started_at` really carries `DESC` in the emitted
-  sql; keep the `sql\`\`` key form if the builder form drops it.
+  Verify `idx_workflow_runs_started_at` / `idx_workflow_runs_name_started`
+  really carry `DESC` in the emitted sql (the `.desc()` builder form does not
+  exist on sqlite — see the workflow_runs section). If drizzle-kit won't emit
+  the `sql\`\`` expression form's DESC either, hand-edit it into the baseline
+  (pre-freeze, this is sanctioned) and note the meta-snapshot divergence in
+  the Deviations section. The partial `uniqueIndex(...).where(...)` IS
+  emitted correctly by current drizzle-kit (verified on 0.31.10).
 - **PK NOT NULL tightening** — expected divergence, normalized in the test
   (step 4.2); do not "fix" the schema to make PKs nullable.
 - **libsql `:memory:`** — `createClient({ url: ":memory:" })` is
   per-connection in-memory, matching the better-sqlite3 test posture
-  (`src/state/db.ts:66-73`). Don't use a shared file path in tests.
+  (`src/state/db.ts:66-73`). Don't use a shared file path in tests. Safe in
+  THIS phase because nothing here calls `client.transaction()` (locked
+  decision 12's hazard: the client opens a fresh — empty — `:memory:`
+  connection after any transaction). The drizzle migrator doesn't run through
+  `client.transaction()`, so Leg B on `:memory:` is fine — but if its schema
+  mysteriously vanishes mid-test, that hazard is the first suspect: switch
+  Leg B to a temp file.
 
 ## Done criteria
 

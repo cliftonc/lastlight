@@ -24,8 +24,11 @@ Read first: [README.md](README.md) (locked decisions, hard constraints) and
 [00-architecture.md](00-architecture.md). This doc maps **the ripple**:
 every public method of the five state-owning classes becomes `async`.
 
-Line references were verified against source at planning time (2026-07-06). If
-one has drifted, trust the described pattern.
+Line references were verified against source at planning time (2026-07-06)
+and re-verified 2026-07-09 after the v0.10.0 changes (`346c50e`, GitHub-free
+server) shifted `src/index.ts` by ~+20-30 lines — the index.ts numbers below
+are the updated ones; the state-layer files did not drift. If one has drifted
+again, trust the described pattern.
 
 ## Goal
 
@@ -156,7 +159,7 @@ and 17 `PhaseReporter` callback sites affected by signature flips. Per file:
 | `src/workflows/simple.ts` | 8 store + `isWorkflowEnabled` :211 | `runSimpleWorkflow` / `handleExistingRun` already async — plain awaits (:261, :293, :470, :472, :480, :515, :525, :532) |
 | `src/workflows/runner.ts` | 7 store (:163, :249, :256, :307, :322, :365, :439) | inside async `runWorkflow`; `persistPhase`/`failWorkflow` closures :241/:254 flip (L4) |
 | `src/admin/chat-session-reader.ts` | 5 store (:40, :44, :48, :71, :86) | 3 methods flip sync→async → SessionSource interface change (L6) |
-| `src/index.ts` | 4 store (:441, :443, :444, :655) + sessionManager :795 + `getJobs` :863 | `notifierOnRunStart` landmine (L2); construction :142/:146 **unchanged** |
+| `src/index.ts` | 4 store (:465, :467, :468, :690) + sessionManager :825 + `getJobs` :897 | `notifierOnRunStart` landmine (L2); construction :144/:148 **unchanged** |
 | `src/engine/router.ts` | 3 store (:143, :173, :440) | `routeEvent` is async — plain awaits |
 | `src/cron/scheduler.ts` | 1 (`consecutiveFailures` :59) | inside async Cron callback — plain await |
 | `src/cron/jobs.ts` | 1 (`getAllCronOverrides` :28) | `getJobs` itself is sync → becomes async (L9) |
@@ -192,8 +195,9 @@ and 17 `PhaseReporter` callback sites affected by signature flips. Per file:
 - **`getJobs`** (`src/cron/jobs.ts:18`): `CronJob[]` →
   `Promise<CronJob[]>` (awaits `opts?.db?.getAllCronOverrides()` :28 —
   `await undefined` is fine, keep the `?? new Map()`). Sole caller:
-  `src/index.ts:863` (`const jobs = await getJobs({ webhooksEnabled, db })`),
-  already in the async boot function.
+  `src/index.ts:897` (`const jobs = await getJobs({ webhooksEnabled, db })`),
+  already in the async boot function — since v0.10.0 it sits inside an
+  `if (github)` block; the await lands there unchanged.
 
 ### Landmines — sync contexts that cannot simply await
 
@@ -211,15 +215,15 @@ and 17 `PhaseReporter` callback sites affected by signature flips. Per file:
   ```
   Note the existing `try/catch` no longer catches — the handler must move to
   `.catch()`. Intentional fire-and-forget (mid-run best-effort update).
-- **L2 — `notifierOnRunStart` + `persist`, `src/index.ts:439-467`.**
+- **L2 — `notifierOnRunStart` + `persist`, `src/index.ts:462-500`.**
   `notifierOnRunStart` is declared `(runId: string): void` and its body reads
-  `db.runs.getRun(runId)` (:441); the nested `persist` closure (:442-445)
+  `db.runs.getRun(runId)` (:465); the nested `persist` closure (:466-469)
   does a getRun + mergeScratch read-modify-write and is handed to the
-  transports as `save: (id) => persist(...)` (:455, :466) — and the transport
+  transports as `save: (id) => persist(...)` (:479, :490) — and the transport
   `save` type is sync (`src/notify/transports/github.ts:17`,
   `slack.ts:17`, invoked from :36/:37). Fix:
   - Make `notifierOnRunStart` async (`(runId: string): Promise<void>`); the
-    wrapper at `src/index.ts:503-511` awaits it
+    wrapper at `src/index.ts:527-535` awaits it
     (`await notifierOnRunStart(runId)`). `RunnerCallbacks.onRunStart` is
     already `(runId) => Promise<void>` (`runner.ts:57`) — no exported-type
     change.
@@ -234,7 +238,7 @@ and 17 `PhaseReporter` callback sites affected by signature flips. Per file:
   `save: (id) => persist({ githubCommentId: id })` (:267). Same fix: async
   `persist`, `void`-with-catch at the `save` site.
 - **L4 — `PhaseReporter` flip** — see Signature flips above.
-- **L5 — `/crons` handler `.map` callback, `src/admin/routes.ts:1298-1330`.**
+- **L5 — `/crons` handler `.map` callback, `src/admin/routes.ts:1293-1327`.**
   `defs.map((def) => { … consecutiveFailures(def.workflow) …
   db.runs.listRecent(50).find(…) … })` calls two store methods inside a sync
   `.map` callback. Convert to a `for … of` loop building the array (do NOT
@@ -352,12 +356,12 @@ phase must not change the wire format — that contract is pinned in 2b).
 
 - **R1 — notifier setup ordering — RESOLVED (locked decision 10).**
   `simple.ts:320-325` currently fire-and-forgets `callbacks.onRunStart`, and
-  the comment at `index.ts:505-507` relies on `notifierOnRunStart` doing its
+  the comment at `index.ts:422-430` relies on `notifierOnRunStart` doing its
   setup *synchronously* before `reporter.start()` fires — a guarantee that
   dies with the sync engine. Fix in the combined phase: `simple.ts` awaits
   `onRunStart` in a try/catch (log the failure, continue the run) before
   dispatching, so notifier state exists before the first reporter call.
-  Reword the `index.ts:403-406` comment accordingly (02b already notes this).
+  Reword the `index.ts:422-430` comment accordingly (02b already notes this).
 - **R2 — dedup check-then-act window.** `shouldRunPhase` → `recordStart`
   (`phase-executor.ts:288-306`) was one sync block; it now has microtask
   yields between the check and the insert. Concurrent same-phase dispatch is

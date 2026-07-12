@@ -96,7 +96,15 @@ runtime migrators, and the types-excluded cross-parity test
    construction-time injection.
 
 Also: finius pins drizzle-orm **v1.0.0-rc** — pin Last Light to the latest
-**stable** drizzle-orm/drizzle-kit unless a needed API requires otherwise.
+**stable** drizzle-orm/drizzle-kit unless a needed API requires otherwise
+(v1 was still RC-only at last check, 2026-07-09). Because finius runs the v1
+line, its `drizzle/` directory uses the **v1 migration layout** (timestamped
+folders + `snapshot.json`, no `meta/_journal.json`) — do not copy that layout
+either; stable drizzle-kit emits `0000_name.sql` + `meta/`. And finius's
+`affectedRows()` reads `.changes ?? .rowCount` (node:sqlite / node-postgres) —
+our drivers need `.rowsAffected` (libsql) / `.affectedRows` (PGlite) instead;
+`dialect.ts`'s `changes()` covers all four, but don't copy finius's property
+list verbatim.
 
 ## Column type decisions (both schemas)
 
@@ -148,15 +156,20 @@ Also: finius pins drizzle-orm **v1.0.0-rc** — pin Last Light to the latest
   2. The messaging `UNIQUE(platform,…)` table rebuild ported from
      `session-manager.ts` (sniff `sqlite_master`, `PRAGMA foreign_keys`
      toggle, copy, drop, rename, `foreign_key_check`). Keep one more release
-     with a `TODO(remove after v0.11)` marker.
+     with a `TODO(remove after v0.12)` marker (the migration ships in v0.11 —
+     see Phase 5's release section).
 - **PG migrations** (`drizzle/pg/`): plain generated output, fresh databases
   only (PGlite per-test). No legacy story.
 - **Runtime application** in `StateDb.open()`: pragmas
-  (`journal_mode=WAL`, `busy_timeout=5000`) → legacy pre-step → `migrate()`
+  (`journal_mode=WAL`, `busy_timeout=5000` — note the latter is
+  connection-scoped and lost once a transaction swaps the client's
+  connection; locked decision 12) → legacy pre-step → `migrate()`
   from `drizzle-orm/libsql/migrator` with `migrationsFolder` resolved
   module-relative (`new URL("../../drizzle/sqlite", import.meta.url)` — must
   resolve from both `src/state/` and `dist/state/`). Tests boot the identical
-  path against `:memory:` (fidelity over `drizzle-kit push`).
+  path (fidelity over `drizzle-kit push`) — against `:memory:` where no
+  transactions run, per-test temp files everywhere the five named ops are
+  exercised (locked decision 12).
 
 ## Portability hotspot ports
 
@@ -182,9 +195,11 @@ they run against either the root client or an enclosing transaction. A
 the double-responder guards. The five ops are additionally serialized by a
 small in-process mutex on `WorkflowRunStore` (README locked decision 8 —
 shipped by design, not as a probe-failure fallback; overlapping libsql
-transactions can fail in ways beyond `SQLITE_BUSY`). Long-running sandbox
-dispatch stays outside transactions (callers already dispatch after the
-atomic op returns).
+transactions can fail in ways beyond `SQLITE_BUSY`, and the `busy_timeout`
+pragma is connection-scoped — the libsql client swaps connections after each
+transaction, so the mutex, not the pragma, is the load-bearing defense).
+Long-running sandbox dispatch stays outside transactions (callers already
+dispatch after the atomic op returns).
 
 ## Non-goals
 

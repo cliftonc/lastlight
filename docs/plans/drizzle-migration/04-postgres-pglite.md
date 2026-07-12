@@ -24,8 +24,10 @@ is `StateDb.fromClient()` from tests.
   reads through `dialect.ts`'s `rows()` / `changes()` (Phase 2b).
 - `tests/state/store-suite.ts` exports `runStateDbSuite(makeDb, { dialect })`
   and the sqlite leg runs it green (Phase 3). The `makeDb` contract is
-  **a pristine `StateDb` per call** (the sqlite leg hands out
-  `StateDb.open(":memory:")` per test).
+  **a pristine `StateDb` per call** (the sqlite leg hands out a per-test
+  temp-FILE DB — locked decision 12; a fresh in-memory PGlite per call
+  satisfies the same contract, and PGlite has no analogue of libsql's
+  `:memory:` connection-swap hazard).
 - `client.ts` exports `asStateClient()` (the documented pg-handle cast) and
   the `Dialect` type (Phase 2b).
 
@@ -77,10 +79,14 @@ Per-table notes (everything not listed is `text()` in both dialects):
 
 JSON payload types (`PhaseHistoryEntry[]`, the `context`/`scratch` shapes,
 `extension_status`/`skills_status` shapes) must be **the same declarations**
-on both schemas. If Phase 1 declared them inside `schema/sqlite.ts`, use a
-type-only import (`import type { … } from "./sqlite.js"` — erased at
-compile, no sqlite-core runtime import); if Phase 1 put them in a shared
-`schema/json-types.ts`, import from there. Do not redeclare.
+on both schemas. Phase 1's `schema/sqlite.ts` imports them from their origin
+modules **without re-exporting** — do the same here: type-only imports of
+`PhaseHistoryEntry` from `../workflow-run-store.js` and
+`ExtensionStatusMap` / `SkillsStatus` from
+`../../engine/github/profiles.js` (erased at compile, no runtime coupling);
+`context`/`scratch` are inline `Record<string, unknown>` (no named type
+exists — don't invent one here). Do not redeclare any of them, and do not
+import types from `./sqlite.js` unless Phase 1 actually exported them.
 
 Representative table — `workflow_runs` (json columns + defaults):
 
@@ -99,11 +105,15 @@ import {
   boolean, doublePrecision, index, integer, jsonb, pgTable, text,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { PhaseHistoryEntry, RunContext, RunScratch } from "./sqlite.js";
+// Same origin modules Phase 1's sqlite.ts imports from (it does not re-export):
+import type { PhaseHistoryEntry } from "../workflow-run-store.js";
 
 export const workflowRuns = pgTable(
   "workflow_runs",
   {
+    // Property order mirrors sqlite.ts (legacy physical order) — not
+    // load-bearing on PG (the parity test sorts), but keeps the two files
+    // diffable side by side.
     id: text("id").primaryKey(),
     workflowName: text("workflow_name").notNull(),
     triggerId: text("trigger_id").notNull(),
@@ -113,12 +123,12 @@ export const workflowRuns = pgTable(
     phaseHistory: jsonb("phase_history").$type<PhaseHistoryEntry[]>()
       .notNull().default(sql`'[]'::jsonb`),
     status: text("status").notNull().default("running"),
-    context: jsonb("context").$type<RunContext>(),
-    scratch: jsonb("scratch").$type<RunScratch>(),
-    restartCount: integer("restart_count").notNull().default(0),
+    context: jsonb("context").$type<Record<string, unknown>>(),
     startedAt: text("started_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     finishedAt: text("finished_at"),
+    scratch: jsonb("scratch").$type<Record<string, unknown>>(),
+    restartCount: integer("restart_count").notNull().default(0),
   },
   (t) => [
     index("idx_workflow_runs_trigger").on(t.triggerId, t.status),
@@ -279,11 +289,12 @@ import { runStateDbSuite } from "./store-suite.js";
 const MIGRATIONS = fileURLToPath(new URL("../../drizzle/pg", import.meta.url));
 
 async function makePgStateDb(): Promise<StateDb> {
-  // int8 (OID 20) → number: PG returns COUNT(*)/SUM as int8, and the
-  // pg-types default surfaces it as a STRING. finius fixes this with
-  // types.setTypeParser(20, Number) on node-postgres; the PGlite
-  // equivalent is the `parsers` constructor option. Without this, the
-  // stats-rollup assertions fail with "3" !== 3.
+  // int8 (OID 20) → number: PG returns COUNT(*)/SUM as int8. PGlite ≥0.5
+  // already parses int8 to a JS number by DEFAULT (verified on 0.5.4) — the
+  // string-int8 problem is node-postgres behavior, which finius fixes with
+  // types.setTypeParser(20, Number). Keep this explicit parser anyway: it
+  // documents the fromClient() contract (any FUTURE real PG client must
+  // normalize int8 itself) and pins us against a PGlite default change.
   const pglite = new PGlite({ parsers: { 20: (v: string) => Number(v) } });
   const db = drizzle(pglite);
   await migrate(db, { migrationsFolder: MIGRATIONS });
@@ -299,8 +310,8 @@ describe("StateDb on PGlite (postgres dialect)", () => {
 expects a teardown, close the PGlite handle there: `await pglite.close()`.)
 
 **Lifecycle — fresh PGlite per test (recommended).** The `makeDb` contract
-from Phase 3 is a pristine DB per call (the sqlite leg hands out `:memory:`
-per test), and reusing one PGlite across tests would leak identity-sequence
+from Phase 3 is a pristine DB per call (the sqlite leg hands out a temp-file
+DB per test), and reusing one PGlite across tests would leak identity-sequence
 positions, `__drizzle_migrations` rows, and any test data — silently
 weakening the suite. Cost is acceptable: the WASM module is compiled once
 per worker process and cached, so only the *first* `new PGlite()` pays the
@@ -379,15 +390,16 @@ fails, check this list before suspecting PGlite (it is real Postgres):
   `messaging_messages.id`; sqlite autoincrement silently accepted one. Any
   store code or suite fixture supplying an id fails here — fix the caller
   (inserts never supply an id).
-- **int8-as-string** — `COUNT(*)` / `SUM(...)` come back as strings via the
-  pg-types defaults. Canonical fix is the PGlite `parsers: { 20: Number }`
-  option shown above (finius: `types.setTypeParser(20, Number)` in its
-  client). Also record the requirement in `asStateClient()`'s doc comment
-  in `client.ts` — the cast can't enforce it, so any future PG client
-  handed to `fromClient` must normalize int8 itself. If flakiness appears
-  anyway (e.g. `AVG` → numeric OID 1700), a defensive `Number()` coercion
-  in `dialect.ts`'s aggregate helpers is acceptable — but prefer the
-  parser at the source.
+- **int8-as-string** — `COUNT(*)` / `SUM(...)` come back as int8. PGlite
+  ≥0.5 parses int8 to a JS number by default, so this should NOT bite on
+  the PGlite leg — it is a **node-postgres** default (string), which is why
+  finius calls `types.setTypeParser(20, Number)` in its client. Keep the
+  `parsers: { 20: Number }` option shown above as a pin, and record the
+  requirement in `asStateClient()`'s doc comment in `client.ts` — the cast
+  can't enforce it, so any future PG client handed to `fromClient` must
+  normalize int8 itself. If flakiness appears anyway (e.g. `AVG` → numeric
+  OID 1700), a defensive `Number()` coercion in `dialect.ts`'s aggregate
+  helpers is acceptable — but prefer the parser at the source.
 - **NULL ordering / GROUP BY strictness** — PG sorts NULLs last on `ASC`
   (sqlite: first) and rejects selecting non-aggregated columns absent from
   `GROUP BY` (sqlite: lax). Ordering tests on nullable columns
