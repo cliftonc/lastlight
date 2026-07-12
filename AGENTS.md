@@ -22,7 +22,7 @@ It is **not** a fork of Pi. It does not modify Pi. It composes Pi's SDK
    - A **library API** (`import { run } from "agentic-pi"`) that
      returns a fully-derived `RunResult` and never touches
      `process.stdout` / `process.stderr`.
-2. A native GitHub-tool extension (~31 tools, profile-gated) that
+2. A native GitHub-tool extension (~32 tools, profile-gated) that
    replaces the MCP server lastlight used to spawn separately.
 3. An optional Gondolin micro-VM sandbox for `read`/`write`/`edit`/`bash`.
 
@@ -65,7 +65,7 @@ src/
     client.ts             Octokit wrapper with retry/backoff (ported from mcp-github-app).
     credentials.ts        git credential-store file writer (mode 600, regex-validated).
     profiles.ts           4 profile names → tool name allowlists.
-    tools.ts              ~31 defineTool() registrations, github_ prefix.
+    tools.ts              ~32 defineTool() registrations, github_ prefix.
   extensions/skills/
     index.ts              loadSkillsExtension() — normalizes --skill paths (tilde/
                           relative → absolute, drops missing). Skills are a Pi-native

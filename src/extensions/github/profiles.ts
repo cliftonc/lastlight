@@ -49,6 +49,7 @@ const ISSUES_WRITE_TOOLS = [
   "github_add_labels",
   "github_remove_label",
   "github_create_label",
+  "github_ensure_labels",
 ] as const;
 
 const REVIEW_WRITE_TOOLS = [

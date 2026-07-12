@@ -364,6 +364,25 @@ export function buildGitHubTools(
         gh.createLabel(owner, repo, name, color, description),
     ),
 
+    tool(
+      "github_ensure_labels",
+      "Idempotently ensure a set of labels exists in a repository. Lists labels once, then creates only the missing ones (bulk). Prefer this over calling github_create_label per label — it never errors on labels that already exist. Returns { created, existed }.",
+      Type.Object({
+        owner: Type.String(),
+        repo: Type.String(),
+        labels: Type.Array(
+          Type.Object({
+            name: Type.String(),
+            color: Type.Optional(
+              Type.String({ description: "Hex color without #, e.g. 'ff0000'" }),
+            ),
+            description: Type.Optional(Type.String()),
+          }),
+        ),
+      }),
+      ({ owner, repo, labels }) => gh.ensureLabels(owner, repo, labels),
+    ),
+
     // ── Pull Requests ─────────────────────────────────────────────────
 
     tool(

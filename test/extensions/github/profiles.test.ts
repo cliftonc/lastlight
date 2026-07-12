@@ -53,6 +53,7 @@ describe("PROFILE_TOOLS", () => {
       "github_add_labels",
       "github_remove_label",
       "github_create_label",
+      "github_ensure_labels",
     ];
     for (const t of issuesOnly) {
       assert.ok(PROFILE_TOOLS["issues-write"].includes(t), `${t} missing from issues-write`);
@@ -62,9 +63,9 @@ describe("PROFILE_TOOLS", () => {
 
   test("expected tool counts per profile", () => {
     assert.equal(PROFILE_TOOLS.read.length, 18);
-    assert.equal(PROFILE_TOOLS["issues-write"].length, 24);
-    assert.equal(PROFILE_TOOLS["review-write"].length, 26);
-    assert.equal(PROFILE_TOOLS["repo-write"].length, 31);
+    assert.equal(PROFILE_TOOLS["issues-write"].length, 25);
+    assert.equal(PROFILE_TOOLS["review-write"].length, 27);
+    assert.equal(PROFILE_TOOLS["repo-write"].length, 32);
   });
 });
 

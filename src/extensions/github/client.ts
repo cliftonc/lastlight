@@ -13,9 +13,35 @@ const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
+/** GitHub's default grey — used when a label to ensure has no color. */
+const DEFAULT_LABEL_COLOR = "ededed";
+
 interface MaybeHttpError extends Error {
   status?: number;
-  response?: { status?: number; headers?: Record<string, string> };
+  response?: {
+    status?: number;
+    headers?: Record<string, string>;
+    data?: { errors?: Array<{ code?: string }> };
+  };
+}
+
+/**
+ * GitHub's create-label API is not idempotent: creating an existing label
+ * 422s with `{ resource: "Label", code: "already_exists" }`. Detecting this
+ * lets callers treat it as a benign no-op instead of a scary error.
+ */
+function isLabelAlreadyExists(err: unknown): boolean {
+  const e = err as MaybeHttpError;
+  const status = e?.status ?? e?.response?.status;
+  if (status !== 422) return false;
+  return (e.response?.data?.errors ?? []).some((x) => x.code === "already_exists");
+}
+
+/** The sentinel `createLabel` returns when a label already existed. */
+type LabelExisted = { ok: true; existed: true };
+
+function isLabelExisted(r: unknown): r is LabelExisted {
+  return typeof r === "object" && r !== null && (r as { existed?: unknown }).existed === true;
 }
 
 /**
@@ -365,9 +391,52 @@ export class GitHubClient {
   ) {
     return this.withRetry(async () => {
       const ok = await this.octokit();
-      const { data } = await ok.issues.createLabel({ owner, repo, name, color, description });
-      return data;
+      try {
+        const { data } = await ok.issues.createLabel({ owner, repo, name, color, description });
+        return data;
+      } catch (err) {
+        // Idempotent by design: a 422 already_exists means the label is already
+        // there, which is success for every caller. Swallow it rather than
+        // surfacing a validation error (the create API is not idempotent).
+        if (isLabelAlreadyExists(err)) return { ok: true, existed: true } satisfies LabelExisted;
+        throw err;
+      }
     });
+  }
+
+  /**
+   * Check-first + bulk: list labels once, then create only the missing ones.
+   * Folds the defensive "ensure the canonical triage labels exist" loop into a
+   * single idempotent call so triage runs stop emitting a stream of 422s.
+   */
+  async ensureLabels(
+    owner: string,
+    repo: string,
+    labels: Array<{ name: string; color?: string; description?: string }>,
+  ): Promise<{ created: string[]; existed: string[] }> {
+    const existing = await this.listLabels(owner, repo);
+    // GitHub treats label names case-insensitively for uniqueness.
+    const existingNames = new Set(existing.map((l) => l.name.toLowerCase()));
+    const created: string[] = [];
+    const existed: string[] = [];
+    for (const label of labels) {
+      if (existingNames.has(label.name.toLowerCase())) {
+        existed.push(label.name);
+        continue;
+      }
+      // createLabel is itself idempotent, so this also covers the race where a
+      // label appears between our list and the create.
+      const result = await this.createLabel(
+        owner,
+        repo,
+        label.name,
+        label.color ?? DEFAULT_LABEL_COLOR,
+        label.description,
+      );
+      if (isLabelExisted(result)) existed.push(label.name);
+      else created.push(label.name);
+    }
+    return { created, existed };
   }
 
   // ── Pull Requests ─────────────────────────────────────────────────
