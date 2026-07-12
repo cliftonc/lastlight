@@ -60,7 +60,11 @@ export async function runOnce(
   // same block as the others. Off unless explicitly enabled (see resolver).
   const telemetryConfig = resolveTelemetryConfig(config, process.env);
 
-  const authStorage = AuthStorage.create();
+  // Model auth (API keys + OAuth tokens) is read from the credential store.
+  // `config.authFile` lets a caller point at a specific auth.json (e.g. a host
+  // store shared across runs); undefined falls back to `<agent-dir>/auth.json`.
+  // The model call happens in this process, so the store never enters the VM.
+  const authStorage = AuthStorage.create(config.authFile);
   const modelRegistry = ModelRegistry.create(authStorage);
   const model = resolveModel(config.model, modelRegistry);
 

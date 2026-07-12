@@ -23,6 +23,23 @@ describe("parseArgs", () => {
     assert.equal(cfg.dangerouslySkipPermissions, false);
   });
 
+  test("--auth-file sets the credential store path", () => {
+    const cfg = parseArgs(["--model", "openai/gpt-4", "--auth-file", "/tmp/auth.json"]);
+    assert.equal(cfg.authFile, "/tmp/auth.json");
+  });
+
+  test("authFile is undefined by default (falls back to <agent-dir>/auth.json)", () => {
+    const cfg = parseArgs(["--model", "openai/gpt-4"]);
+    assert.equal(cfg.authFile, undefined);
+  });
+
+  test("--auth-file requires a non-empty value", () => {
+    assert.throws(
+      () => parseArgs(["--model", "openai/gpt-4", "--auth-file", "   "]),
+      /--auth-file requires a non-empty path/,
+    );
+  });
+
   test("--thinking accepts valid levels", () => {
     for (const level of ["off", "minimal", "low", "medium", "high", "xhigh"]) {
       const cfg = parseArgs(["--model", "openai/gpt-4", "--thinking", level]);
