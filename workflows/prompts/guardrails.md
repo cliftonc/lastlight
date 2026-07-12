@@ -27,14 +27,24 @@ guardrail — report it as such.
 
 CHECK THESE GUARDRAILS:
 
-1. **Test Framework** — Does the repo have a test runner (vitest, jest, pytest, cargo test, etc.)?
-   Do test files exist? Does the test command actually run?
+The rule for each check below: **if it is present, it MUST pass; if it is not
+present, that's fine.** A configured command that FAILS is a blocker. A command
+that simply doesn't exist is NOT a blocker.
+
+1. **Test Framework** — Does the repo have a test runner (vitest, jest, pytest,
+   cargo test, etc.)? Do test files exist? Does the test command run AND pass?
+   (Tests are the primary signal — a repo with no test framework at all is the
+   one absent-tooling case that still blocks, since there's nothing to verify
+   the build against.)
 
 2. **Linting** — Is a linter configured (eslint, biome, ruff, clippy, etc.)?
-   Does the lint command run?
+   If configured, the lint command MUST pass → a failing lint BLOCKS. If no
+   linter is configured at all, that's fine — note it and do NOT block.
 
-3. **Type Checking** — Is type checking configured (tsconfig.json + tsc, mypy, cargo check, etc.)?
-   Does the typecheck command run?
+3. **Type Checking** — Is type checking configured (tsconfig.json + tsc, mypy,
+   cargo check, etc.)? If configured, the typecheck command MUST pass → a
+   failing typecheck BLOCKS. If not configured at all, that's fine — note it
+   and do NOT block.
 
 4. **CI Pipeline** (informational only) — Does .github/workflows/ exist with test/lint steps?
 
@@ -61,7 +71,17 @@ no `guardrails:` prefix — judge it from the issue's intent.
 
 Otherwise (the issue is normal feature/bug work, not about adding tooling):
 
-IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests completely broken):
+Apply the present-must-pass rule. BLOCK if ANY of these hold:
+- there is no test framework at all, or the test command is broken / fails;
+- a linter IS configured but the lint command fails;
+- type checking IS configured but the typecheck command fails;
+- the dependency install itself failed.
+
+A check that is simply ABSENT (no linter configured, no typecheck configured) is
+NOT a blocker — note it in the report and proceed. Do not create a guardrails
+issue merely because lint or typecheck tooling is missing.
+
+IF A BLOCKING CONDITION ABOVE HOLDS:
 - Use the MCP tool github_create_issue to create a guardrails issue in the repo with:
   - title prefixed exactly with "guardrails:" (e.g. "guardrails: no test framework configured")
   - labels including {{bootstrapLabel}} so subsequent build attempts on this issue
@@ -70,7 +90,7 @@ IF ANY BLOCKING GUARDRAIL IS MISSING (no test framework at all, or tests complet
 - Use github_add_issue_comment on issue #{{issueNumber}} to link the guardrails issue
 - OUTPUT must include: BLOCKED
 
-IF ALL CRITICAL GUARDRAILS ARE PRESENT (tests work, even if linting/types are missing):
+OTHERWISE — every check that EXISTS passes (absent lint/typecheck is fine):
 - OUTPUT must include: READY
 
 OUTPUT: Exactly one of READY or BLOCKED, followed by a brief summary of what was found.
