@@ -34,6 +34,31 @@ function normalizePin(raw: unknown): string | null {
 }
 
 /**
+ * Pick the *commit* SHA for tag `pin` from `git ls-remote … 'refs/tags/<pin>*'`
+ * output. Annotated tags emit two rows — the tag object (`refs/tags/<pin>`) and
+ * the peeled commit (`refs/tags/<pin>^{}`); only the glob pattern surfaces the
+ * peeled row (an exact `refs/tags/<pin>` hides it). We want the commit, since
+ * that's what `git checkout <pin>` lands HEAD on and what an image built at the
+ * tag is stamped with. Preference: peeled commit → exact tag ref (lightweight
+ * tag / branch) → first row. Null when nothing looks like a SHA.
+ */
+export function pickTagCommit(lsRemoteOut: string | null, pin: string): string | null {
+  if (!lsRemoteOut) return null;
+  const rows = lsRemoteOut
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [sha, ref] = l.split(/\s+/);
+      return { sha: sha ?? "", ref: ref ?? "" };
+    });
+  const peeled = rows.find((r) => r.ref === `refs/tags/${pin}^{}`);
+  const exact = rows.find((r) => r.ref === `refs/tags/${pin}`);
+  const chosen = (peeled ?? exact ?? rows[0])?.sha ?? "";
+  return /^[0-9a-f]{7,40}$/i.test(chosen) ? chosen : null;
+}
+
+/**
  * The core-version pin for the overlay at `overlayDir`, or `null` to track main.
  * `LASTLIGHT_CORE_VERSION` wins over the file. Missing / unreadable / malformed
  * config.yaml is treated as unpinned (never throws).

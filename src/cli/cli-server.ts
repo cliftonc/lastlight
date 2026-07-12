@@ -25,7 +25,7 @@ import chalk from "chalk";
 import { resolveServerHome, saveServerHome, serverHomeSource } from "./cli-config.js";
 import { detectGh, scaffoldOverlayFiles, bootstrapOverlayRepo } from "../config/overlay-bootstrap.js";
 import { enumerateOverlayAssets, type OverlayAsset } from "../config/overlay-assets.js";
-import { readCorePin } from "../config/core-pin.js";
+import { readCorePin, pickTagCommit } from "../config/core-pin.js";
 
 const exec = promisify(execFile);
 
@@ -208,18 +208,16 @@ function compareDrift(current: string | null, latest: string | null): RepoDrift 
 
 /**
  * Commit SHA a pin (git tag/ref) resolves to on `origin`, or null. Uses
- * `ls-remote` (no fetch) and prefers the peeled `…^{}` line so an *annotated*
- * tag compares against its commit — matching what `git rev-parse HEAD` reports
- * after checking the tag out.
+ * `ls-remote` (no fetch) with a glob so an *annotated* tag surfaces its peeled
+ * `…^{}` commit row — matching what `git rev-parse HEAD` reports after checking
+ * the tag out. Falls back to a plain ref lookup for branch/SHA pins.
  */
 async function resolvePinnedSha(home: string, pin: string): Promise<string | null> {
-  const out =
-    (await captureSoft("git", ["ls-remote", "origin", `refs/tags/${pin}`], home)) ||
-    (await captureSoft("git", ["ls-remote", "origin", pin], home));
-  if (!out) return null;
-  const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
-  const peeled = lines.find((l) => /\^\{\}$/.test(l));
-  return parseLsRemoteSha(peeled ?? lines[0] ?? "");
+  const tags = await captureSoft("git", ["ls-remote", "origin", `refs/tags/${pin}*`], home);
+  const fromTag = pickTagCommit(tags, pin);
+  if (fromTag) return fromTag;
+  const ref = await captureSoft("git", ["ls-remote", "origin", pin], home);
+  return ref ? parseLsRemoteSha(ref) : null;
 }
 
 /**

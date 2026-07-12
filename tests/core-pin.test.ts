@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { readCorePin } from "#src/config/core-pin.js";
+import { readCorePin, pickTagCommit } from "#src/config/core-pin.js";
 
 /** Make a throwaway overlay dir with the given config.yaml body (or none). */
 function overlay(body?: string): string {
@@ -51,5 +51,36 @@ describe("readCorePin", () => {
   it("an env sentinel (main) falls through to the file", () => {
     process.env.LASTLIGHT_CORE_VERSION = "main";
     expect(readCorePin(overlay("deploy:\n  version: v0.10.6\n"))).toBe("v0.10.6");
+  });
+});
+
+describe("pickTagCommit", () => {
+  const pin = "v0.11.0";
+  const tagObj = "d68ba9390b9ae0a672bb70bf8ef8244e6143c3b6";
+  const commit = "def4a3ffde2934c15bffc3cfd0b6f79f7486d947";
+
+  it("returns the peeled commit for an annotated tag (not the tag object)", () => {
+    // Exactly what `git ls-remote origin refs/tags/v0.11.0*` emits.
+    const out = `${tagObj}\trefs/tags/${pin}\n${commit}\trefs/tags/${pin}^{}`;
+    expect(pickTagCommit(out, pin)).toBe(commit);
+  });
+
+  it("returns the tag SHA for a lightweight tag (no peeled row)", () => {
+    const out = `${commit}\trefs/tags/${pin}`;
+    expect(pickTagCommit(out, pin)).toBe(commit);
+  });
+
+  it("ignores sibling tags the glob also matched (v0.11.0 vs v0.11.0-rc1)", () => {
+    const rc = "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
+    const out =
+      `${rc}\trefs/tags/${pin}-rc1\n` +
+      `${tagObj}\trefs/tags/${pin}\n${commit}\trefs/tags/${pin}^{}`;
+    expect(pickTagCommit(out, pin)).toBe(commit);
+  });
+
+  it("returns null for empty / junk output", () => {
+    expect(pickTagCommit(null, pin)).toBeNull();
+    expect(pickTagCommit("", pin)).toBeNull();
+    expect(pickTagCommit("not-a-sha\trefs/tags/v0.11.0", pin)).toBeNull();
   });
 });

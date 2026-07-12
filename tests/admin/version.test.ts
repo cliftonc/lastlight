@@ -95,7 +95,8 @@ describe("getServerVersion", () => {
 
   describe("pinned (LASTLIGHT_CORE_VERSION / deploy.version)", () => {
     const pinTag = "refs/tags/v9.9.9";
-    const pinLsRemote = `ls-remote https://github.com/nearform/lastlight ${pinTag}`;
+    // Glob pattern — the only form that surfaces the peeled `^{}` commit row.
+    const pinLsRemote = `ls-remote https://github.com/nearform/lastlight ${pinTag}*`;
 
     // Annotated tag: two lines; the peeled ^{} line is the commit the checkout
     // lands on. tagObj is the tag object SHA (must be ignored).

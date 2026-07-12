@@ -20,7 +20,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { readCorePin } from "../config/core-pin.js";
+import { readCorePin, pickTagCommit } from "../config/core-pin.js";
 
 const exec = promisify(execFile);
 
@@ -90,13 +90,11 @@ function readPackageVersion(): string | null {
  */
 async function coreLatestSha(pin: string | null): Promise<string | null> {
   if (!pin) return lsRemoteSha(await softCapture("git", ["ls-remote", CORE_REMOTE, "HEAD"]));
-  const out =
-    (await softCapture("git", ["ls-remote", CORE_REMOTE, `refs/tags/${pin}`])) ||
-    (await softCapture("git", ["ls-remote", CORE_REMOTE, pin]));
-  if (!out) return null;
-  const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
-  const peeled = lines.find((l) => /\^\{\}$/.test(l));
-  return lsRemoteSha(peeled ?? lines[0] ?? "");
+  const tags = await softCapture("git", ["ls-remote", CORE_REMOTE, `refs/tags/${pin}*`]);
+  const fromTag = pickTagCommit(tags, pin);
+  if (fromTag) return fromTag;
+  const ref = await softCapture("git", ["ls-remote", CORE_REMOTE, pin]);
+  return lsRemoteSha(ref);
 }
 
 /** Compute core + overlay version drift for `GET /admin/api/server/info`. */
