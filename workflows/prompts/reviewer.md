@@ -41,15 +41,20 @@ AFTER REVIEW:
 2. Update status.md with reviewer_status: APPROVED or REQUEST_CHANGES (matching the verdict)
 {{#if !externalizeArtifacts}}3. git add .lastlight/ && git commit -m "review: verdict for #{{issueNumber}}" && git push origin HEAD{{/if}}{{#if externalizeArtifacts}}3. Do NOT git add or commit {{issueDir}}/ — the harness persists it to the Last Light server automatically.{{/if}}
 
-OUTPUT FORMAT — your stdout MUST start with one of these two lines, EXACTLY, on its own line, with no leading whitespace:
+OUTPUT FORMAT — after you have written the files above, your LAST action MUST be
+a final text message (NOT a tool call). Do not end your turn on a file write or
+any other tool call. That final message MUST start with one of these two lines,
+EXACTLY, on its own line, with no leading whitespace:
 
    VERDICT: APPROVED
    VERDICT: REQUEST_CHANGES
 
-The orchestrator parses this marker to decide whether to run the fix loop. Do
-NOT use any other phrasing for the verdict on the first line — words like
-"approved", "approval", "request changes", or "looks good" elsewhere in the
-body are fine, but the first non-empty line MUST be exactly the marker above.
+The orchestrator parses this marker from your final message to decide whether to
+run the fix loop — if you end on a tool call with no closing text, the run has
+no verdict to read. Do NOT use any other phrasing for the verdict on the first
+line — words like "approved", "approval", "request changes", or "looks good"
+elsewhere in the body are fine, but the first non-empty line MUST be exactly the
+marker above.
 
 After the marker line, write a 2–5 sentence summary of the most important
-findings.
+findings. Writing the files is NOT the last step — this summary is.

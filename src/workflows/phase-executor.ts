@@ -16,13 +16,14 @@ import {
   type ReviewFindingsDoc,
 } from "../engine/github/review-poster.js";
 import type { StateDb } from "../state/db.js";
+import { BuildAssetStore } from "../state/build-assets.js";
 import type { AgentWorkflowDefinition, PhaseDefinition } from "./schema.js";
 import { phaseSkillNames } from "./schema.js";
 import { loadPromptTemplate, resolveSkillPaths } from "./loader.js";
 import { getRuntimeConfig, getBotName } from "../config/config.js";
 import { renderTemplate, type TemplateContext } from "./templates.js";
 import { evalUntilExpression } from "./loop-eval.js";
-import { parseReviewerVerdict } from "./verdict.js";
+import { parseReviewerVerdict, type ParsedVerdict } from "./verdict.js";
 import { PhaseRef } from "./phase-ref.js";
 import type { DagNode } from "./dag.js";
 import type { PhaseResult } from "./runner.js";
@@ -613,6 +614,41 @@ export class PhaseExecutor {
   }
 
   /** Host path of the run's repo checkout — mirrors sandbox/index.ts layout. */
+  /**
+   * The reviewer's authoritative verdict lives in reviewer-verdict.md (its
+   * OUTPUT CONTRACT), so recover it when the stdout marker is missing. Server
+   * mode reads the harvested doc from the build-asset store; repo mode reads the
+   * committed doc from the host checkout under issueDir. Returns the parsed
+   * verdict only when the file actually carries a `VERDICT:` marker (else
+   * undefined — we don't want to launder the same fragile fallback through a
+   * different source).
+   */
+  private readReviewerVerdictFromFile(): ParsedVerdict | undefined {
+    const config = this.run.config;
+    let text: string | undefined;
+    if (config.buildAssets === "server" && config.buildAssetsDir && config.buildAssetsKey) {
+      try {
+        text = new BuildAssetStore(config.buildAssetsDir).read(config.buildAssetsKey, "reviewer-verdict.md");
+      } catch {
+        /* fall through to the workspace copy */
+      }
+    }
+    if (!text) {
+      const issueDir = typeof this.run.ctx.issueDir === "string" ? this.run.ctx.issueDir : "";
+      if (issueDir) {
+        const path = join(this.resolveHostRepoDir(String(this.run.ctx.repo)), issueDir, "reviewer-verdict.md");
+        try {
+          if (existsSync(path)) text = readFileSync(path, "utf8");
+        } catch {
+          /* ignore — no recoverable verdict */
+        }
+      }
+    }
+    if (!text) return undefined;
+    const parsed = parseReviewerVerdict(text);
+    return parsed.viaFallback ? undefined : parsed;
+  }
+
   private resolveHostRepoDir(repo: string): string {
     const config = this.run.config;
     const sandboxBase = resolve(config.sandboxDir || join(config.stateDir || "data", "sandboxes"));
@@ -1083,19 +1119,47 @@ export class PhaseExecutor {
         verdict = parseReviewerVerdict(prevOutput).verdict;
         results.push({ phase: reviewLabel, success: true, output: "Already completed" });
       } else {
-        results.push({ phase: reviewLabel, ...pickResult(rr.result) });
-        await this.reporter.onEnd(reviewLabel, results[results.length - 1]);
         const reviewerOutput = (rr.result.output || "").trim();
-        const parsed = parseReviewerVerdict(reviewerOutput);
+        let parsed = parseReviewerVerdict(reviewerOutput);
+        let resultOverride = pickResult(rr.result);
+        // Some models (e.g. gpt-5-codex) end their final turn on the
+        // reviewer-verdict.md write with no trailing stdout, so the VERDICT:
+        // marker is absent from stdout even though the review completed cleanly
+        // — the run then mislabels a clean APPROVED as a failure AND runs a
+        // needless fix cycle. When the marker is missing from stdout, trust the
+        // verdict FILE (the reviewer's OUTPUT CONTRACT) and treat the phase as
+        // successful. Gated to soft outcomes (clean exit / "unknown" /
+        // truncated) so a hard sandbox failure can't be masked by a stale
+        // verdict doc left in the persistent per-issue store.
+        const soft =
+          rr.result.success ||
+          rr.result.stopReason === "unknown" ||
+          rr.result.stopReason === "error_truncated";
+        if (parsed.viaFallback && soft) {
+          const fromFile = this.readReviewerVerdictFromFile();
+          if (fromFile) {
+            parsed = fromFile;
+            resultOverride = { ...resultOverride, success: true, error: undefined };
+            console.warn(
+              `[runner] Reviewer stdout missing VERDICT: marker — recovered ${fromFile.verdict} from reviewer-verdict.md`,
+            );
+          }
+        }
         verdict = parsed.verdict;
         if (parsed.viaFallback) {
           console.warn(
             `[runner] Reviewer output missing VERDICT: marker — using fallback detection (isApproved=${verdict === "APPROVED"})`,
           );
         }
-        // Persist the review output so a resumed run can re-derive this verdict.
+        results.push({ phase: reviewLabel, ...resultOverride });
+        await this.reporter.onEnd(reviewLabel, results[results.length - 1]);
+        // Persist a marker-bearing output so a resumed run re-derives this exact
+        // verdict (stdout may have been empty when recovered from the file).
+        const persistText = /^\s*VERDICT:/im.test(reviewerOutput)
+          ? reviewerOutput
+          : `VERDICT: ${verdict}\n${reviewerOutput}`;
         const execId = "executionId" in rr ? rr.executionId : undefined;
-        if (execId && db) db.executions.recordOutputText(execId, reviewerOutput);
+        if (execId && db) db.executions.recordOutputText(execId, persistText);
       }
 
       const isApproved = verdict === "APPROVED";
