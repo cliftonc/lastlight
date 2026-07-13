@@ -235,6 +235,24 @@ export function isTerminated(error?: string): boolean {
   );
 }
 
+/**
+ * Classify an execution outcome as *soft* — a clean exit that produced no
+ * usable output — versus *hard* (a real crash). Generic and phase-agnostic:
+ * it reads only the result fields, with no notion of reviewer/socratic. Both
+ * the reviewer loop and the generic loop consume it so their recovery logic
+ * stays in lockstep. A soft outcome is recoverable (retry / trust an on-disk
+ * artifact / advance); a hard one — terminated, fatal, tool error, non-zero
+ * exit — is not. See `mapStopReason` in the executors for the stop-reason
+ * vocabulary this keys off (`unknown` / `error_truncated` are the soft ones).
+ */
+export function isSoftOutcome(
+  r: Pick<ExecutionResult, "success" | "error" | "stopReason">,
+): boolean {
+  if (r.success) return true;
+  if (isTerminated(r.error)) return false;
+  return r.stopReason === "unknown" || r.stopReason === "error_truncated";
+}
+
 function pickResult(r: ExecutionResult): Pick<ExecutionResult, "success" | "output" | "error"> {
   return { success: r.success, output: r.output, error: r.error };
 }
@@ -1131,10 +1149,7 @@ export class PhaseExecutor {
         // successful. Gated to soft outcomes (clean exit / "unknown" /
         // truncated) so a hard sandbox failure can't be masked by a stale
         // verdict doc left in the persistent per-issue store.
-        const soft =
-          rr.result.success ||
-          rr.result.stopReason === "unknown" ||
-          rr.result.stopReason === "error_truncated";
+        const soft = isSoftOutcome(rr.result);
         if (parsed.viaFallback && soft) {
           const fromFile = this.readReviewerVerdictFromFile();
           if (fromFile) {
@@ -1309,7 +1324,7 @@ export class PhaseExecutor {
       const prompt = buildPhasePrompt(phase, this.run.ctx, iterCtx);
       const { model, variant } = this.resolveModelVariant(phase.model, phase.variant, phaseName);
 
-      const ir = await this.runPhaseCall(iterLabel, prompt, phase, model, variant);
+      let ir = await this.runPhaseCall(iterLabel, prompt, phase, model, variant);
 
       if (ir.skipped) {
         if (ir.reason === "running") {
@@ -1318,6 +1333,46 @@ export class PhaseExecutor {
         }
         results.push({ phase: iterLabel, success: true, output: "Already completed" });
         complete = true;
+        break;
+      }
+
+      // Soft-outcome retry: a clean-but-empty turn (stop reason unknown /
+      // truncated, no usable output — not a real crash) re-runs the same round
+      // up to `on_soft_failure.retries` times, under a distinct `_iter_n_retry`
+      // ledger label so resume/dedup treats it as its own step. The round
+      // number (`scratch.iteration`) is NOT advanced by a retry.
+      const softPolicy = loop.on_soft_failure ?? { retries: 0, then: "fail" as const };
+      let softAttempts = 0;
+      while (!ir.result.success && isSoftOutcome(ir.result) && softAttempts < softPolicy.retries) {
+        softAttempts++;
+        const retryLabel = PhaseRef.iterRetry(phaseName, iteration).format();
+        await this.reporter.onStart(retryLabel);
+        const retry = await this.runPhaseCall(retryLabel, prompt, phase, model, variant);
+        if (retry.skipped) break;
+        await this.reporter.onEnd(retryLabel, { phase: retryLabel, ...pickResult(retry.result) });
+        ir = retry;
+      }
+
+      // A soft outcome that survived the retries: honour the loop's policy.
+      // `then: complete` treats the loop as finished (as if the `until`
+      // condition matched) and advances downstream with the work gathered so
+      // far — recording the iteration as a success so the run-level rollup
+      // (`anyFailed` in runner.ts) stays green. `then: fail` (the default)
+      // drops through to the hard-fail path below, preserving old behavior.
+      if (!ir.result.success && isSoftOutcome(ir.result) && softPolicy.then === "complete") {
+        const iterExecutionId = "executionId" in ir ? ir.executionId : undefined;
+        results.push({ phase: iterLabel, success: true, output: ir.result.output || previousOutput || "" });
+        await this.reporter.onEnd(iterLabel, results[results.length - 1]);
+        complete = true;
+        if (scratchKey && db && workflowId) {
+          const slot: Record<string, unknown> = { ...scratchSlot, iteration, ready: true };
+          if (iterExecutionId) slot.lastOutputExecutionId = iterExecutionId;
+          delete slot.lastOutput;
+          db.runs.mergeScratch(workflowId, { [scratchKey]: slot });
+          scratch[scratchKey] = slot;
+        }
+        this.reporter.persistPhase(iterLabel, `iteration ${iteration} — soft outcome, advancing`);
+        await this.reporter.step(phaseName, "done");
         break;
       }
 

@@ -14,13 +14,17 @@
  *   cycle n fix               → reviewer_fix_n
  *   cycle n re-review         → reviewer_recheck_n
  *   generic-loop iteration n  → reviewer_iter_n
+ *   generic-loop retry of n   → reviewer_iter_n_retry
  *
  * `n` is the 1-based cycle; `fix_k` and `recheck_k` pair within a cycle. The
- * legacy bare-numeric re-review form (`reviewer_2`) is dropped entirely — it is
- * neither produced nor recognized.
+ * `_retry` suffix is the one-shot re-run of a generic-loop iteration whose first
+ * attempt came back empty (a "soft" outcome); it gets its own ledger row so
+ * resume/dedup doesn't skip it, and the dashboard's longest-prefix grouping
+ * still nests it under the same parent. The legacy bare-numeric re-review form
+ * (`reviewer_2`) is dropped entirely — it is neither produced nor recognized.
  */
 
-export type PhaseKind = "phase" | "fix" | "recheck" | "iter";
+export type PhaseKind = "phase" | "fix" | "recheck" | "iter" | "retry";
 
 export class PhaseRef {
   constructor(
@@ -49,6 +53,11 @@ export class PhaseRef {
     return new PhaseRef(base, "iter", n);
   }
 
+  /** The one-shot retry of generic-loop iteration `n` after a soft outcome. */
+  static iterRetry(base: string, n: number): PhaseRef {
+    return new PhaseRef(base, "retry", n);
+  }
+
   format(): string {
     switch (this.kind) {
       case "phase":
@@ -59,6 +68,8 @@ export class PhaseRef {
         return `${this.base}_recheck_${this.index}`;
       case "iter":
         return `${this.base}_iter_${this.index}`;
+      case "retry":
+        return `${this.base}_iter_${this.index}_retry`;
     }
   }
 
@@ -69,7 +80,9 @@ export class PhaseRef {
    * `phase` whose base is the whole string.
    */
   static parse(label: string): PhaseRef {
-    let m = label.match(/^(.*)_fix_(\d+)$/);
+    let m = label.match(/^(.*)_iter_(\d+)_retry$/);
+    if (m) return new PhaseRef(m[1], "retry", Number(m[2]));
+    m = label.match(/^(.*)_fix_(\d+)$/);
     if (m) return new PhaseRef(m[1], "fix", Number(m[2]));
     m = label.match(/^(.*)_recheck_(\d+)$/);
     if (m) return new PhaseRef(m[1], "recheck", Number(m[2]));

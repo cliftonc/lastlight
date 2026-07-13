@@ -23,6 +23,7 @@ import { executeAgent, executeCommand } from "#src/engine/agent-executor.js";
 import { listRunningContainers } from "#src/admin/docker.js";
 import {
   PhaseExecutor,
+  isSoftOutcome,
   type PhaseReporter,
   type PhaseResolver,
   type PhaseRunContext,
@@ -51,6 +52,11 @@ function makeSuccessResult(output = "success output") {
 }
 function makeFailResult(error = "boom") {
   return { success: false, output: "", error, turns: 2, durationMs: 500 };
+}
+// A "soft" outcome: the agent exited cleanly but produced no usable output —
+// stop reason `unknown` (no final text, no agent_end), NOT a crash.
+function makeSoftResult(output = "") {
+  return { success: false, output, error: undefined, turns: 3, durationMs: 400, stopReason: "unknown" };
 }
 
 interface RecordedStep {
@@ -535,6 +541,125 @@ describe("PhaseExecutor — generic loop", () => {
 
     expect(outcome.status).toBe("failed");
     expect(reporter.failed).toContain("iter boom");
+  });
+
+  // on_soft_failure: a clean-but-empty iteration ("unknown") is recoverable.
+  const softDef = (then: "fail" | "complete", retries = 1): AgentWorkflowDefinition => ({
+    kind: "agent",
+    name: "gl",
+    phases: [
+      makePhase({
+        name: "worker",
+        prompt: "prompts/worker.md",
+        output_var: "work",
+        generic_loop: {
+          max_iterations: 3,
+          until: "output.contains('DONE')",
+          interactive: false,
+          fresh_context: false,
+          on_soft_failure: { retries, then },
+        },
+      }),
+    ],
+  });
+
+  it("retries a soft iteration and continues when the retry succeeds", async () => {
+    mockExecuteAgent
+      .mockResolvedValueOnce(makeSoftResult())
+      .mockResolvedValueOnce(makeSuccessResult("all DONE"));
+    const reporter = makeReporter();
+    const exec = new PhaseExecutor(makeRun(softDef("complete"), makeMockDb()), reporter, makeResolver());
+
+    const outcome = await exec.execute(node("worker"), {});
+
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // initial + 1 retry
+    expect(outcome.status).toBe("succeeded");
+    expect(reporter.failed).toHaveLength(0);
+  });
+
+  it("advances (then: complete) when a soft iteration persists after the retry", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSoftResult());
+    const reporter = makeReporter();
+    const exec = new PhaseExecutor(makeRun(softDef("complete"), makeMockDb()), reporter, makeResolver());
+
+    const outcome = await exec.execute(node("worker"), {});
+
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // initial + 1 retry, then advance
+    expect(outcome.status).toBe("succeeded");
+    expect(reporter.failed).toHaveLength(0);
+    // The rollup guard: no failed PhaseResult may leak into the run's phases[],
+    // or runner.ts `anyFailed` would fail the whole run despite "succeeded".
+    expect(outcome.results.every((r) => r.success)).toBe(true);
+  });
+
+  it("still hard-fails a real crash even with on_soft_failure set", async () => {
+    mockExecuteAgent.mockResolvedValue({ ...makeFailResult("fatal boom"), stopReason: "error_fatal" });
+    const reporter = makeReporter();
+    const exec = new PhaseExecutor(makeRun(softDef("complete"), makeMockDb()), reporter, makeResolver());
+
+    const outcome = await exec.execute(node("worker"), {});
+
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(1); // hard = no retry
+    expect(outcome.status).toBe("failed");
+    expect(reporter.failed).toContain("fatal boom");
+  });
+
+  it("hard-fails a persistent soft iteration when then: fail (default policy)", async () => {
+    mockExecuteAgent.mockResolvedValue(makeSoftResult("nothing to add"));
+    const reporter = makeReporter();
+    const exec = new PhaseExecutor(makeRun(softDef("fail"), makeMockDb()), reporter, makeResolver());
+
+    const outcome = await exec.execute(node("worker"), {});
+
+    expect(mockExecuteAgent).toHaveBeenCalledTimes(2); // initial + 1 retry, then fail
+    expect(outcome.status).toBe("failed");
+  });
+
+  it("on soft-complete of a reply loop, persists the round without advancing scratch.iteration", async () => {
+    const replyDef: AgentWorkflowDefinition = {
+      kind: "agent",
+      name: "gl",
+      phases: [
+        makePhase({
+          name: "worker",
+          prompt: "prompts/worker.md",
+          generic_loop: {
+            max_iterations: 3,
+            until: "output.contains('DONE')",
+            interactive: true,
+            gate_kind: "reply",
+            scratch_key: "sk",
+            fresh_context: false,
+            on_soft_failure: { retries: 1, then: "complete" },
+          },
+        }),
+      ],
+    };
+    const db = makeMockDb();
+    mockExecuteAgent.mockResolvedValue(makeSoftResult());
+    const exec = new PhaseExecutor(makeRun(replyDef, db), makeReporter(), makeResolver());
+
+    const outcome = await exec.execute(node("worker"), {});
+
+    expect(outcome.status).toBe("succeeded");
+    expect(outcome.paused).toBeFalsy(); // advanced, did NOT pause the reply gate
+    expect(db.runs.mergeScratch).toHaveBeenCalledWith(
+      "wf-1",
+      { sk: expect.objectContaining({ iteration: 1, ready: true }) },
+    );
+  });
+});
+
+describe("isSoftOutcome — generic soft/hard classifier", () => {
+  it("treats a clean-but-empty exit as soft and a crash as hard", () => {
+    expect(isSoftOutcome({ success: true, error: undefined, stopReason: "success" })).toBe(true);
+    expect(isSoftOutcome({ success: false, error: undefined, stopReason: "unknown" })).toBe(true);
+    expect(isSoftOutcome({ success: false, error: undefined, stopReason: "error_truncated" })).toBe(true);
+    expect(isSoftOutcome({ success: false, error: undefined, stopReason: "error_fatal" })).toBe(false);
+    expect(isSoftOutcome({ success: false, error: undefined, stopReason: "error_tool" })).toBe(false);
+    expect(isSoftOutcome({ success: false, error: undefined, stopReason: "error_exit_1" })).toBe(false);
+    // A terminated run is hard even if the stop reason looks soft.
+    expect(isSoftOutcome({ success: false, error: "container is not running", stopReason: "unknown" })).toBe(false);
   });
 });
 

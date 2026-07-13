@@ -79,6 +79,29 @@ const GenericLoopSchema = z
     scratch_key: z.string().optional(),
     /** Reset agent context each iteration (don't pass previousOutput) */
     fresh_context: z.boolean().default(false),
+    /**
+     * Policy for a *soft* iteration outcome — the agent exited cleanly but
+     * produced no usable output (stop reason `unknown` / `error_truncated`),
+     * as opposed to a real crash (fatal / tool error / non-zero exit /
+     * terminated), which always fails the run. Absent ⇒ `{ retries: 0, then:
+     * "fail" }`, i.e. any non-success iteration hard-fails the workflow (the
+     * historical behavior). Opt in to make a loop resilient to a degenerate
+     * turn — e.g. the socratic explore loop retries once, then advances to
+     * synthesis with the Q&A gathered so far instead of discarding the run.
+     */
+    on_soft_failure: z
+      .object({
+        /** Re-run the same iteration up to N times on a soft outcome. */
+        retries: z.number().int().min(0).default(0),
+        /**
+         * What to do when an iteration is still soft after `retries`:
+         * `fail` (default) hard-fails the workflow; `complete` treats the
+         * loop as finished (as if the `until` condition matched) and lets
+         * downstream phases run.
+         */
+        then: z.enum(["fail", "complete"]).default("fail"),
+      })
+      .optional(),
   })
   .refine((v) => v.until !== undefined || v.until_bash !== undefined, {
     message: "generic_loop requires at least one of: until, until_bash",

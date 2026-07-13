@@ -567,7 +567,11 @@ export function finalizeFromRunResult(
     agentError?.errorMessage ||
     toolErrorText ||
     (truncated ? truncationMessage : result.finalText) ||
-    stopReason;
+    // `unknown` means the agent exited cleanly but emitted no final text and no
+    // agent_end event — the bare word is opaque in the dashboard, so spell it out.
+    (stopReason === "unknown"
+      ? "agent produced no output (no final text, no agent_end)"
+      : stopReason);
   if (!success || accountError) {
     if (accountError) console.error(`  [executor] Account error: ${errorText}`);
     else console.error(`  [executor] Run failed (${stopReason}): ${errorText}`);

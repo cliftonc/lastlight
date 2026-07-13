@@ -185,6 +185,23 @@ against the persisted workspace — exit 0 ends the loop. (It used to run on the
 harness host via `execSync`; it now executes in the same container the phase
 does.)
 
+**Soft-failure policy (`generic_loop.on_soft_failure`).** By default any
+non-success iteration hard-fails the whole workflow. That's wrong for a
+long interactive loop like `explore`'s `socratic` phase: a single degenerate
+turn — the agent exits cleanly but emits no final text and no `agent_end`, so
+`mapStopReason` returns `"unknown"` (a *soft* outcome, distinct from a real
+crash) — would discard every accumulated Q&A round. Declaring
+`on_soft_failure: { retries: N, then: fail | complete }` makes the loop
+resilient: a soft iteration re-runs up to `N` times (under a distinct
+`_iter_n_retry` ledger label), and if it's *still* soft, `then: complete`
+treats the loop as finished (as if `until` matched) and advances downstream
+with the work gathered so far, while `then: fail` (the default) keeps the
+old hard-fail. The soft/hard split is the generic `isSoftOutcome(result)`
+classifier (phase-executor.ts, shared with the reviewer loop's fallback
+recovery) — soft = `stopReason` `unknown` / `error_truncated`; hard =
+terminated / `error_fatal` / `error_tool` / `error_exit_*`. Field absent ⇒
+today's behavior exactly (only `explore.yaml`'s socratic phase opts in).
+
 ## Per-phase sandbox requirement (`requires_sandbox`)
 
 A phase can declare `requires_sandbox: docker | gondolin | none` to gate itself
@@ -307,6 +324,10 @@ cycle:
 - `${parentPhaseName}_fix_${n}` — the nth fix cycle
 - `${parentPhaseName}_recheck_${n}` — the nth re-review
 - `${parentPhaseName}_iter_${n}` — generic-loop iteration n
+- `${parentPhaseName}_iter_${n}_retry` — the one-shot retry of a generic-loop
+  iteration whose first attempt came back soft (see `on_soft_failure` above); it
+  gets its own ledger row so resume/dedup treats it as a distinct step, and the
+  dashboard's longest-prefix grouping still nests it under the parent
 
 The legacy bare-numeric re-review form (`reviewer_2`) is **dropped** — it was
 untagged, ambiguous with literal phase names, and inconsistent with the

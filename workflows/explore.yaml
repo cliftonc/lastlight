@@ -39,6 +39,12 @@ phases:
       interactive: true
       gate_kind: reply
       scratch_key: socratic
+      # A degenerate turn (agent exits with no question) retries once; if it's
+      # still empty, advance to synthesis with the Q&A gathered so far instead
+      # of hard-failing the whole explore run.
+      on_soft_failure:
+        retries: 1
+        then: complete
       gate_message: |
         _Just reply to this thread with your answers — no need to @mention me. I'll keep going until we have enough to write this up._
         _Say `we're done` at any point to jump straight to the spec draft._
