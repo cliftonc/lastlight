@@ -5,6 +5,14 @@ on:
   push:
     branches:
       - main
+  # Callable as a reusable workflow so the release pipeline (publish.yml) runs
+  # the exact same checks before building images — one definition, no drift.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to check out (defaults to the triggering ref)"
+        required: false
+        type: string
 
 # Cancel superseded runs on the same ref (e.g. a force-push to a PR branch).
 concurrency:
@@ -19,6 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Empty for push/pull_request → checkout uses the triggering ref. Set
+          # by publish.yml's workflow_call to check out the release tag.
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: actions/setup-node@v6
         with:

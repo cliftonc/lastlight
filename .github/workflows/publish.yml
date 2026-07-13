@@ -1,14 +1,24 @@
 name: Publish release
 
-# The release pipeline: on a GitHub Release, build+push the Docker images to
-# GHCR, THEN publish the CLI to npm — in that order, as two jobs (`npm` needs
-# `images`). Ordering matters: if npm published first, a deployer could
-# `npm i -g lastlight@X.Y.Z && server update` in the window before the
-# `:vX.Y.Z` images exist and the image pull would fail. Chaining the jobs closes
-# that race — the CLI only goes live once its images are already in GHCR.
+# The release pipeline: on a GitHub Release, run CI checks, THEN build+push the
+# Docker images to GHCR, THEN publish the CLI to npm — in that order, as three
+# chained jobs (`images` needs `checks`, `npm` needs `images`).
 #
-# `workflow_dispatch` rebuilds the IMAGES for a specific tag only (the npm job is
-# gated to `release` events, so a dispatch never publishes to npm).
+# Two ordering guarantees:
+#   1. `checks` runs FIRST, so a failing test/type error fails the release in a
+#      couple of minutes BEFORE the slow Docker build — instead of after images
+#      are already pushed. The `images` and `npm` jobs then trust it and don't
+#      re-run the test suite. `checks` REUSES the CI workflow (`ci.yml` via
+#      `workflow_call`) so the release runs the exact same typecheck + dashboard
+#      typecheck + tests as every PR — one definition, no drift.
+#   2. Images publish before npm. If npm published first, a deployer could
+#      `npm i -g lastlight@X.Y.Z && server update` in the window before the
+#      `:vX.Y.Z` images exist and the image pull would fail. Chaining the jobs
+#      closes that race — the CLI only goes live once its images are in GHCR.
+#
+# `workflow_dispatch` rebuilds the IMAGES for a specific tag only (still gated
+# behind `checks`; the npm job is gated to `release` events, so a dispatch never
+# publishes to npm).
 #
 # Build the four locally-built images (agent + sandbox-base + sandbox +
 # sandbox-qa) once and push them to GHCR, so `lastlight server update` PULLS them
@@ -56,7 +66,16 @@ permissions:
   id-token: write # npm provenance on the downstream publish job
 
 jobs:
+  # Run the full CI suite (server typecheck + dashboard typecheck + tests) by
+  # REUSING ci.yml, against the release tag. Gates both `images` and `npm` so a
+  # failure fails the release before the slow Docker build ever starts.
+  checks:
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.release.tag_name || inputs.tag }}
+
   images:
+    needs: checks
     runs-on: ubuntu-latest
     env:
       REGISTRY: ghcr.io/nearform
@@ -112,7 +131,8 @@ jobs:
   # `:vX.Y.Z` images only goes live once those images are already in GHCR.
   # A sandbox-qa failure is non-fatal (continue-on-error) so `images` still
   # succeeds and npm still publishes; a core-image failure fails `images` and
-  # skips npm.
+  # skips npm. Typecheck + tests already ran in `checks` (transitively via
+  # `images`), so this job only builds dist/ and publishes.
   npm:
     needs: images
     if: github.event_name == 'release'
@@ -130,12 +150,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Typecheck
-        run: npx tsc --noEmit
-
-      - name: Test
-        run: npx vitest run
 
       - name: Build
         run: npm run build
