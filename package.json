@@ -1,6 +1,6 @@
 {
   "name": "agentic-pi",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "A drop-in coding-agent harness built on earendil-works/pi, designed to replace opencode in workflow-driven systems like lastlight.",
   "license": "MIT",
   "repository": {
@@ -47,8 +47,8 @@
   },
   "dependencies": {
     "@earendil-works/gondolin": "^0.12.0",
-    "@earendil-works/pi-ai": "^0.80.2",
-    "@earendil-works/pi-coding-agent": "^0.80.2",
+    "@earendil-works/pi-ai": "^0.80.6",
+    "@earendil-works/pi-coding-agent": "^0.80.6",
     "@ff-labs/pi-fff": "^0.9.4",
     "@octokit/auth-app": "^7.1.4",
     "@octokit/rest": "^21.0.2",

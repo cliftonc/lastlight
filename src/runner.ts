@@ -370,7 +370,11 @@ export async function runOnce(
   }
 
   let sawError = false;
-  let agentEndSeen = false;
+  // Only a terminal agent_end (willRetry === false) counts as the run finishing.
+  // Pi emits an agent_end per internal run, and intermediate ones before an
+  // auto-retry carry willRetry: true — treating those as terminal would let a
+  // retryable failure masquerade as a clean finish.
+  let terminalAgentEndSeen = false;
 
   // Step cap (config.maxSteps). Pi exposes no max-turns / shouldStopAfterTurn
   // hook through its SDK, so we enforce the cap from the event stream: count
@@ -385,40 +389,48 @@ export async function runOnce(
   let maxStepsHit = false;
 
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-    telemetry.onEvent(event);
-    emitter.event(event as unknown as Record<string, unknown> & { type: string });
+    // Pi dispatches listeners synchronously inside session.prompt(); an
+    // uncaught throw here would reject prompt() and surface as fatal_error
+    // instead of a clean agent_end. Contain it so a subscriber bug can never
+    // convert a finished run into a failure.
+    try {
+      telemetry.onEvent(event);
+      emitter.event(event as unknown as Record<string, unknown> & { type: string });
 
-    if (event.type === "tool_execution_end" && event.isError) {
-      sawError = true;
-    }
-    if (event.type === "agent_end") {
-      agentEndSeen = true;
-    }
-    if (event.type === "turn_end") {
-      stepCount++;
-      // toolResults.length > 0 ⇒ this turn ran tools ⇒ the agent will start
-      // another turn. A turn with no tool calls is the final answer; the loop
-      // is already exiting, so there is nothing to cap (and emitting the event
-      // would be a false positive).
-      if (
-        config.maxSteps !== undefined &&
-        !maxStepsHit &&
-        stepCount >= config.maxSteps &&
-        event.toolResults.length > 0
-      ) {
-        maxStepsHit = true;
-        emitter.event({
-          type: "max_steps_reached",
-          maxSteps: config.maxSteps,
-          steps: stepCount,
-        });
-        // Fire-and-forget: abort() sets the abort signal synchronously (via
-        // agent.abort()) before returning, which is all we need here — the
-        // loop is currently awaiting this very listener, so awaiting abort()'s
-        // waitForIdle() would deadlock. waitForIdle resolves rather than
-        // rejects, but guard the floating promise anyway.
-        void session.abort().catch(() => undefined);
+      if (event.type === "tool_execution_end" && event.isError) {
+        sawError = true;
       }
+      if (event.type === "agent_end" && !event.willRetry) {
+        terminalAgentEndSeen = true;
+      }
+      if (event.type === "turn_end") {
+        stepCount++;
+        // toolResults.length > 0 ⇒ this turn ran tools ⇒ the agent will start
+        // another turn. A turn with no tool calls is the final answer; the loop
+        // is already exiting, so there is nothing to cap (and emitting the event
+        // would be a false positive).
+        if (
+          config.maxSteps !== undefined &&
+          !maxStepsHit &&
+          stepCount >= config.maxSteps &&
+          event.toolResults.length > 0
+        ) {
+          maxStepsHit = true;
+          emitter.event({
+            type: "max_steps_reached",
+            maxSteps: config.maxSteps,
+            steps: stepCount,
+          });
+          // Fire-and-forget: abort() sets the abort signal synchronously (via
+          // agent.abort()) before returning, which is all we need here — the
+          // loop is currently awaiting this very listener, so awaiting abort()'s
+          // waitForIdle() would deadlock. waitForIdle resolves rather than
+          // rejects, but guard the floating promise anyway.
+          void session.abort().catch(() => undefined);
+        }
+      }
+    } catch (err) {
+      warn(`event handler error (${event.type}): ${(err as Error).message}`);
     }
   });
 
@@ -435,6 +447,29 @@ export async function runOnce(
     session.dispose();
     await sandbox.close();
     return 1;
+  }
+
+  // Reliability backstop: guarantee exactly one terminal agent_end per run.
+  // prompt() resolving is decoupled from agent_end — Pi can resolve without a
+  // terminal agent_end (empty completion, or a retry aborted mid-backoff so the
+  // only agent_end carried willRetry: true). Downstream keys on agent_end to
+  // detect completion; synthesize one so it always arrives. On a normal finish
+  // Pi already emitted the terminal agent_end, so this is skipped and default
+  // JSONL fixtures stay byte-identical.
+  if (!terminalAgentEndSeen) {
+    let messages: unknown[] = [];
+    try {
+      messages = session.messages;
+    } catch {
+      // Never let the terminal guarantee itself throw.
+    }
+    emitter.event({
+      type: "agent_end",
+      messages,
+      willRetry: false,
+      // Marks the fallback; absent on a Pi-native agent_end.
+      synthesized: true,
+    });
   }
 
   // Synthesize a usage snapshot from the session stats. Pi's event stream
@@ -465,7 +500,7 @@ export async function runOnce(
   session.dispose();
   await sandbox.close();
 
-  if (sawError && !agentEndSeen) return 1;
+  if (sawError && !terminalAgentEndSeen) return 1;
   return 0;
 }
 

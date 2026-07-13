@@ -216,8 +216,15 @@ export interface RunResult {
   exitCode: RunOnceExitCode;
   /** True iff `exitCode === 0`. */
   ok: boolean;
-  /** True iff Pi emitted an `agent_end` (clean termination). */
+  /** True iff a terminal `agent_end` (not `willRetry`) was seen (clean termination). */
   agentEnded: boolean;
+  /**
+   * True iff the terminal `agent_end` was synthesized by the runner because Pi
+   * resolved the prompt without emitting one (e.g. a retry aborted mid-backoff).
+   * `agentEnded` is still true in this case — the run terminated cleanly — but
+   * the final text may be empty.
+   */
+  agentEndSynthesized?: boolean;
   /** True iff at least one tool returned an error. */
   toolErrors: boolean;
   /**
@@ -372,7 +379,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
   return buildResult(exitCode, collector.records, warnings);
 }
 
-function buildResult(
+/**
+ * Fold the emitted JSONL records into a `RunResult`. Exported for unit tests:
+ * the terminal-event handling (willRetry filtering, synthesized agent_end,
+ * finalText backfill) is pure record→result logic and testable without a live
+ * session.
+ */
+export function buildResult(
   exitCode: RunOnceExitCode,
   records: EmitterRecord[],
   warnings: string[],
@@ -477,12 +490,36 @@ function buildResult(
         result.maxStepsReached = true;
         break;
 
-      case "agent_end":
+      case "agent_end": {
+        // Intermediate agent_end events (before an auto-retry) carry
+        // willRetry: true — they are not the run finishing.
+        if (r.willRetry) break;
         result.agentEnded = true;
-        if (Array.isArray(r.messages)) {
-          result.messages = r.messages as unknown[];
+        if (r.synthesized === true) result.agentEndSynthesized = true;
+        const msgs = Array.isArray(r.messages) ? (r.messages as unknown[]) : [];
+        result.messages = msgs;
+        // Backfill the final answer if no assistant message_end carried text
+        // (e.g. the synthesized-terminal case). Walk the last assistant
+        // message the same way the message_end branch does.
+        if (!result.finalText) {
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i] as
+              | { role?: string; content?: Array<{ type?: string; text?: string }> }
+              | undefined;
+            if (m?.role === "assistant" && Array.isArray(m.content)) {
+              const text = m.content
+                .filter((c) => c.type === "text" && typeof c.text === "string")
+                .map((c) => c.text as string)
+                .join("");
+              if (text) {
+                result.finalText = text;
+                break;
+              }
+            }
+          }
         }
         break;
+      }
 
       case "usage_snapshot":
         result.stats = r.stats as RunResult["stats"];
