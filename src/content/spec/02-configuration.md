@@ -23,7 +23,9 @@ warning and fall back — they don't crash boot.
 interface LastLightConfig {
   port: number;
   webhookSecret: string;
-  botLogin: string;
+  botName: string;                        // GitHub App slug (no [bot]); default "last-light".
+                                          // Derives the @mention handle, botLogin, and git author.
+  botLogin: string;                       // "<botName>[bot]" unless BOT_LOGIN overrides
   dbPath: string;
   workflowDir: string;
   stateDir: string;
@@ -36,6 +38,7 @@ interface LastLightConfig {
   sandbox: "gondolin" | "docker" | "smol" | "none";
   buildAssets: "repo" | "server";         // where build handoff docs live
   buildAssetsDir: string;                  // server-mode store root ($STATE_DIR/build-assets)
+  deploy: { version: string | null };      // core-version pin (git tag/ref) or null = track main
   githubApp?: {
     appId: string;
     privateKeyPath: string;
@@ -76,7 +79,8 @@ missing `GITHUB_APP_ID` is fine for a chat-only deployment.
 | `GITHUB_APP_INSTALLATION_ID` | GitHub integration | — |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | GitHub integration | `./secrets/app.pem` |
 | `WEBHOOK_SECRET` | webhook signature verification | empty (verification **disabled**) |
-| `BOT_LOGIN` | self-event filtering | `last-light[bot]` |
+| `GITHUB_APP_BOT_NAME` | bot slug — `@mention` handle + `botLogin` + git author (also overlay `botName`) | `last-light` |
+| `BOT_LOGIN` | self-event filtering (overrides the `<botName>[bot]` derivation) | `<botName>[bot]` |
 
 The PEM is validated at boot: must exist and parse as PEM (`src/index.ts:42–51`).
 Missing or malformed PEM exits `78`.
@@ -257,6 +261,7 @@ OpenRouter) are forwarded unconditionally.
 | `LASTLIGHT_WRITE_GLOBAL_GIT` | when `"1"`, configure git globally not just per-repo | `0` |
 | `LASTLIGHT_GIT_SHA` | core git SHA baked into the image (Dockerfile `ARG`); surfaced by `GET /admin/api/server/info` for the dashboard drift banner | empty → "unknown" |
 | `LASTLIGHT_BUILD_DATE` | build date baked alongside `LASTLIGHT_GIT_SHA` | empty |
+| `LASTLIGHT_CORE_VERSION` | override the overlay's `deploy.version` core-version pin (git tag/ref); `server update\|setup` checks core out at it and the drift banner compares against it | overlay `deploy.version`; `main`/`latest`/unset = track main |
 
 ### CLI client
 
@@ -272,9 +277,29 @@ The CLI is also the host control plane: `lastlight server
 setup\|start\|stop\|restart\|update\|status` shell out to `git` + `docker
 compose` in `LASTLIGHT_HOME` (resolved `--home` → env → `serverHome` in
 `~/.lastlight/config.json` → `~/lastlight`). `server update` reproduces the
-production `deploy.sh` flow (pull core + overlay → build → `up -d
---remove-orphans` → restart egress sidecars → health-check). These run on the
-server, unlike the rest of the CLI which targets a remote instance over HTTP.
+production `deploy.sh` flow (pull overlay → converge core → **pull prebuilt
+images** → `up -d --remove-orphans` → restart egress sidecars → health-check).
+By default it *pulls* the four images from GHCR
+(`ghcr.io/nearform/lastlight-{agent,sandbox-base,sandbox,sandbox-qa}`, published
+on GitHub Release by the `images` job of `.github/workflows/publish.yml`) at the tag
+`resolveImageTag` returns — the overlay `deploy.version` pin, else `:latest` —
+and re-tags each to its local name so compose + the harness (fixed names in
+`src/sandbox/images.ts`) find them unchanged; `--local` builds from source
+instead (the old `docker compose build` waves). These run on the server, unlike
+the rest of the CLI which targets a remote instance over HTTP.
+
+**Core-version pin.** The overlay drives *which core version* an instance runs
+via `deploy.version` in its `config.yaml` (or the `LASTLIGHT_CORE_VERSION` env
+override) — read by `readCorePin()` (`src/config/core-pin.ts`). `server update`
+pulls the overlay first, then, if a pin is set, `git fetch --tags` + `git
+checkout <tag>` (detached HEAD) instead of `git checkout main` + `pull --ff-only
+origin main`; `server setup` applies the same pin before its first build. Unset,
+or the sentinels `main`/`latest`, mean track `main`. When pinned, the drift
+surfaces (`server status`, the dashboard `GET /server/info` banner) compare the
+running image's SHA against the pinned tag rather than `main` HEAD — so "behind"
+means "pin bumped, redeploy needed", and an already-pinned instance shows a
+quiet "pinned vX.Y.Z" label instead of an update nudge. This makes bumping
+`deploy.version` in the overlay repo the declarative trigger for a CI/CD deploy.
 
 `lastlight fork <workflow>` (host-local, `src/cli/fork-cli.ts`) copies a built-in
 workflow YAML plus every prompt and skill its phases reference into the
@@ -370,6 +395,14 @@ at `206–214`.
 Per-task resolvers — `resolveModel(models, taskType)`, `resolveVariant()` —
 sit alongside the schema (`296–297`, `336–340`) and are called from the
 runner and dispatch closure, not from the config loader itself.
+
+The cheap one-shot helpers (`classifier`, `screener` in `src/engine/llm.ts`)
+also honour the `models:` map: `defaultFastModel(taskType)` reads
+`config.models[taskType]` first (so `models.classifier` / `models.screener` in
+`config.yaml` work like any per-task model), then the env `OPENCODE_MODELS`
+map, then the first provider's fast model. Unlike `resolveModel`, it never
+falls back to `models.default` — an unset helper stays on the cheap provider
+default rather than inheriting the (expensive) workflow default.
 
 ## Rebuild notes
 

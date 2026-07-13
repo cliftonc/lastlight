@@ -54,9 +54,21 @@ through — webhook dispatch, CLI, cron, admin resume.
   description?: string;
   trigger?: string;      // informational
   variables?: Record<string, string>;
+  classification?: {     // how the intent classifier routes to this workflow (issue #164)
+    intent: string;      //   the intent token this workflow owns (unique; not a control intent)
+    description: string; //   the category paragraph merged into the composed classifier prompt
+    examples?: string[]; //   optional one-line classifier examples
+  };
   phases: PhaseDefinition[];
 }
 ```
+
+The optional `classification` block makes a workflow **self-describing to the
+router**: its `description`/`examples` are composed into the classifier prompt
+(`workflows/prompts/classifier.md`), and its `intent` becomes routable via the
+router's `getWorkflowByIntent` fallback — so adding a workflow (even in an
+overlay) can add a new intent with no core change. See
+[05-router.md → Build-intent classifier](05-router.md#build-intent-classifier).
 
 **Phase level** (`schema.ts:84–182`):
 
@@ -242,10 +254,26 @@ enters the next fix cycle.
     scratch_key: "socratic"      # accumulate Q&A under workflow_runs.scratch.socratic
     fresh_context: false         # pass {{previousOutput}} to next iteration
     interactive: true
+    on_soft_failure:             # optional; absent = hard-fail on any non-success
+      retries: 1                 # re-run a soft (empty) iteration up to N times
+      then: complete             # then: fail (default) | complete
 ```
 
-Iteration naming: `${phaseName}_iter_${n}`. The until-condition is
+Iteration naming: `${phaseName}_iter_${n}`; a soft-failure retry is
+`${phaseName}_iter_${n}_retry` (its own ledger row). The until-condition is
 evaluated by `loop-eval.ts` — see below.
+
+**`on_soft_failure`** — by default any non-success iteration hard-fails the
+whole run, which is wrong for a long interactive loop (one degenerate turn
+would discard all accumulated state). A *soft* outcome is a clean exit that
+produced no usable output — `mapStopReason` returns `"unknown"` /
+`"error_truncated"` — as opposed to a hard crash (terminated / `error_fatal` /
+`error_tool` / `error_exit_*`); the split is the generic `isSoftOutcome(result)`
+classifier, shared with the reviewer loop's fallback recovery. When declared,
+a soft iteration re-runs up to `retries` times; if still soft, `then: complete`
+ends the loop as if `until` matched (advancing downstream with the work so far,
+recorded as success so the run's `anyFailed` rollup stays green) while
+`then: fail` keeps the hard-fail. Only `explore.yaml`'s socratic phase opts in.
 
 ## Approval gates and reply gates
 

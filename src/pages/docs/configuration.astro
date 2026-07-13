@@ -279,6 +279,12 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 				<td>empty → "unknown"</td>
 				<td>Core git SHA + build date baked into the agent image (Dockerfile <code>ARG</code>s; <code>lastlight server update</code> stamps them). Surfaced by <code>GET /admin/api/server/info</code> for the dashboard "update available" banner.</td>
 			</tr>
+			<tr>
+				<td><code>LASTLIGHT_CORE_VERSION</code></td>
+				<td>No</td>
+				<td>overlay <code>deploy.version</code>; unset = track main</td>
+				<td>Override the overlay's core-version pin (a git tag/ref). <code>lastlight server update</code>/<code>setup</code> checks core out at it and the drift banner compares against it. <code>main</code>/<code>latest</code>/unset tracks <code>main</code>. See <a href="/docs/production">Production</a>.</td>
+			</tr>
 		</tbody>
 	</table>
 

@@ -207,11 +207,33 @@ docker compose up -d agent</code></pre>
 
 	<p>
 		Or let the CLI do it. With <code>lastlight</code> installed on the host,
-		<code>lastlight server update</code> pulls the core repo + your overlay,
+		<code>lastlight server update</code> pulls your overlay + the core repo,
 		rebuilds, recreates the stack, restarts the egress sidecars, and
 		health-checks — the same flow, with live progress. <code>server
 		start\|stop\|restart\|status</code> cover the rest of the lifecycle, and
 		the dashboard shows an "update available" banner when you're behind.
+	</p>
+
+	<p>
+		<strong>Pinning the core version.</strong> Add a <code>deploy.version</code>
+		(a git tag/ref, e.g. <code>v0.10.6</code>) to your overlay's
+		<code>config.yaml</code> to pin which core release this instance runs;
+		unset — or <code>main</code>/<code>latest</code> — tracks <code>main</code>:
+	</p>
+
+	<pre><code>deploy:
+  version: v0.10.6</code></pre>
+
+	<p>
+		<code>lastlight server update</code> (and <code>server setup</code>) then
+		checks core out at that tag and rebuilds, instead of following
+		<code>main</code>. This makes the overlay repo the single source of truth
+		for the deployed version — bump <code>deploy.version</code>, commit, and a
+		CI/CD job running <code>lastlight server update</code> converges the host.
+		When pinned, the dashboard drops the <code>main</code>-drift nudge: it
+		only warns "redeploy needed" if the running image is behind the pinned
+		tag, otherwise shows a quiet "pinned" label. (The
+		<code>LASTLIGHT_CORE_VERSION</code> env var overrides the file for CI.)
 	</p>
 
 	<p>
