@@ -27,9 +27,7 @@ variable "PUSH_LATEST" { default = false }
 
 function "tags" {
   params = [name]
-  result = PUSH_LATEST
-    ? ["${REGISTRY}/${name}:${TAG}", "${REGISTRY}/${name}:latest"]
-    : ["${REGISTRY}/${name}:${TAG}"]
+  result = PUSH_LATEST ? ["${REGISTRY}/${name}:${TAG}", "${REGISTRY}/${name}:latest"] : ["${REGISTRY}/${name}:${TAG}"]
 }
 
 function "cache_from" {
