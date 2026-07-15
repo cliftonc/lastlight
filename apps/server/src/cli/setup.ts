@@ -299,9 +299,18 @@ function printBanner(): void {
 
 // ── Preflight ───────────────────────────────────────────────────────────────
 
+// A checkout is recognized by its compose file — at apps/server/ in the
+// monorepo layout (Phase 2), or at the root of a pre-monorepo checkout.
+function isCheckout(dir: string): boolean {
+  return (
+    existsSync(join(dir, "apps", "server", "docker-compose.yml")) ||
+    existsSync(join(dir, "docker-compose.yml"))
+  );
+}
+
 function preflight(): void {
-  if (!existsSync("docker-compose.yml")) {
-    if (existsSync("lastlight/docker-compose.yml")) {
+  if (!isCheckout(".")) {
+    if (isCheckout("lastlight")) {
       p.log.info("Found existing lastlight/ directory — continuing setup there.");
       process.chdir("lastlight");
     } else {

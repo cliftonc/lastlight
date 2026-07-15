@@ -76,7 +76,14 @@ function bundledAssetRoot(): string {
  * evals workspace — the core no longer has to be a colocated checkout.
  */
 function resolveCoreRoot(...candidates: string[]): string {
-  for (const c of candidates) if (c && hasBuiltins(c)) return c;
+  for (const c of candidates) {
+    if (!c) continue;
+    // Monorepo layout (Phase 2): a checkout's built-ins live under
+    // apps/server/ — prefer that over the git root itself.
+    const monorepo = path.join(c, "apps", "server");
+    if (hasBuiltins(monorepo)) return monorepo;
+    if (hasBuiltins(c)) return c;
+  }
   return bundledAssetRoot();
 }
 

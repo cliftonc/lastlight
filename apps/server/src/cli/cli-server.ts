@@ -37,6 +37,17 @@ export const CORE_REPO = "git@github.com:nearform/lastlight.git";
 export const OVERLAY_REPO_DEFAULT = "git@github-instance:cliftonc/lastlight-instance.git";
 /** Compose override the overlay ships; symlinked into the project root. */
 export const OVERRIDE_FILE = "docker-compose.override.yml";
+
+/**
+ * The F5 home/serverDir split (monorepo Phase 2): `home` stays the GIT ROOT —
+ * all `git -C home` operations, the `instance/` overlay clone,
+ * `readCorePin(home/instance)` and the override symlink live there — while the
+ * compose/asset root (docker-compose.yml, the Dockerfiles, the built-in
+ * workflows/skills/agent-context) moved to `<home>/apps/server`.
+ */
+export function serverDir(home: string): string {
+  return path.join(home, "apps", "server");
+}
 /** Egress firewall + collector sidecars force-restarted after an update so they
  *  re-read any regenerated nginx/coredns/collector configs (mirrors deploy.sh). */
 export const SIDECARS = [
@@ -182,10 +193,37 @@ function runStep(label: string, cmd: string, args: string[], cwd?: string): Prom
   });
 }
 
+/**
+ * File/project args spliced into EVERY compose invocation (the F5 split): the
+ * compose file lives at `<home>/apps/server/docker-compose.yml`, but the
+ * project directory stays `home` so the compose file's `./`-relative paths
+ * (`build.context: .`, `./instance`, `./apps/server/Caddyfile`) resolve
+ * against the repo root exactly as before the move. Passing an explicit `-f`
+ * DISABLES compose's auto-loading of `docker-compose.override.yml`, so the
+ * overlay's override symlink is passed as a second `-f` when present.
+ */
+export function composeFileArgs(home: string): string[] {
+  const args = ["-f", path.join(serverDir(home), "docker-compose.yml")];
+  const override = path.join(home, OVERRIDE_FILE);
+  if (fs.existsSync(override)) args.push("-f", override);
+  args.push("--project-directory", home);
+  return args;
+}
+
+/**
+ * Full argv (after the binary) for one compose invocation — pure assembly of
+ * the binary's `pre` args + the `-f`/`--project-directory` prefix + the
+ * subcommand args. Exported for the F5 regression fence
+ * (tests/cli/compose-argv.test.ts).
+ */
+export function composeArgv(home: string, args: string[], pre: string[] = ["compose"]): string[] {
+  return [...pre, ...composeFileArgs(home), ...args];
+}
+
 /** Run a `docker compose` subcommand in `home` with inherited stdio. */
 function composeRun(home: string, label: string, args: string[]): Promise<void> {
   const c = compose();
-  return runStep(label, c.cmd, [...c.pre, ...args], home);
+  return runStep(label, c.cmd, composeArgv(home, args, c.pre), home);
 }
 
 /** Capture a command's trimmed stdout (used for git SHAs); throws on failure. */
@@ -652,7 +690,8 @@ export async function serverStatus(opts: ServerOpts): Promise<{
 
   // Forked/overridden assets the overlay supplies (workflows, prompts, skills,
   // agent-context). Shared with the dashboard's Config → Overrides pane.
-  const overrides = enumerateOverlayAssets({ coreRoot: home, overlayRoot: path.join(home, "instance") });
+  // Built-in workflows/skills/agent-context moved to apps/server/ (F5 split).
+  const overrides = enumerateOverlayAssets({ coreRoot: serverDir(home), overlayRoot: path.join(home, "instance") });
   console.log();
   console.log(chalk.bold("Overrides"));
   if (overrides.length === 0) {
