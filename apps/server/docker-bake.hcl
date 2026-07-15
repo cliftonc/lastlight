@@ -17,6 +17,12 @@
 # The `contexts` key MUST match the leaves' `FROM` after ARG substitution — both
 # default `ARG BASE_IMAGE=lastlight-sandbox-base:latest`, so we do NOT override
 # BASE_IMAGE here (that's only for host `--local` / compose builds).
+#
+# MONOREPO (Phase 2): this file lives at apps/server/ but the BUILD CONTEXT is
+# the repo root. buildx bake resolves relative paths against the BAKE FILE's
+# directory, so context = "../.." (the repo root) and each dockerfile path is
+# context-relative ("apps/server/<name>.Dockerfile"). Invoke from anywhere:
+#   docker buildx bake -f apps/server/docker-bake.hcl core
 
 variable "REGISTRY" { default = "ghcr.io/nearform" }
 variable "TAG" { default = "latest" }
@@ -48,8 +54,8 @@ group "core" {
 
 # Only the agent Dockerfile takes GIT_SHA / BUILD_DATE (the drift banner).
 target "agent" {
-  dockerfile = "Dockerfile"
-  context    = "."
+  dockerfile = "apps/server/Dockerfile"
+  context    = "../.."
   tags       = tags("lastlight-agent")
   args       = { GIT_SHA = GIT_SHA, BUILD_DATE = BUILD_DATE }
   cache-from = cache_from("lastlight-agent")
@@ -57,16 +63,16 @@ target "agent" {
 }
 
 target "sandbox-base" {
-  dockerfile = "sandbox-base.Dockerfile"
-  context    = "."
+  dockerfile = "apps/server/sandbox-base.Dockerfile"
+  context    = "../.."
   tags       = tags("lastlight-sandbox-base")
   cache-from = cache_from("lastlight-sandbox-base")
   cache-to   = cache_to("lastlight-sandbox-base")
 }
 
 target "sandbox" {
-  dockerfile = "sandbox.Dockerfile"
-  context    = "."
+  dockerfile = "apps/server/sandbox.Dockerfile"
+  context    = "../.."
   # Override the Dockerfile's BASE_IMAGE to a bare placeholder and link that
   # name to the sandbox-base target — a bare, tag-less context name matches
   # `FROM ${BASE_IMAGE}` reliably (a registry-style `name:tag` key normalizes to
@@ -84,8 +90,8 @@ target "sandbox" {
 # content-keyed context dependency (cache-restored in seconds), which is what
 # keeps its Chromium layer cached across releases.
 target "sandbox-qa" {
-  dockerfile = "sandbox-qa.Dockerfile"
-  context    = "."
+  dockerfile = "apps/server/sandbox-qa.Dockerfile"
+  context    = "../.."
   args       = { BASE_IMAGE = "sandbox-base" }
   contexts   = { sandbox-base = "target:sandbox-base" }
   tags       = tags("lastlight-sandbox-qa")

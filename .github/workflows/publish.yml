@@ -105,7 +105,7 @@ jobs:
       # Required set: agent + sandbox-base + sandbox, built in one bake graph so
       # `sandbox` links to `target:sandbox-base` by content (see docker-bake.hcl).
       - name: Build & push core images
-        run: docker buildx bake --push core
+        run: docker buildx bake -f apps/server/docker-bake.hcl --push core
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ env.TAG }}
@@ -119,7 +119,7 @@ jobs:
       # layer cached across releases.
       - name: Build & push sandbox-qa (non-fatal)
         continue-on-error: true
-        run: docker buildx bake --push sandbox-qa
+        run: docker buildx bake -f apps/server/docker-bake.hcl --push sandbox-qa
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ env.TAG }}
@@ -157,4 +157,7 @@ jobs:
         run: pnpm run build
 
       - name: Publish
+        # The publishable package moved to apps/server (the repo root is a
+        # private orchestration package) — publish from the package dir.
         run: npm publish --provenance --access public
+        working-directory: apps/server

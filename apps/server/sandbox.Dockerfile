@@ -29,7 +29,7 @@ FROM ${BASE_IMAGE}
 # layer (and sandbox-qa's Chromium) on every version bump; the pin changes only
 # when agentic-pi actually does. `npm install -g <tarball>` doesn't consult a
 # lockfile, hence the explicit integrity verification.
-COPY sandbox/agentic-pi.pin /tmp/agentic-pi.pin
+COPY apps/server/sandbox/agentic-pi.pin /tmp/agentic-pi.pin
 RUN version=$(sed -n '1p' /tmp/agentic-pi.pin) \
  && expected=$(sed -n '2p' /tmp/agentic-pi.pin) \
  && echo "Installing agentic-pi@${version} (${expected})" \
@@ -45,10 +45,10 @@ RUN version=$(sed -n '1p' /tmp/agentic-pi.pin) \
  && rm /tmp/agentic-pi.tgz /tmp/agentic-pi.pin
 
 # Agent context (baked at /app/ — entrypoint cats into workspace/AGENTS.md)
-COPY agent-context/ /app/agent-context/
+COPY apps/server/agent-context/ /app/agent-context/
 
 # Entrypoint
-COPY deploy/sandbox-entrypoint.sh /app/sandbox-entrypoint.sh
+COPY apps/server/deploy/sandbox-entrypoint.sh /app/sandbox-entrypoint.sh
 RUN chmod +x /app/sandbox-entrypoint.sh
 
 # Own app dir for agent user

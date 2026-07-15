@@ -5,6 +5,46 @@
 # CLAUDE.md's Deployment section). The aspirational native/systemd model in
 # deploy/native/ is inactive. The same image is also used for local prod-like
 # smoke testing and the LASTLIGHT_SANDBOX=docker fallback path.
+#
+# Monorepo layout (Phase 2): the BUILD CONTEXT is the repo root; the server
+# package lives at apps/server/. A multi-stage pnpm workspace build compiles
+# harness + dashboard in /repo, then `pnpm deploy --prod` shapes /app exactly
+# like the pre-monorepo image (dist/, config/, workflows/, skills/,
+# agent-context/, deploy/, node_modules/, package.json — pnpm deploy selects
+# files per the package `files` field). dashboard/dist and CLAUDE.md are NOT
+# in `files` (the npm tarball list is a fence) so they're restored with
+# explicit COPYs. Runtime cwd stays /app, which is what keeps the admin SPA's
+# cwd-relative `serveStatic({ root: "dashboard/dist" })` working (fence F3).
+
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM node:22-slim AS build
+
+# python3/make/g++ for native modules (better-sqlite3) compiled during install.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# pnpm via corepack — the version comes from the root `packageManager` field.
+RUN corepack enable
+
+WORKDIR /repo
+
+# Workspace manifests first — deps layer changes only when these change.
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json tsconfig.base.json ./
+COPY apps/server/package.json apps/server/package.json
+COPY apps/server/dashboard/package.json apps/server/dashboard/package.json
+RUN pnpm install --frozen-lockfile --filter lastlight... --filter @lastlight/dashboard...
+
+# Server package source (includes the nested dashboard).
+COPY apps/server/ apps/server/
+
+# Build TypeScript harness + dashboard.
+RUN pnpm --filter lastlight build && pnpm --filter @lastlight/dashboard build
+
+# Shape the runtime tree at /app (prod deps only, files per `files` field).
+RUN pnpm --filter lastlight deploy --prod /app
+
+# ── Runtime stage ────────────────────────────────────────────────────────────
 FROM node:22-slim
 
 # System deps: git, ripgrep, docker CLI (for the docker-sandbox fallback
@@ -27,42 +67,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # image ever changes its UID, bump both together.
 RUN useradd -m -s /bin/bash -u 10001 lastlight && usermod -aG docker lastlight
 
-# pnpm via corepack — the version comes from package.json's `packageManager`.
-RUN corepack enable
-
 WORKDIR /app
 
-# Harness deps — change when package.json changes
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY dashboard/package.json dashboard/package.json
-RUN pnpm install --frozen-lockfile
+COPY --from=build /app /app
+# pnpm deploy packs per the `files` field — restore what it omits (do NOT
+# widen `files`: the npm tarball file list is a fence).
+COPY --from=build /repo/apps/server/dashboard/dist /app/dashboard/dist
+COPY --from=build /repo/apps/server/CLAUDE.md /app/CLAUDE.md
 
-# TypeScript config
-COPY tsconfig.json ./
-
-# Harness source — changes often
-COPY src/ src/
-
-# Dashboard source
-COPY dashboard/ dashboard/
-
-# Build TypeScript harness + dashboard
-RUN pnpm run build && pnpm run build:dashboard
-
-# Deploy scripts — rarely change
-COPY deploy/ deploy/
 RUN chmod +x /app/deploy/entrypoint.sh
 
-# Frequently changing content — copied last for best cache hits, owned by lastlight
-COPY --chown=lastlight:lastlight config/ config/
-COPY --chown=lastlight:lastlight skills/ skills/
-COPY --chown=lastlight:lastlight agent-context/ agent-context/
-COPY --chown=lastlight:lastlight workflows/ workflows/
-COPY --chown=lastlight:lastlight CLAUDE.md ./
-
-# Let lastlight user write to /app (for mcp-config.json at startup)
-# Only chown /app itself, not recursively — node_modules etc. are read-only and fine as root
-RUN chown lastlight:lastlight /app
+# Let lastlight user write to /app (for mcp-config.json at startup) and own
+# the frequently-read asset dirs (previously COPY --chown'd).
+# Only chown /app itself, not node_modules — read-only and fine as root.
+RUN chown lastlight:lastlight /app \
+    && chown -R lastlight:lastlight /app/config /app/skills /app/agent-context /app/workflows /app/CLAUDE.md
 
 # State directory — mount as Docker volume
 # Entrypoint handles chown on /app/data at runtime

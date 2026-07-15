@@ -1,6 +1,12 @@
+# MONOREPO (Phase 2): this file lives at apps/server/ but is always invoked
+# with `--project-directory <repo root>` (see src/cli/cli-server.ts
+# composeFileArgs), so every ./-relative path below — build contexts,
+# ./instance, ./apps/server/Caddyfile — resolves against the REPO ROOT.
 services:
   agent:
-    build: .
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
     # Pin the built image tag so it's independent of the compose project name
     # (which otherwise defaults to the checkout directory's basename). The
     # `egress-init` service references this exact tag, so without the pin the
@@ -58,7 +64,7 @@ services:
   sandbox-base:
     build:
       context: .
-      dockerfile: sandbox-base.Dockerfile
+      dockerfile: apps/server/sandbox-base.Dockerfile
     image: lastlight-sandbox-base:latest
     profiles:
       - build-only     # never started as a service, just built
@@ -68,7 +74,7 @@ services:
   sandbox:
     build:
       context: .
-      dockerfile: sandbox.Dockerfile
+      dockerfile: apps/server/sandbox.Dockerfile
     image: lastlight-sandbox:latest
     profiles:
       - build-only     # never started as a service, just built
@@ -80,7 +86,7 @@ services:
   sandbox-qa:
     build:
       context: .
-      dockerfile: sandbox-qa.Dockerfile
+      dockerfile: apps/server/sandbox-qa.Dockerfile
     image: lastlight-sandbox-qa:latest
     profiles:
       - build-only     # never started as a service, just built
@@ -224,7 +230,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./apps/server/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     # Caddyfile uses `{$DOMAIN:localhost}` (Caddy's own env substitution), so
