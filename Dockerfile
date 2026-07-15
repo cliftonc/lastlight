@@ -27,13 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # image ever changes its UID, bump both together.
 RUN useradd -m -s /bin/bash -u 10001 lastlight && usermod -aG docker lastlight
 
+# pnpm via corepack — the version comes from package.json's `packageManager`.
+RUN corepack enable
+
 WORKDIR /app
 
 # Harness deps — change when package.json changes
-COPY package.json package-lock.json* ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY dashboard/package.json dashboard/package.json
-RUN npm install --prefer-offline --no-audit \
-    && npm cache clean --force
+RUN pnpm install --frozen-lockfile
 
 # TypeScript config
 COPY tsconfig.json ./
@@ -45,7 +47,7 @@ COPY src/ src/
 COPY dashboard/ dashboard/
 
 # Build TypeScript harness + dashboard
-RUN npm run build && npm run build:dashboard
+RUN pnpm run build && pnpm run build:dashboard
 
 # Deploy scripts — rarely change
 COPY deploy/ deploy/
