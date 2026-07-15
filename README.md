@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>GitHub Repository Maintenance Agent</strong><br/>
-  <a href="https://lastlight.dev">lastlight.dev</a> · <a href="https://github.com/users/cliftonc/projects/4">Roadmap</a>
+  <a href="https://lastlight.dev">lastlight.dev</a> · <a href="https://github.com/orgs/nearform/projects/112">Roadmap</a>
 </p>
 
 An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features through an Architect → Executor → Reviewer development cycle.
