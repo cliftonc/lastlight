@@ -205,4 +205,34 @@ conversion.
 
 ## Deviations
 
-None yet.
+Executed 2026-07-15:
+
+- **pnpm pinned to `9.15.9`** — the latest (and final) stable pnpm 9 at
+  execution time, per step 2's "record the exact pin" instruction.
+- **Phantom dep declared: `@octokit/auth-app@^8.2.0`** (step 6).
+  `src/engine/github/github-app-client.ts` imports it but it was only a
+  transitive of `octokit` under npm hoisting. Declared at `^8.2.0` to match
+  the version `octokit@5.0.5` resolves, so both share one instance.
+- **Docker gate ran via `docker compose build agent`**, the doc's sanctioned
+  alternative — this host's docker CLI (29.5.2) has no buildx plugin, so
+  `docker buildx bake agent` is unavailable locally. The bake path itself is
+  unchanged by this phase and stays exercised by CI (`publish.yml`). The
+  Dockerfile's plain `RUN corepack enable` was sufficient in `node:22-slim`
+  (corepack fetched pnpm 9.15.9 in-build with no integrity-key issues).
+- **`sandbox.Dockerfile` comment touch-up** (not in the phase's file table):
+  two comment lines describing where `sandbox/agentic-pi.pin` is regenerated
+  from said `package-lock.json`; updated to `pnpm-lock.yaml`. Comment-only —
+  no instruction changed, no layer-cache impact.
+- **Pre-flight checkbox was not ticked** when Phase 1 executed. Phase 1 is
+  publish-free and deploy-inert (nothing lands on prod hosts until an image
+  is released + pinned), so this does not expose prod; pre-flight remains
+  REQUIRED before Phase 2 starts.
+- **Lockfile shape note for the pin port (step 8):** in `pnpm-lock.yaml` v9
+  the root importer's resolved `agentic-pi` version carries a
+  peer-dependency suffix (`0.2.16(@earendil-works/pi-tui@0.80.6)(ws@8.21.0)(zod@4.4.3)`);
+  both the script and the test strip it before looking up
+  `packages["agentic-pi@<version>"].resolution.integrity`. The committed
+  `sandbox/agentic-pi.pin` came out byte-identical, as required.
+- **Known skew confirmed, left alone (step 6):** the dashboard's
+  `agentic-pi ^0.2.4` resolves to the same `0.2.16` as the root (carried
+  over from npm's dedupe by `pnpm import`) — no forced alignment.

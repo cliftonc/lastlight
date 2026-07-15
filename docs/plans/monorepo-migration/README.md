@@ -17,10 +17,12 @@ execute its phase from that doc plus this README and
 Execute strictly in this order — each phase depends on the previous one and
 each must leave the repo green before the next starts.
 
-- [ ] **Pre-flight** — [see below](#pre-flight-protect-prod-before-phase-2)
+- [x] **Pre-flight** — [see below](#pre-flight-protect-prod-before-phase-2)
   — pin both prod overlays to the last pre-migration release; declare the
-  release freeze. *(manual, requires confirmation)*
-- [ ] **Phase 1 (A)** — [01-tooling-skeleton.md](01-tooling-skeleton.md) —
+  release freeze. *(verified 2026-07-15: both overlays already pin
+  `deploy.version: v0.16.0`, the last pre-migration release; release freeze
+  declared in the migration PR description)*
+- [x] **Phase 1 (A)** — [01-tooling-skeleton.md](01-tooling-skeleton.md) —
   pnpm + Turborepo skeleton, NO file moves; convert the npm workspace, swap
   CI + Dockerfile installs to pnpm *(risk: low)*
 - [ ] **Phase 2 (B)** — [02-core-move.md](02-core-move.md) — `git mv` core
