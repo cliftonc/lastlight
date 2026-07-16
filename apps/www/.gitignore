@@ -1,5 +1,8 @@
 # build output
 dist/
+# generated: spec pages synced from apps/server/spec by scripts/sync-spec.mjs
+# (run on prepare/predev/prebuild). Not committed — regenerated at build/deploy.
+src/content/spec/
 # generated types
 .astro/
 # wrangler local cache

@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 // Copies lastlight/spec/*.md into src/content/spec/ so Astro's content
-// collection can render them. Run before astro build (and on `astro dev`
-// startup, via the package.json predev hook).
+// collection can render them. src/content/spec/ is GENERATED (gitignored) —
+// this script populates it on `prepare` (so a fresh `pnpm install` and IDE
+// typegen see it), `predev`, and `prebuild`.
 //
 // Resolution order for the source directory:
 //   1. SPEC_SRC env var (absolute path)
 //   2. ../server/spec relative to this app (the in-repo core package,
 //      apps/server/spec, since www now lives at apps/www in the monorepo)
 //
-// If no source is found the script exits 0 with a warning — the previously
-// synced files in src/content/spec/ stay in place, so CI builds without a
-// sibling checkout still work as long as those files have been committed.
+// If no source is found the script exits 0 with a warning and leaves whatever
+// is already in src/content/spec/ (e.g. a prior sync this session) untouched.
+// In the monorepo apps/server/spec is always present, so this only bites if it
+// is deleted — the build would then render an empty spec section.
 
 import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, rmSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
