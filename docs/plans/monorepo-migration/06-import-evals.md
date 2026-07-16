@@ -224,4 +224,79 @@ during rollback.
 
 ## Deviations
 
-None yet.
+Executed 2026-07-16 (Fable 5). All gates green; F1 resolution proven both ways.
+
+- **Subtree source = network remote.** `git subtree add --prefix=apps/evals
+  evals-origin main` from `git@github.com:nearform/lastlight-evals.git` (default
+  branch confirmed `main` via `git ls-remote --symref`). The local checkout was
+  not used. Temporary remote `evals-origin` removed after import. The
+  history-preserving merge is commit `4276964` (its second parent is evals'
+  `5527131 chore(release): v0.7.1`, bringing 58 commits of history into the
+  graph). Note: `git log -- apps/evals/` shows only the merge commit because
+  `git subtree add` does not rewrite historical paths — the full history is
+  reachable via the merge's second parent / `git log --all` (identical to
+  Phase 5's www import, accepted there as "history-preserving subtree merge").
+
+- **A fourth reference retargeted, not three.** The phase doc's hard constraints
+  cite three files importing the `lastlight/evals` barrel (bootstrap.ts,
+  init.ts, run-instance.ts) plus the `require.resolve` in bootstrap.ts. A
+  **fourth** live reference existed: `src/run.ts:1015` (`versionLine()`) reads
+  `require("lastlight/package.json").version` to print the core version. Step
+  4's completeness grep (`grep -rn '"lastlight/evals"\|lastlight/package.json'`)
+  requires **zero** remaining old-address references, so it too was retargeted to
+  `@lastlight/core/package.json` (and its display label + comment updated to
+  `@lastlight/core`). Grep now returns zero. This is a superset of the doc's
+  list, not a contradiction.
+
+- **F1 barrel resolution proven via ESM, not CJS `require.resolve`.** The
+  verification-section `node -e` snippet uses `createRequire(...).resolve(...)`
+  (CJS). It resolves the **asset-discovery** half correctly
+  (`require.resolve("@lastlight/core/package.json")` → `apps/server`, all four
+  asset dirs present — "F1 asset discovery OK"), but `require.resolve(
+  "@lastlight/core/evals")` throws `ERR_PACKAGE_PATH_NOT_EXPORTED`: core's
+  `./evals` export defines only the `import`/`types` conditions (no CJS
+  `require`/`default`), and evals imports the barrel via ESM. The barrel half was
+  therefore proven with an actual ESM import from the evals package —
+  `import { configureWorkflowAssets, getWorkflow, runWorkflow } from
+  "@lastlight/core/evals"` resolves through the workspace symlink to
+  `apps/server/dist/evals-api.js` with live function exports. Both halves resolve
+  through the `workspace:*` symlink (`apps/evals/node_modules/@lastlight/core →
+  ../../../server`); the root `node_modules` has no `@lastlight/core` link under
+  pnpm's strict linking, which is expected.
+
+- **Live-model eval (verification step (c)) NOT run — no provider key.** No
+  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `FIREWORKS_API_KEY` /
+  `OPENROUTER_API_KEY` (etc.) was present in the environment and there is no
+  `apps/evals/.env`, so the one-real-case end-to-end run
+  (`tsx src/run.ts run`) could not be executed. This step is marked
+  "Recommended, not blocking" in the phase doc. The **deterministic** half of
+  F1 — a workflow-mechanism path exercising mocked GitHub + seed/grade red→green
+  through the barrel and the agentic-pi deep import — is fully covered by
+  `src/mechanism.test.ts` (33 tests green via `pnpm --filter lastlight-evals
+  test`), which imports `run-instance.ts` (→ `@lastlight/core/evals`) and
+  `agentic-pi/dist/extensions/github/client.js`. The live-call half is left
+  not-run rather than fabricated.
+
+- **agentic-pi version skew left as-is (per step-3 guidance).** evals keeps
+  `agentic-pi ^0.2.11` as both peer and devDependency (core is on `^0.2.16`).
+  Under pnpm's strict linking the local devDep is what satisfies
+  `mechanism.test.ts`'s deep import; all gates are green, so no opportunistic
+  alignment was made. No new phantom deps had to be declared — the evals package
+  already declared everything its strict tree needs (`@clack/prompts`, `chalk`,
+  `yaml`, `agentic-pi`, `tsx`, `typescript`, `vitest`, `wrangler`, `@types/node`).
+
+- **`build:site` left unchanged** (per step 5 — it stays as-is). It calls `npm
+  run build:dashboard`, which now delegates to `pnpm --filter
+  @lastlight/evals-dashboard build`; `npm run <script>` runs the package's own
+  script regardless of the outer package manager, so this works. One cosmetic
+  consequence: under `turbo run build`, the evals-dashboard is built twice — once
+  as its own workspace `build` task and once via evals' `build:dashboard` script.
+  Harmless (idempotent Vite build, turbo-cached); the doc explicitly mandated the
+  `build:dashboard` → `pnpm --filter` rewrite, so this is expected.
+
+- **`pnpm pack` rewrites `workspace:*` → `0.16.0`.** Confirmed the source
+  `apps/evals/package.json` keeps `"@lastlight/core": "workspace:*"` while the
+  packed tarball's `package.json` carries the concrete `0.16.0` (core's current
+  version); evals itself stays on its own `0.7.1` line (decision 13). Published
+  file set unchanged (`dist datasets examples models.json dashboard/dist` +
+  package.json/README/LICENSE).

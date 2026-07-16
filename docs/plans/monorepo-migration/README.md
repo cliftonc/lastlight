@@ -52,9 +52,15 @@ each must leave the repo green before the next starts.
   ../server/spec. Declared a phantom `zod` devDep pnpm's strict linking
   surfaced. `pnpm --filter lastlight-www build` emits dist/ with spec pages
   from apps/server/spec; workspace green. See the phase doc's Deviations.)*
-- [ ] **Phase 6 (F)** — [06-import-evals.md](06-import-evals.md) —
+- [x] **Phase 6 (F)** — [06-import-evals.md](06-import-evals.md) —
   subtree-import `lastlight-evals` into `apps/evals`; flip its dep to
   `@lastlight/core` — fence **F1** *(risk: HIGH)*
+  *(done 2026-07-16; history-preserving subtree merge 4276964; dep flipped to
+  `@lastlight/core: workspace:*`, four barrel/resolver references retargeted to
+  `@lastlight/core`, both nested npm lockfiles + inert `.github/` deleted,
+  dashboard scripts switched to `pnpm --filter`. F1 resolution proven both ways
+  through the workspace symlink; live-model eval half not run — no provider key.
+  See the phase doc's Deviations.)*
 - [ ] **Phase 7 (G)** — [07-ci-publish-deploys.md](07-ci-publish-deploys.md)
   — consolidated CI, the manual publish flow (RELEASING.md), Cloudflare
   deploy jobs; end the release freeze; archive the old repos *(risk: medium)*
