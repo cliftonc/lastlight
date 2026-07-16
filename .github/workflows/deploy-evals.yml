@@ -1,0 +1,59 @@
+name: Deploy evals
+
+# Deploy the evals dashboard (apps/evals → evals.lastlight.dev) to Cloudflare.
+#
+# A deploy-only LEAF job — deliberately NOT part of the shared CI (ci.yml). It
+# fires on push to `main` when the evals app changes.
+#
+# DATA NUANCE — this Action ships the SPA SHELL only, with an EMPTY /data:
+#   `eval-results/` is gitignored and absent in CI, so build:site bakes a site
+#   whose /api/index is empty (buildIndex tolerates a missing results root) and
+#   whose /data is empty. Publishing refreshed RESULTS stays a MANUAL local
+#   `npm run deploy` from a machine that holds eval-results/ (see the
+#   evals-live-dashboard runbook). CAUTION: a shell-only CI deploy that lands
+#   AFTER a manual data deploy resets /data back to empty — accepted for now.
+#
+# Requires the CLOUDFLARE_API_TOKEN repo secret (scoped to Workers deploys on
+# the lastlight.dev zone account) — set by a human, referenced here.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/evals/**"
+
+concurrency:
+  group: deploy-evals
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `...` (filter dependents-of) builds the workspace deps first — the
+      # evals harness build imports @lastlight/core, which must exist before
+      # build:site runs. build:site assembles dist-site/ (SPA shell + baked
+      # /api/index + /data copy — empty in CI, see the header note).
+      - name: Build site
+        run: pnpm --filter lastlight-evals... run build:site
+
+      - name: Deploy to Cloudflare
+        run: pnpm exec wrangler deploy
+        working-directory: apps/evals
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

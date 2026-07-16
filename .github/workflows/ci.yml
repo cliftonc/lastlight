@@ -42,5 +42,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Persist Turbo's local content-hash cache between runs so untouched
+      # packages replay instead of rebuilding. Keyed on the commit SHA (a fresh
+      # write every run) with a prefix restore-key so any prior run on this OS
+      # seeds the cache — Turbo then does per-package skipping on top.
+      - name: Restore Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
       - name: Typecheck, test, build
         run: pnpm turbo run typecheck test build
