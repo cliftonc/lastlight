@@ -45,8 +45,13 @@ each must leave the repo green before the next starts.
   deps absent, pi-ai's provider-SDK tree dominates as flagged. loader + oauth
   kept re-export shims; core imports narrow shared subpaths. Also fixed a latent
   Phase-3 Dockerfile gap. See the phase doc's Deviations.)*
-- [ ] **Phase 5 (E)** — [05-import-www.md](05-import-www.md) — subtree-import
+- [x] **Phase 5 (E)** — [05-import-www.md](05-import-www.md) — subtree-import
   `lastlight-www` into `apps/www`; re-point `sync-spec.mjs` *(risk: low)*
+  *(done 2026-07-16; history-preserving subtree merge df7861c; folded npm
+  lockfile into pnpm-lock, marked private, re-pointed spec sync to
+  ../server/spec. Declared a phantom `zod` devDep pnpm's strict linking
+  surfaced. `pnpm --filter lastlight-www build` emits dist/ with spec pages
+  from apps/server/spec; workspace green. See the phase doc's Deviations.)*
 - [ ] **Phase 6 (F)** — [06-import-evals.md](06-import-evals.md) —
   subtree-import `lastlight-evals` into `apps/evals`; flip its dep to
   `@lastlight/core` — fence **F1** *(risk: HIGH)*

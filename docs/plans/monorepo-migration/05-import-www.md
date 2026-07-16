@@ -155,4 +155,32 @@ throughout.
 
 ## Deviations
 
-None yet.
+- **Phantom `zod` dependency declared (extra file modified).** `apps/www/src/
+  content.config.ts` imports `zod` directly (`import { z } from 'zod'`). Under
+  the standalone npm install, zod was hoisted to the top-level `node_modules`
+  as a transitive of `astro`, so the bare import resolved. pnpm's strict
+  `node_modules` linking (the monorepo's tooling) does not hoist it, so
+  `astro build` failed with `Cannot find module 'zod'`. Fixed by declaring
+  `zod: ^4.3.6` (matching astro's own range; resolves to the same 4.4.3 astro
+  pulls) as a build-time **devDep** in `apps/www/package.json` — the "declare
+  phantom deps, don't hoist around them" path the migration README's tooling
+  note anticipates. This is one file beyond the doc's "Files created/modified"
+  table; content.config.ts itself is untouched (no content work).
+- **Subtree source: network remote (as the doc specifies).** `git subtree add
+  --prefix=apps/www www-origin main` off `git@github.com:nearform/lastlight-www.git`
+  succeeded; the local `~/work/lastlight-www` fallback was not needed. The add
+  is a history-preserving merge commit (df7861c) whose second parent is the
+  original www HEAD 197b33f — full www history is reachable (e.g.
+  `git log df7861c^2`). Path-filtered `git log -- apps/www` shows only the
+  merge commit due to git's default history simplification; this is expected
+  and the underlying commits are intact.
+- **`.npmrc` `enable-pre-post-scripts` not needed.** pnpm 9.15.9 ran the
+  `prebuild` (sync-spec) hook automatically for `pnpm --filter lastlight-www
+  build`; no root `.npmrc` change required (step 5).
+- **Committed spec fallback copies left as-imported.** The sync from the newer
+  `apps/server/spec` produces a diff in the committed
+  `src/content/spec/03-integrations.md` (pre-existing drift between the
+  standalone www's committed copy and current core spec). Per the phase doc's
+  verification (`git restore apps/www/src/content/spec`) and the "content work
+  out of scope" rule, the committed copies were left untouched; the sync
+  regenerates them fresh at every build/deploy.
