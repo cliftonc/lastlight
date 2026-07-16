@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { fork, resolveForkTarget } from "#src/cli/fork-cli.js";
+import { fork, resolveForkTarget } from "../src/fork-cli.js";
 
 const WORKFLOW_YAML = `
 kind: build
@@ -23,10 +23,6 @@ phases:
         fix_prompt: prompts/fix.md
         re_review_prompt: prompts/re-reviewer.md
 `;
-
-function hasBuiltinsAt(dir: string): boolean {
-  return existsSync(join(dir, "workflows")) && existsSync(join(dir, "skills"));
-}
 
 function makeCore(): string {
   const root = mkdtempSync(join(tmpdir(), "fork-cli-"));
@@ -77,28 +73,24 @@ describe("fork-cli", () => {
     expect(t.instanceDir).toBe(join(core, "instance"));
   });
 
-  it("falls back to the CLI-bundled assets when --home has no checkout", () => {
-    // An overlay-only dir (no workflows/ + skills/) → coreRoot resolves to the
-    // assets shipped with the CLI itself, not an error.
+  it("throws a --home pointer when --home has no checkout (no bundled fallback)", () => {
+    // The lean CLI no longer bundles asset dirs (decision 12), so an
+    // overlay-only dir (no workflows/ + skills/) can't self-resolve a coreRoot
+    // — resolveForkTarget errors pointing at --home instead of silently
+    // forking from nothing.
     const overlayOnly = mkdtempSync(join(tmpdir(), "fork-overlay-"));
-    const t = resolveForkTarget({ home: overlayOnly });
-    expect(t.instanceDir).toBe(join(overlayOnly, "instance"));
-    expect(t.coreRoot).not.toBe(overlayOnly);
-    // The bundled root really ships built-ins (this repo's own workflows/ + skills/).
-    expect(existsSync(join(t.coreRoot, "workflows"))).toBe(true);
-    expect(existsSync(join(t.coreRoot, "skills"))).toBe(true);
+    expect(() => resolveForkTarget({ home: overlayOnly })).toThrow(/--home/);
   });
 
-  it("targets a contained instance/ from a workspace root (evals layout)", () => {
-    // Mimic an evals workspace: <root>/instance (overlay) + <root>/evals.
+  it("throws from an evals-workspace layout with no checkout (no bundled fallback)", () => {
+    // Mimic an evals workspace: <root>/instance (overlay) + <root>/evals, with
+    // no colocated core checkout. Without a --home the coreRoot can't resolve.
     const ws = mkdtempSync(join(tmpdir(), "fork-evals-"));
     mkdirSync(join(ws, "instance", "secrets"), { recursive: true });
     mkdirSync(join(ws, "evals"), { recursive: true });
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(ws);
     try {
-      const t = resolveForkTarget({});
-      expect(t.instanceDir).toBe(join(ws, "instance"));
-      expect(hasBuiltinsAt(t.coreRoot)).toBe(true); // bundled fallback
+      expect(() => resolveForkTarget({})).toThrow(/--home/);
     } finally {
       cwdSpy.mockRestore();
     }
@@ -117,12 +109,12 @@ describe("fork-cli", () => {
     expect(existsSync(join(inst, "skills", "code-review", "SKILL.md"))).toBe(true);
   });
 
-  it("forks a real built-in via the bundled fallback when no checkout exists", async () => {
-    // No core checkout anywhere — just an overlay dir. fork must read the
-    // workflow shipped with the CLI (this repo's own workflows/build.yaml).
+  it("errors with a --home pointer when forking with no checkout anywhere", async () => {
+    // No core checkout anywhere — just an overlay dir. The lean CLI bundles no
+    // assets, so fork must error (pointing at --home) rather than fall back.
     const overlayOnly = mkdtempSync(join(tmpdir(), "fork-bundled-"));
-    await fork(["build"], { home: overlayOnly });
-    expect(existsSync(join(overlayOnly, "instance", "workflows", "build.yaml"))).toBe(true);
+    await expect(fork(["build"], { home: overlayOnly })).rejects.toThrow(/--home/);
+    expect(existsSync(join(overlayOnly, "instance", "workflows", "build.yaml"))).toBe(false);
   });
 
   it("skips existing assets by default and overwrites with --force", async () => {

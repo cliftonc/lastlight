@@ -23,9 +23,15 @@ import path from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { resolveServerHome, saveServerHome, serverHomeSource } from "./cli-config.js";
-import { detectGh, scaffoldOverlayFiles, bootstrapOverlayRepo } from "../config/overlay-bootstrap.js";
-import { enumerateOverlayAssets, type OverlayAsset } from "../config/overlay-assets.js";
-import { readCorePin, pickTagCommit } from "../config/core-pin.js";
+import {
+  detectGh,
+  scaffoldOverlayFiles,
+  bootstrapOverlayRepo,
+  enumerateOverlayAssets,
+  type OverlayAsset,
+  readCorePin,
+  pickTagCommit,
+} from "@lastlight/shared";
 
 const exec = promisify(execFile);
 

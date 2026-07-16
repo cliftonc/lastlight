@@ -23,7 +23,6 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 import {
   configureWorkflowAssets,
@@ -31,10 +30,10 @@ import {
   getWorkflowOrigin,
   listAgentWorkflows,
   resolveSkillPaths,
-} from "../workflows/loader.js";
-import { phaseSkillNames } from "../workflows/schema.js";
+} from "@lastlight/shared";
+import { phaseSkillNames } from "@lastlight/workflow-engine";
 import { resolveServerHome } from "./cli-config.js";
-import { enumerateOverlayAssets } from "../config/overlay-assets.js";
+import { enumerateOverlayAssets } from "@lastlight/shared";
 
 export interface ForkOpts {
   /** `--home <dir>` override for the working directory (the core checkout). */
@@ -59,21 +58,11 @@ function hasBuiltins(dir: string): boolean {
 }
 
 /**
- * Assets bundled with this CLI. The npm package ships `workflows/`, `skills/`,
- * `agent-context/` and `config/` at its root, so a globally-installed
- * `lastlight` can fork from itself with no git checkout in sight. Resolves for
- * both compiled (`dist/cli/fork-cli.js` → `../..` = package root) and dev
- * (`src/cli/fork-cli.ts` → repo root) layouts — same trick as
- * `skills-install.ts`'s `bundleRoot()`.
- */
-function bundledAssetRoot(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-}
-
-/**
- * Pick the first candidate that actually ships built-ins, else the assets
- * bundled with the CLI. This is what lets fork work from an overlay-only or
- * evals workspace — the core no longer has to be a colocated checkout.
+ * Pick the first candidate that actually ships the built-in assets we fork
+ * *from* (`workflows/` + `skills/`). The lean CLI package no longer bundles
+ * those asset dirs (locked decision 12 — they live in `@lastlight/core`, read
+ * from a server checkout), so there is no self-bundled fallback: when no
+ * candidate qualifies we error with a pointer at `--home <server checkout>`.
  */
 function resolveCoreRoot(...candidates: string[]): string {
   for (const c of candidates) {
@@ -84,7 +73,12 @@ function resolveCoreRoot(...candidates: string[]): string {
     if (hasBuiltins(monorepo)) return monorepo;
     if (hasBuiltins(c)) return c;
   }
-  return bundledAssetRoot();
+  throw new Error(
+    "Could not locate the built-in workflows/ + skills/ to fork from. " +
+      "The lastlight CLI no longer bundles them — point it at a core checkout " +
+      "with --home <server checkout> (a directory holding apps/server/ or the " +
+      "built-in asset dirs).",
+  );
 }
 
 /** A directory that looks like a deployment overlay (config + secrets), not a
@@ -107,9 +101,9 @@ export interface ForkTarget {
  * Resolve where to read built-ins from and where to write the fork.
  *
  * Built-ins (`coreRoot`) are read from the first available of: a colocated core
- * checkout, the saved server home (if it's a checkout), else the assets bundled
- * with the CLI itself — so `fork` works from a CLI install with no checkout
- * anywhere (the common case for overlay + evals workspaces).
+ * checkout or the saved server home (if it's a checkout). The lean CLI no
+ * longer bundles asset dirs, so when neither is a checkout `resolveCoreRoot`
+ * errors with a `--home` pointer (rather than silently forking from nothing).
  *
  * The overlay destination (`instanceDir`) is:
  * - An explicit `--home` → `<home>/instance`.
@@ -342,9 +336,9 @@ export async function fork(args: string[], opts: ForkOpts): Promise<void> {
   const [target, sub] = args;
   const t = resolveForkTarget(opts);
   if (!hasBuiltins(t.coreRoot)) {
-    // resolveCoreRoot falls back to the CLI's bundled assets, so this only
-    // fires if the install itself is missing workflows/ + skills/ (corrupt
-    // package) — not for a plain "no checkout here" situation any more.
+    // Defensive: `resolveCoreRoot` now throws a `--home` pointer when no
+    // candidate ships built-ins (the lean CLI bundles none), so this only
+    // guards the direct-return branches of `resolveForkTarget`.
     console.error(
       chalk.red(`No built-in assets found at ${t.coreRoot} (expected workflows/ + skills/).`) +
         chalk.dim(`\n  The lastlight install looks incomplete — try reinstalling, or pass --home <checkout>.`),

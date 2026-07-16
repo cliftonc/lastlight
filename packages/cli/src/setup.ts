@@ -23,9 +23,9 @@ import { resolve, join } from "node:path";
 import { execSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { OVERLAY_GITIGNORE, detectGh, bootstrapOverlayRepo } from "../config/overlay-bootstrap.js";
+import { OVERLAY_GITIGNORE, detectGh, bootstrapOverlayRepo } from "@lastlight/shared";
 import { serverUpdate } from "./cli-server.js";
-import { PROVIDERS, providerByPrefix, OAUTH_PROVIDERS, oauthProviderById, type ProviderSpec } from "../providers.js";
+import { PROVIDERS, providerByPrefix, OAUTH_PROVIDERS, oauthProviderById, type ProviderSpec } from "@lastlight/shared";
 
 // ── Brand colors ───────────────────────────────────────────────────────────
 

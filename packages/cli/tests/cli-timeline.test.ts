@@ -5,7 +5,7 @@ import {
   summarizeResult,
   renderArgs,
   renderTimeline,
-} from "#src/cli/cli-timeline.js";
+} from "../src/cli-timeline.js";
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");

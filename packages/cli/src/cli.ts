@@ -112,12 +112,13 @@ function die(msg: string): never {
 
 /**
  * This CLI's version, read from the bundled package.json. Resolves for both the
- * compiled (`dist/cli/cli.js` → `../..` = package root) and dev
- * (`src/cli/cli.ts` → repo root) layouts — same trick fork-cli/skills-install use.
+ * compiled (`dist/cli.js` → `..` = package root) and dev (`src/cli.ts` → `..` =
+ * package root) layouts — same one-level trick fork-cli/skills-install use
+ * (locked decision 12: the entry sits one level below the package root).
  */
 function cliVersion(): string {
   try {
-    const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "package.json");
+    const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
     return pkg.version ?? "unknown";
   } catch {

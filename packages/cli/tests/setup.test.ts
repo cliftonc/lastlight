@@ -12,8 +12,8 @@ import {
   parseManagedRepos,
   ensureOverrideSymlink,
   CADDY_DISABLED_OVERRIDE,
-} from "#src/cli/setup.js";
-import type { SetupConfig } from "#src/cli/setup.js";
+} from "../src/setup.js";
+import type { SetupConfig } from "../src/setup.js";
 
 // ── Validation helpers ──────────────────────────────────────────────────────
 

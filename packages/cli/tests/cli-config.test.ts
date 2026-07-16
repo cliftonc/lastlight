@@ -12,7 +12,7 @@ import {
   defaultServerHome,
   configPath,
   DEFAULT_URL,
-} from "#src/cli/cli-config.js";
+} from "../src/cli-config.js";
 
 let tmpHome: string;
 let origHome: string | undefined;

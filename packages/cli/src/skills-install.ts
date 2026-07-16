@@ -45,8 +45,12 @@ export interface SkillsOpts {
  * `plugins/<plugin>/`. Resolves for both dev (`src/skills-install.ts` → repo
  * root) and compiled/installed (`dist/skills-install.js` → package root).
  */
-function bundleRoot(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+export function bundleRoot(): string {
+  // The compiled entry sits at `dist/skills-install.js` — one level below the
+  // CLI package root (which holds `plugins/` + `.claude-plugin/`). In dev the
+  // source sits at `src/skills-install.ts`, also one level down. So `..` from
+  // this file's dir resolves the package root in both modes (locked decision 12).
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 }
 
 function pluginDir(): string {

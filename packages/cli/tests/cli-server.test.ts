@@ -16,7 +16,7 @@ import {
   IMAGE_REGISTRY,
   PUBLISHED_IMAGES,
   SIDECARS,
-} from "#src/cli/cli-server.js";
+} from "../src/cli-server.js";
 
 describe("cli-server argv builders", () => {
   it("start: whole stack vs one service", () => {

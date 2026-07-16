@@ -23,7 +23,7 @@ import {
   resolveOAuthApiKey,
   saveAuthMap,
   type AuthMap,
-} from "../engine/oauth.js";
+} from "@lastlight/shared";
 
 interface OAuthCliOpts {
   /** Explicit auth-file path (--auth-file). */

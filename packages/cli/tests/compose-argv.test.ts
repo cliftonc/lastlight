@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { composeArgv, composeFileArgs, serverDir } from "../../src/cli/cli-server.js";
+import { composeArgv, composeFileArgs, serverDir } from "../src/cli-server.js";
 
 /**
  * F5 regression fence (monorepo Phase 2, docs/plans/monorepo-migration/02-core-move.md).
