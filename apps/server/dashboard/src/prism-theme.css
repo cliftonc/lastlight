@@ -1,0 +1,178 @@
+/*
+ * Prism theme aligned with the daisyUI "lastlight" palette. Token colours
+ * resolve through daisyUI CSS variables (`--p`, `--s`, `--a`, `--in`, …) so
+ * any future theme tweak in tailwind.config.js flows through automatically.
+ *
+ * `template-block` is a custom token registered in CodeBlock.tsx for the
+ * mustache-style `{{ ... }}` placeholders that appear in our prompt
+ * templates and YAML workflow definitions.
+ */
+
+code[class*="language-"],
+pre[class*="language-"] {
+  color: oklch(var(--bc));
+  background: none;
+  font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+  text-shadow: none;
+  line-height: 1.5;
+  -moz-tab-size: 2;
+  tab-size: 2;
+  -webkit-hyphens: none;
+  -moz-hyphens: none;
+  hyphens: none;
+}
+
+pre[class*="language-"] {
+  background: oklch(var(--b3) / 0.6);
+  border-radius: 0.375rem;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+:not(pre) > code[class*="language-"] {
+  background: oklch(var(--b3));
+  color: oklch(var(--a));
+  padding: 0.1em 0.3em;
+  border-radius: 0.25em;
+  white-space: normal;
+}
+
+/* ── Generic tokens ─────────────────────────────────────────────────── */
+
+.token.comment,
+.token.prolog,
+.token.cdata {
+  color: oklch(var(--bc) / 0.45);
+  font-style: italic;
+}
+
+.token.punctuation {
+  color: oklch(var(--bc) / 0.65);
+}
+
+.token.namespace {
+  opacity: 0.7;
+}
+
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: oklch(var(--wa));
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: oklch(var(--su));
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string {
+  color: oklch(var(--in));
+}
+
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: oklch(var(--p));
+}
+
+.token.function,
+.token.class-name {
+  color: oklch(var(--s));
+}
+
+.token.regex,
+.token.important,
+.token.variable {
+  color: oklch(var(--a));
+}
+
+.token.important,
+.token.bold {
+  font-weight: 600;
+  color: oklch(var(--bc));
+}
+
+.token.italic {
+  font-style: italic;
+}
+
+.token.entity {
+  cursor: help;
+}
+
+/* ── Markdown-specific ─────────────────────────────────────────────── */
+
+.token.title,
+.token.title .token.punctuation {
+  color: oklch(var(--p));
+  font-weight: 700;
+}
+
+.token.list.punctuation {
+  color: oklch(var(--p));
+}
+
+.token.url-reference,
+.token.url .token.url,
+.token.url .token.content {
+  color: oklch(var(--in));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.token.code-snippet,
+.language-markdown .token.code,
+.language-markdown .token.code .token.code-block {
+  color: oklch(var(--a));
+  background: oklch(var(--b3) / 0.6);
+  border-radius: 0.25em;
+  padding: 0.05em 0.3em;
+}
+
+.token.blockquote.punctuation {
+  color: oklch(var(--bc) / 0.5);
+}
+
+/* ── YAML-specific ─────────────────────────────────────────────────── */
+
+.language-yaml .token.key {
+  color: oklch(var(--p));
+}
+
+.language-yaml .token.anchor,
+.language-yaml .token.alias {
+  color: oklch(var(--s));
+}
+
+.language-yaml .token.tag {
+  color: oklch(var(--a));
+}
+
+/* ── Template variables ({{ … }}) ──────────────────────────────────── */
+
+.token.template-block {
+  color: oklch(var(--a));
+  background: oklch(var(--a) / 0.12);
+  border: 1px solid oklch(var(--a) / 0.3);
+  border-radius: 0.25em;
+  padding: 0 0.2em;
+  font-weight: 500;
+}
+
+/* Ensure template-block wins over markdown's bold/italic when nested. */
+.token.bold .token.template-block,
+.token.italic .token.template-block,
+.token.title .token.template-block {
+  color: oklch(var(--a));
+}

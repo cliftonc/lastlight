@@ -1,0 +1,5 @@
+{
+  "name": "code-fix",
+  "defaultWorkflow": "build",
+  "description": "Full Architect→Executor→Reviewer build cycle on a seeded fixture repo (heavy)."
+}

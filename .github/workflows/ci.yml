@@ -32,19 +32,27 @@ jobs:
           # by publish.yml's workflow_call to check out the release tag.
           ref: ${{ inputs.ref || github.ref }}
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
-          cache: npm
+          node-version: 22
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      - name: Typecheck (server)
-        run: npx tsc --noEmit
+      # Persist Turbo's local content-hash cache between runs so untouched
+      # packages replay instead of rebuilding. Keyed on the commit SHA (a fresh
+      # write every run) with a prefix restore-key so any prior run on this OS
+      # seeds the cache — Turbo then does per-package skipping on top.
+      - name: Restore Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
 
-      - name: Typecheck (dashboard)
-        run: npx tsc -b dashboard
-
-      - name: Test
-        run: npx vitest run
+      - name: Typecheck, test, build
+        run: pnpm turbo run typecheck test build

@@ -1,0 +1,5 @@
+{
+  "name": "pr-review",
+  "defaultWorkflow": "pr-review",
+  "description": "PR review precision — the posted review scored against a gold set via LLM judge (precision/recall/F0.5). Import cases with `scripts/import-martian.ts` (Martian Code Review Bench). Heavy: clones real repos + calls a judge model."
+}

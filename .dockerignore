@@ -1,7 +1,12 @@
-# Secrets — never bake into the image
+# Secrets — never bake into the image. NOTE: unlike .gitignore, dockerignore
+# patterns are anchored to the context root, so nested paths (e.g.
+# apps/server/secrets) need the **/ form explicitly.
 .env
+**/.env
 *.pem
+**/*.pem
 secrets/
+**/secrets/
 instance/
 .gh-token
 .github-token-cache.json
@@ -9,13 +14,30 @@ auth.json
 auth.lock
 .gitconfig-bot
 
+# Dependencies + build caches — the image build installs and compiles its own
+# (**/ forms cover apps/server/node_modules, apps/server/dashboard/node_modules,
+# local dist/ dirs, etc.; the build stage rebuilds dists itself)
+node_modules/
+**/node_modules/
+.turbo/
+**/.turbo/
+dist/
+**/dist/
+*.tsbuildinfo
+**/*.tsbuildinfo
+
 # Runtime state
+data/
+**/data/
 sessions/
+**/sessions/
 logs/
+**/logs/
 memories/
 cache/
 checkpoints/
 sandboxes/
+**/sandboxes/
 pairing/
 hooks/
 cron/output/
@@ -32,8 +54,11 @@ mcp-github-app/node_modules/
 
 # Database files
 *.db
+**/*.db
 *.db-shm
+**/*.db-shm
 *.db-wal
+**/*.db-wal
 
 # Bundled Hermes skills (agent installs its own)
 skills/.bundled_manifest

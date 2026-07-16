@@ -1,24 +1,26 @@
 name: Publish release
 
 # The release pipeline: on a GitHub Release, run CI checks, THEN build+push the
-# Docker images to GHCR, THEN publish the CLI to npm — in that order, as three
-# chained jobs (`images` needs `checks`, `npm` needs `images`).
+# Docker images to GHCR — in that order, as two chained jobs (`images` needs
+# `checks`).
 #
-# Two ordering guarantees:
-#   1. `checks` runs FIRST, so a failing test/type error fails the release in a
-#      couple of minutes BEFORE the slow Docker build — instead of after images
-#      are already pushed. The `images` and `npm` jobs then trust it and don't
-#      re-run the test suite. `checks` REUSES the CI workflow (`ci.yml` via
-#      `workflow_call`) so the release runs the exact same typecheck + dashboard
-#      typecheck + tests as every PR — one definition, no drift.
-#   2. Images publish before npm. If npm published first, a deployer could
-#      `npm i -g lastlight@X.Y.Z && server update` in the window before the
-#      `:vX.Y.Z` images exist and the image pull would fail. Chaining the jobs
-#      closes that race — the CLI only goes live once its images are in GHCR.
+# npm publishing is MANUAL (migration decision 15): there is no `npm` job here.
+# After this workflow pushes the `:vX.Y.Z` GHCR images, the operator publishes
+# the five npm packages by hand, in dependency order — see docs/RELEASING.md.
+# The images-before-npm guarantee that used to be enforced by job-chaining is
+# now procedural: never publish a `lastlight` version whose images aren't yet in
+# GHCR (RELEASING.md spells out the sequence).
+#
+# `checks` runs FIRST, so a failing test/type error fails the release in a
+# couple of minutes BEFORE the slow Docker build — instead of after images are
+# already pushed. The `images` job then trusts it and doesn't re-run the test
+# suite. `checks` REUSES the CI workflow (`ci.yml` via `workflow_call`) so the
+# release runs the exact same typecheck + tests as every PR — one definition,
+# no drift.
 #
 # `workflow_dispatch` rebuilds the IMAGES for a specific tag only (still gated
-# behind `checks`; the npm job is gated to `release` events, so a dispatch never
-# publishes to npm).
+# behind `checks`). Both triggers are now image-(re)build paths — neither
+# publishes to npm.
 #
 # Build the four locally-built images (agent + sandbox-base + sandbox +
 # sandbox-qa) once and push them to GHCR, so `lastlight server update` PULLS them
@@ -62,13 +64,12 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write # npm provenance on the downstream publish job
+  packages: write # push images to GHCR
 
 jobs:
-  # Run the full CI suite (server typecheck + dashboard typecheck + tests) by
-  # REUSING ci.yml, against the release tag. Gates both `images` and `npm` so a
-  # failure fails the release before the slow Docker build ever starts.
+  # Run the full CI suite (typecheck + tests + build) by REUSING ci.yml, against
+  # the release tag. Gates `images` so a failure fails the release before the
+  # slow Docker build ever starts.
   checks:
     uses: ./.github/workflows/ci.yml
     with:
@@ -105,7 +106,7 @@ jobs:
       # Required set: agent + sandbox-base + sandbox, built in one bake graph so
       # `sandbox` links to `target:sandbox-base` by content (see docker-bake.hcl).
       - name: Build & push core images
-        run: docker buildx bake --push core
+        run: docker buildx bake -f apps/server/docker-bake.hcl --push core
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ env.TAG }}
@@ -119,40 +120,13 @@ jobs:
       # layer cached across releases.
       - name: Build & push sandbox-qa (non-fatal)
         continue-on-error: true
-        run: docker buildx bake --push sandbox-qa
+        run: docker buildx bake -f apps/server/docker-bake.hcl --push sandbox-qa
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ env.TAG }}
           PUSH_LATEST: ${{ env.PUSH_LATEST }}
 
-  # Publish the CLI to npm — ONLY after the images job succeeds, and ONLY for a
-  # real Release (a workflow_dispatch image rebuild never publishes to npm). This
-  # is the ordering guarantee: the npm package that tells hosts to pull
-  # `:vX.Y.Z` images only goes live once those images are already in GHCR.
-  # A sandbox-qa failure is non-fatal (continue-on-error) so `images` still
-  # succeeds and npm still publishes; a core-image failure fails `images` and
-  # skips npm. Typecheck + tests already ran in `checks` (transitively via
-  # `images`), so this job only builds dist/ and publishes.
-  npm:
-    needs: images
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.release.tag_name }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Publish
-        run: npm publish --provenance --access public
+  # NOTE: npm publishing is intentionally NOT a job here (migration decision 15).
+  # Once this workflow's images are in GHCR, the operator publishes the five npm
+  # packages manually in dependency order (engine → shared → core → cli →
+  # evals) per docs/RELEASING.md.
