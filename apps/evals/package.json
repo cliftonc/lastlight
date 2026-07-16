@@ -1,0 +1,60 @@
+{
+  "name": "lastlight-evals",
+  "version": "0.7.1",
+  "description": "Eval harness for Last Light workflows — drives the real production workflows against a mocked GitHub and grades deterministically (SWE-bench compatible).",
+  "type": "module",
+  "bin": {
+    "lastlight-evals": "dist/run.js"
+  },
+  "files": [
+    "dist",
+    "datasets",
+    "examples",
+    "models.json",
+    "dashboard/dist"
+  ],
+  "scripts": {
+    "build": "npm run build:harness && npm run build:dashboard",
+    "build:harness": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node -e \"require('fs').chmodSync('dist/run.js', 0o755)\"",
+    "build:dashboard": "npm --prefix dashboard install --no-audit --no-fund && npm --prefix dashboard run build",
+    "build:site": "npm run build:dashboard && tsx scripts/build-site.ts",
+    "deploy": "npm run build:site && wrangler deploy",
+    "dev:dashboard": "npm --prefix dashboard run dev",
+    "eval": "tsx src/run.ts run",
+    "eval:compare": "tsx src/run.ts run --compare",
+    "serve": "tsx src/run.ts serve",
+    "init": "tsx src/run.ts init",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && npm --prefix dashboard run typecheck"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nearform/lastlight-evals.git"
+  },
+  "keywords": [
+    "lastlight",
+    "evals",
+    "swe-bench",
+    "agent",
+    "workflow"
+  ],
+  "author": "Clifton Cunningham",
+  "license": "MIT",
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "chalk": "^5.6.2",
+    "lastlight": "^0.9.0",
+    "yaml": "^2.5.0"
+  },
+  "peerDependencies": {
+    "agentic-pi": "^0.2.11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "agentic-pi": "^0.2.11",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4",
+    "wrangler": "^4.105.0"
+  }
+}

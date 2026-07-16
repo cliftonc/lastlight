@@ -1,0 +1,5 @@
+{
+  "name": "triage",
+  "defaultWorkflow": "issue-triage",
+  "description": "Issue triage — labels, category, and state-role accuracy (cheap)."
+}

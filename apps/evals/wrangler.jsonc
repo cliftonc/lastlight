@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lastlight-evals",
+  "compatibility_date": "2026-06-28",
+
+  // Static-assets-only Worker: no `main` script. `dist-site/` is assembled by
+  // `npm run build:site` (the SPA shell + a baked /api/index + a copy of
+  // eval-results under /data). The SPA uses hash routing, so all app routes
+  // resolve to /index.html and no SPA fallback config is needed.
+  "assets": {
+    "directory": "./dist-site"
+  },
+
+  // Custom domain. `wrangler deploy` creates the DNS record automatically; the
+  // `lastlight.dev` zone must be in this Cloudflare account.
+  "routes": [
+    { "pattern": "evals.lastlight.dev", "custom_domain": true }
+  ]
+}
