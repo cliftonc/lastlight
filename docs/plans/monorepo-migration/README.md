@@ -30,10 +30,13 @@ each must leave the repo green before the next starts.
   server` home/serverDir split — fences **F2 F3 F5** *(risk: HIGH)*
   *(done 2026-07-15; F2 gated via `docker compose build` — no buildx on the
   build host; see the phase doc's Deviations)*
-- [ ] **Phase 3 (C)** — [03-workflow-engine.md](03-workflow-engine.md) —
+- [x] **Phase 3 (C)** — [03-workflow-engine.md](03-workflow-engine.md) —
   extract `@lastlight/workflow-engine` per
   [workflow-engine-extraction-design.md](../../workflow-engine-extraction-design.md)
   (Milestone A in-repo, Milestone B package lift) *(risk: medium)*
+  *(done 2026-07-16; step 1 landed by a prior agent as 20fa7b6; engine now at
+  `packages/workflow-engine`, workspace:* dep, dep-cruiser boundary gates green,
+  turbo ^build orders engine→core; see the phase doc's Deviations)*
 - [ ] **Phase 4 (D)** — [04-cli-shared-rename.md](04-cli-shared-rename.md) —
   extract `packages/cli` (published `lastlight`) + `@lastlight/shared`; rename
   the server package to `@lastlight/core` — fence **F4** *(risk: HIGH)*

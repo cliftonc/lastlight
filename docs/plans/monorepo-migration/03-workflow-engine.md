@@ -216,4 +216,86 @@ reverting both restores the in-repo module. Nothing is published in this phase
 
 ## Deviations
 
-None yet.
+Executed 2026-07-16. **Step 1 (pure-leaves move) was landed by a prior agent**
+as commit `20fa7b6` (dag/phase-ref/verdict/loop-eval/templates/schema moved to
+the in-repo `core/` with one-line re-export shims at the old `src/workflows/*`
+paths); this pass continued from step 2.
+
+- **Two extra injected ports beyond the design's four.** The design lists
+  AgentPort / WorkflowStateStore / AssetLoader / LivenessPort +
+  PhaseTypeHandler. Two more couplings had to be inverted for the engine to be
+  genuinely self-contained once it becomes a zod-only package (Milestone B):
+  - **`ObservabilityPort`** — the dedup ledger is instrumented with
+    `withSpan` / `recordExecutionMetrics` / `recordError` (from `src/telemetry`,
+    which pulls in `@opentelemetry/*`). `telemetry` isn't in the design's
+    forbidden-dir list, but a package can't import `../telemetry`, so it's a
+    seam (default adapter wraps the real telemetry; a no-op impl ships in
+    `test-support`). The engine types the span opaquely (`EngineSpan`) so it
+    never pulls in `@opentelemetry`.
+  - **`VerdictArtifactReader`** — the reviewer loop's stdout-missing fallback
+    read `reviewer-verdict.md` from the build-asset store / host checkout
+    (`BuildAssetStore` + fs). Inverted to an optional injected reader
+    (`src/workflows/handlers/verdict-reader.ts`); absent ⇒ the fallback no-ops
+    (the safe "no recoverable verdict" path).
+  Also **`botName`** (was `getBotName()` from config) is threaded as a field on
+  `PhaseRunContext` rather than a port.
+- **`HostCapabilities` seam for the scheduler.** The `requires_sandbox` /
+  `sandbox_image: qa` gates used `qaImageAvailable()` + `SANDBOX_IMAGE_QA` from
+  `src/sandbox/images`. Injected as `deps.capabilities` (docker-free) so
+  `core/scheduler.ts` never imports `../sandbox`.
+- **`runWorkflowCore` signature differs from design §3's sketch.** It takes
+  `(runScope: PhaseRunContext, deps: SchedulerDeps, outputs?)` — the app
+  composition root builds `runScope` + the default ports/adapters and passes a
+  **shared** `outputs` map (so the app's notify/render closures and the engine
+  loop see the same accumulating `phaseOutputs`). The DAG-walk + wrap-up moved
+  wholesale into the core scheduler; the app `runWorkflow`'s **9-arg signature
+  is byte-stable** (the frozen `lastlight/evals` surface — `evals-api.ts`
+  untouched). The terminal-ping / footer gating uses a `reporterActive` flag
+  since the core sees only the `PhaseReporter` port (extended with `footer` +
+  `noteTerminal`), not the app's `ProgressReporter`.
+- **dep-cruiser strengthened + version.** `dependency-cruiser` resolved to
+  `^18.1.0` (not `^17`). The gate uses `tsPreCompilationDeps: true` (catches
+  type-only app imports too — required since the Milestone-B package can't even
+  type-import app code) and, beyond the design's single "no app-src / no
+  better-sqlite3|octokit" rule, adds a **zod-only externals** rule (the engine's
+  only allowed external is zod + node built-ins). Two configs exist: the
+  package-local `packages/workflow-engine/.dependency-cruiser.cjs`
+  (self-contained + zod-only, with `@types/node` allowed for node-builtin types)
+  and the app-side belt `apps/server/.dependency-cruiser.cjs` (barrel-only —
+  forbids deep `dist/core|ports` imports). Both wired into each package's
+  `typecheck` via a `lint:boundaries` script.
+- **`@types/node` is a devDep of the engine package** and `crypto` →
+  `node:crypto`, so the zod-only package still resolves the one node built-in it
+  uses (`randomUUID`). The dep-cruiser zod-only rule explicitly allows
+  `@types/node`.
+- **Test migration, not vi.mock deletion.** `runner.test.ts` drives
+  `runWorkflow` (composition root) so its existing `vi.mock`s of
+  agent-executor/loader/docker still intercept via the default adapters —
+  untouched. `phase-executor.test.ts` injects test ports that *delegate to those
+  same mocks* (minimal churn, existing assertions kept); `post-review.test.ts`
+  drives the lifted `GitHubPostReviewHandler` directly. `test-support/fakes.ts`
+  ships the design's fakes for external consumers but the in-repo tests keep
+  their mock style.
+- **Step-1 shims now re-export the package barrel.** The `src/workflows/{dag,
+  schema,templates,verdict,phase-ref,loop-eval,phase-executor}.ts` shims became
+  `export * from "@lastlight/workflow-engine"` (the package exposes only a root
+  barrel + `/test-support`, no deep subpaths). They stay until Phase 4's loader
+  move / rename cleans them up.
+- **Live evals smoke (extraction-design fence 5) not run.** It requires a
+  provider API key (to run a real workflow against mocked GitHub) and `npm link`
+  of the working-tree core — evals isn't imported until Phase 6. The automated
+  proxy — `tests/workflows/evals-contract.test.ts` (`runWorkflow.length===9` +
+  RunnerCallbacks/WorkflowResult/`ExecutorConfig.githubApiBaseUrl` pins) — plus
+  the server's own `runWorkflow`-driven suite (`runner.test.ts`,
+  `simple.test.ts` drive the same surface with mocked agents) pass, and
+  `evals-api.ts` is unchanged.
+
+Verification (all green): `pnpm install --frozen-lockfile` consistent;
+`pnpm turbo run typecheck test build` → 7/7 tasks, 1096 tests pass (2 files, 7
+tests skipped = docker/smol integration); both `lint:boundaries` gates clean
+(engine: 14 modules / 0 violations; app: 153 / 0); `golden-build.test.ts`
+untouched + passing; turbo `^build` orders `@lastlight/workflow-engine#build`
+before `lastlight#build`; publishable tarball verified via `npm pack --dry-run`
+(dist + test-support subpath), **not published** (release freeze). Pre-existing
+`typecheck:test` failure in `tests/notify/transports.test.ts` is unrelated and
+untouched (CI never runs it).
