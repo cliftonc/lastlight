@@ -16,16 +16,16 @@
   "scripts": {
     "build": "npm run build:harness && npm run build:dashboard",
     "build:harness": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node -e \"require('fs').chmodSync('dist/run.js', 0o755)\"",
-    "build:dashboard": "npm --prefix dashboard install --no-audit --no-fund && npm --prefix dashboard run build",
+    "build:dashboard": "pnpm --filter @lastlight/evals-dashboard build",
     "build:site": "npm run build:dashboard && tsx scripts/build-site.ts",
     "deploy": "npm run build:site && wrangler deploy",
-    "dev:dashboard": "npm --prefix dashboard run dev",
+    "dev:dashboard": "pnpm --filter @lastlight/evals-dashboard dev",
     "eval": "tsx src/run.ts run",
     "eval:compare": "tsx src/run.ts run --compare",
     "serve": "tsx src/run.ts serve",
     "init": "tsx src/run.ts init",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && npm --prefix dashboard run typecheck"
+    "typecheck": "tsc --noEmit && pnpm --filter @lastlight/evals-dashboard typecheck"
   },
   "repository": {
     "type": "git",
@@ -42,8 +42,8 @@
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^1.2.0",
+    "@lastlight/core": "workspace:*",
     "chalk": "^5.6.2",
-    "lastlight": "^0.9.0",
     "yaml": "^2.5.0"
   },
   "peerDependencies": {

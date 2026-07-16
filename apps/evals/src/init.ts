@@ -25,7 +25,7 @@ import { promisify } from "node:util";
 
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { detectGh, bootstrapOverlayRepo } from "lastlight/evals";
+import { detectGh, bootstrapOverlayRepo } from "@lastlight/core/evals";
 
 import { builtinDatasetsRoot, builtinModelsPath } from "./paths.js";
 
@@ -114,7 +114,7 @@ lastlight-evals run --overlay .
 lastlight-evals run code-fix --overlay .
 \`\`\`
 
-Override which core build the evals test with \`LASTLIGHT_CORE_DIR=/path/to/lastlight\`.
+Override which core build the evals test with \`LASTLIGHT_CORE_DIR=/path/to/lastlight/apps/server\`.
 `;
 }
 
@@ -146,7 +146,7 @@ lastlight-evals run code-fix        # one tier
 lastlight-evals run --compare       # cross-vendor set (key-gated)
 \`\`\`
 
-Override which core build the evals test with \`LASTLIGHT_CORE_DIR=/path/to/lastlight\`.
+Override which core build the evals test with \`LASTLIGHT_CORE_DIR=/path/to/lastlight/apps/server\`.
 `;
 }
 

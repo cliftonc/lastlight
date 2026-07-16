@@ -28,7 +28,7 @@ import {
   type ExecutorConfig,
   type TemplateContext,
   type RunnerCallbacks,
-} from "lastlight/evals";
+} from "@lastlight/core/evals";
 
 import type { SweBenchInstance, InstanceResult, PhaseSession } from "./schema.js";
 import type { Arm } from "./arm.js";
