@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { parse as parseYaml } from "yaml";
 import { normalizeAllowlistHost } from "../sandbox/egress-allowlist.js";
 import { resolveConfigLayers } from "./config-resolve.js";
+import type { SandboxBackend, BuildAssetsLocation, OtelConfig } from "../workflow-engine/core/types.js";
 
 /**
  * Load .env file into process.env (simple, no dependency).
@@ -58,9 +59,12 @@ export interface VariantConfig {
   [taskType: string]: string | undefined;
 }
 
-export type SandboxBackend = "gondolin" | "docker" | "smol" | "none";
-
-export type BuildAssetsLocation = "repo" | "server";
+// SandboxBackend / BuildAssetsLocation / OtelConfig moved into the workflow
+// engine's own vocabulary (`workflow-engine/core/types.ts`) so ExecutorConfig
+// (which lives there now) has no back-edge to the config layer. Imported for
+// in-file use and re-exported so every existing `../config/config.js` import
+// keeps resolving unchanged.
+export type { SandboxBackend, BuildAssetsLocation, OtelConfig } from "../workflow-engine/core/types.js";
 
 export interface DisabledConfig {
   workflows: string[];
@@ -68,15 +72,6 @@ export interface DisabledConfig {
   prompts: string[];
   skills: string[];
   agentContext: string[];
-}
-
-export interface OtelConfig {
-  enabled: boolean;
-  serviceName: string;
-  includeContent: boolean;
-  forwardToSandbox: boolean;
-  strict: boolean;
-  collectorHosts: string[];
 }
 
 export interface RouteConfig {

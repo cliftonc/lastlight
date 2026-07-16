@@ -285,9 +285,12 @@ export async function runSandboxedAgent(prompt: string, ctx: SandboxRunContext):
 // ── Deterministic command path (type: bash / type: script) ───────────
 
 /** What a command phase runs. */
-export type CommandSpec =
-  | { kind: "bash"; command: string }
-  | { kind: "script"; script: string; runtime: "js" | "ts" | "python"; name: string };
+// CommandSpec's canonical home is now the workflow engine's vocabulary
+// (`workflow-engine/core/types.ts`); re-export it so existing importers of
+// `./executors/orchestrator.js` (and the `agent-executor.js` chain) resolve
+// unchanged.
+export type { CommandSpec } from "../../workflow-engine/core/types.js";
+import type { CommandSpec } from "../../workflow-engine/core/types.js";
 
 const SCRIPT_EXT: Record<"js" | "ts" | "python", string> = { js: "mjs", ts: "mts", python: "py" };
 
