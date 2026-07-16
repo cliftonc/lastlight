@@ -5,8 +5,8 @@
 //
 // Resolution order for the source directory:
 //   1. SPEC_SRC env var (absolute path)
-//   2. ../lastlight/spec relative to this repo (the common local checkout
-//      layout: ~/work/lastlight and ~/work/lastlight-www side by side)
+//   2. ../server/spec relative to this app (the in-repo core package,
+//      apps/server/spec, since www now lives at apps/www in the monorepo)
 //
 // If no source is found the script exits 0 with a warning — the previously
 // synced files in src/content/spec/ stay in place, so CI builds without a
@@ -26,7 +26,7 @@ function resolveSource() {
     if (existsSync(p)) return p;
     console.warn(`[sync-spec] SPEC_SRC=${p} not found, ignoring`);
   }
-  const sibling = resolve(REPO_ROOT, '..', 'lastlight', 'spec');
+  const sibling = resolve(REPO_ROOT, '..', 'server', 'spec');
   if (existsSync(sibling)) return sibling;
   return null;
 }
