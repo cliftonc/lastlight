@@ -16,7 +16,7 @@ export interface WorkflowRun {
   issueNumber?: number;
   currentPhase: string;
   phaseHistory: PhaseHistoryEntry[];
-  status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
+  status: "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
   context?: Record<string, unknown>;
   /**
    * Mutable phase-to-phase state, merged at the top level by
@@ -148,11 +148,11 @@ export class WorkflowRunStore {
     return row ? this.deserialize(row) : null;
   }
 
-  /** Find the most recent active (running or paused) workflow run for a trigger */
+  /** Find the most recent active (running, paused, or queued) workflow run for a trigger */
   getByTrigger(triggerId: string): WorkflowRun | null {
     const row = this.db.prepare(`
       SELECT * FROM workflow_runs
-      WHERE trigger_id = ? AND status IN ('running', 'paused')
+      WHERE trigger_id = ? AND status IN ('queued', 'running', 'paused')
       ORDER BY started_at DESC
       LIMIT 1
     `).get(triggerId) as Record<string, unknown> | undefined;
@@ -174,10 +174,10 @@ export class WorkflowRunStore {
     return !!row;
   }
 
-  /** List all active (running or paused) workflow runs */
+  /** List all active (queued, running, or paused) workflow runs */
   listActive(): WorkflowRun[] {
     const rows = this.db.prepare(`
-      SELECT * FROM workflow_runs WHERE status IN ('running', 'paused') ORDER BY started_at DESC
+      SELECT * FROM workflow_runs WHERE status IN ('queued', 'running', 'paused') ORDER BY started_at DESC
     `).all() as Record<string, unknown>[];
     return rows.map((r) => this.deserialize(r));
   }
@@ -255,6 +255,72 @@ export class WorkflowRunStore {
       runs: rows.map((r) => this.deserialize(r)),
       total,
     };
+  }
+
+  /**
+   * Count workflow runs with status 'running'. Excludes 'queued' and 'paused'
+   * since those are not holding a sandbox slot. Used by the concurrency cap
+   * (issue #172) to decide whether to queue a fresh run.
+   */
+  countRunning(): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS c FROM workflow_runs WHERE status = 'running'`)
+      .get() as { c: number };
+    return row.c;
+  }
+
+  /**
+   * List all queued runs ordered by started_at ascending (FIFO enqueue order).
+   * Used by the admission controller to pick the next run to promote and to
+   * perform TTL expiry.
+   */
+  listQueued(): WorkflowRun[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM workflow_runs WHERE status = 'queued' ORDER BY started_at ASC`)
+      .all() as Record<string, unknown>[];
+    return rows.map((r) => this.deserialize(r));
+  }
+
+  /**
+   * CAS: transition a queued run to running. Returns the number of rows changed
+   * (1 = winner, 0 = already admitted or run not found). The guard
+   * `WHERE status = 'queued'` prevents double-admission when the event-driven
+   * and periodic paths race.
+   *
+   * Does NOT touch started_at or restart_count — those stay at their enqueue
+   * values so TTL sweep can detect staleness and dashboards show enqueue time.
+   */
+  admitRun(id: string): number {
+    const now = new Date().toISOString();
+    const info = this.db
+      .prepare(
+        `UPDATE workflow_runs
+         SET status = 'running', updated_at = ?
+         WHERE id = ? AND status = 'queued'`,
+      )
+      .run(now, id);
+    return info.changes;
+  }
+
+  /**
+   * CAS: transition a queued run to cancelled, recording the reason in
+   * context.error. Returns the number of rows changed (1 on success, 0 if the
+   * run was no longer queued). Used by the TTL sweep in the admission
+   * controller to drop stale queued runs.
+   */
+  expireQueued(id: string, reason: string): number {
+    const now = new Date().toISOString();
+    const info = this.db
+      .prepare(
+        `UPDATE workflow_runs
+         SET status = 'cancelled',
+             finished_at = ?,
+             updated_at = ?,
+             context = json_patch(COALESCE(context, '{}'), json_object('error', ?))
+         WHERE id = ? AND status = 'queued'`,
+      )
+      .run(now, now, reason, id);
+    return info.changes;
   }
 
   /** Distinct workflow_name values, sorted alphabetically. */

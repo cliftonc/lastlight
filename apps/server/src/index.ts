@@ -27,6 +27,7 @@ import { screenForInjection, flagPrefix } from "./engine/screen/screen.js";
 import { runSimpleWorkflow, PR_HEADREF_PREPOPULATE_WORKFLOWS, type SimpleWorkflowRequest } from "./workflows/simple.js";
 import type { RunnerCallbacks } from "./workflows/runner.js";
 import { resumeOrphanedWorkflows, resumeSimpleRun, type ResumeOptions } from "./workflows/resume.js";
+import { createAdmissionController, type AdmissionController } from "./workflows/admission.js";
 import {
   ProgressNotifier,
   GitHubTransport,
@@ -235,6 +236,11 @@ async function main() {
     }
   }
 
+  // Late-bound: constructed after resumeOpts (below) because it closes over
+  // resumeOpts. dispatchWorkflow closures run long after boot, so assignment
+  // before first use is safe. Mirrors the cron/notifier late-bound patterns.
+  let admissionController: AdmissionController;
+
   /**
    * Dispatch a workflow by name. Used by webhook events, cron jobs, and the
    * /api/run endpoint. Every dispatch creates a workflow_run row visible in
@@ -248,7 +254,7 @@ async function main() {
     workflowName: string,
     context: Record<string, unknown>,
     onRunStart?: (runId: string) => Promise<void>,
-  ): Promise<{ success: boolean; error?: string; paused?: boolean }> => {
+  ): Promise<{ success: boolean; error?: string; paused?: boolean; queued?: boolean }> => {
     // Slack-initiated workflows (explore, /explore) carry a
     // `slack:{team}:{channel}:{thread}` triggerId and don't require a
     // managed `repo` — their postComment goes back to the Slack thread.
@@ -597,20 +603,31 @@ async function main() {
         config.approval,
         config.bootstrapLabel,
         config.variants,
+        config.concurrency,
       );
       const summary = result.phases.map((p) => `${p.phase}=${p.success ? "ok" : "fail"}`).join(", ");
-      if (result.paused) {
+      if (result.queued) {
+        console.log(`[dispatch] ${workflowName} queued (concurrency cap reached)`);
+      } else if (result.paused) {
         console.log(`[dispatch] ${workflowName} paused (${summary})`);
       } else if (result.success) {
         console.log(`[dispatch] ${workflowName} completed (${summary})`);
       } else {
         console.warn(`[dispatch] ${workflowName} failed (${summary})`);
       }
-      return { success: result.success, paused: result.paused };
+      return { success: result.success, paused: result.paused, queued: result.queued };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[dispatch] ${workflowName} threw: ${msg}`);
       return { success: false, error: msg };
+    } finally {
+      // Event-driven admission: after each dispatch settles, pull the next
+      // queued run into a free slot (if any). Fire-and-forget — a slow
+      // admission must not stall the caller.
+      admissionController?.admitNext().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[admission] admitNext error: ${msg}`);
+      });
     }
   };
 
@@ -711,6 +728,16 @@ async function main() {
       ? (channelId, threadId, msg) => slackConnector!.sendMessage(channelId, threadId, msg).then(() => {})
       : undefined,
   };
+
+  // Construct the admission controller now that resumeOpts is ready.
+  // `admissionController` was declared (let) above dispatchWorkflow so the
+  // closure can reference it; we assign here, after resumeOpts.
+  admissionController = createAdmissionController({
+    db,
+    resumeOpts,
+    maxWorkflows: config.concurrency.maxWorkflows,
+    maxQueueWaitMs: config.concurrency.maxQueueWaitMs,
+  });
 
   // Mount admin dashboard on the shared HTTP server (always available).
   {
@@ -1039,12 +1066,18 @@ async function main() {
   // human approval and are resumed via the dashboard / GitHub comment flow.
   resumeOrphanedWorkflows(resumeOpts).catch((err) => console.error("[main] Resume sweep failed:", err));
 
+  // Start the periodic admission sweeper. Also admits any queued runs that
+  // were persisted before the harness restarted (e.g. a queued run survived
+  // a crash; the sweeper picks it up on the first tick).
+  admissionController.start();
+
   console.log("[main] Ready to receive events");
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\n[main] Shutting down...");
     cron.stopAll();
+    admissionController.stop();
     await registry.stopAll();
     // The shared HTTP server is owned here now (no longer by the webhook
     // connector's stop()), so close it explicitly.

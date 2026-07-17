@@ -58,6 +58,7 @@ export interface WorkflowResult {
   phases: PhaseResult[];
   prNumber?: number;
   paused?: boolean;
+  queued?: boolean;
 }
 
 /** The delta a single `execute(node, outputs)` returns to the scheduler. */
@@ -119,7 +120,7 @@ export interface PhaseMarker {
 
 /** The subset of a workflow run the engine reads. */
 export interface WorkflowRunView {
-  status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
+  status: "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
   scratch?: Record<string, unknown>;
 }
 
