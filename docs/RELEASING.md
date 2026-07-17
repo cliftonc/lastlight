@@ -166,9 +166,8 @@ but stays a public npm package. Three things are unique to it:
   built by `.github/workflows/agentic-pi-image.yml` on `image-v*` tags, wholly
   independent of the `vX.Y.Z` npm release. Consumers pick up a new image only
   when `packages/agentic-pi/src/sandbox/images/manifest.ts`'s baked URL/sha is
-  bumped and a new `agentic-pi` npm version ships. (Those URLs still point at the
-  pre-migration `nearform/agentic-pi` `image-v0.1.0` assets; repoint them to
-  `nearform/lastlight` with the first monorepo `image-v*` release.)
+  bumped and a new `agentic-pi` npm version ships. (They point at the
+  `nearform/lastlight` `image-v0.1.0` release assets, built by this workflow.)
 
 ## Cutting a release — the full sequence
 

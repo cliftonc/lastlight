@@ -8,11 +8,6 @@
  * sha256s from the release's `manifest.json` into the placeholders
  * below and ship a new npm version.
  *
- * NOTE: the URLs below still point at the pre-monorepo `nearform/agentic-pi`
- * release (where the `image-v0.1.0` assets live and remain downloadable). The
- * FIRST `image-v*` release cut from this monorepo will produce a
- * `nearform/lastlight` `manifest.json`; repoint these URLs to it then.
- *
  * The sha256 is the authoritative signature — the loader verifies it
  * before extracting. Reproducibility across rebuilds is best-effort
  * (depends on Alpine mirror state), not guaranteed.
@@ -43,14 +38,14 @@ export const DEFAULT_IMAGE_MANIFEST: ImageManifest = {
   version: "0.1.0",
   archives: {
     aarch64: {
-      url: "https://github.com/nearform/agentic-pi/releases/download/image-v0.1.0/agentic-pi-dev-aarch64.tar.gz",
-      sha256: "2b5d303cbcdb8753d0b9eb1a15345b0b32140bc517ee07e3e946c6484093481c",
-      uncompressedBytes: 352753267,
+      url: "https://github.com/nearform/lastlight/releases/download/image-v0.1.0/agentic-pi-dev-aarch64.tar.gz",
+      sha256: "4748471c473f6cb911b19e6b03c76a56d2ddc7ea865f96f9bc6652236da4a6c2",
+      uncompressedBytes: 353131419,
     },
     x86_64: {
-      url: "https://github.com/nearform/agentic-pi/releases/download/image-v0.1.0/agentic-pi-dev-x86_64.tar.gz",
-      sha256: "08676e200b8ecd91e3727e67c295408756426447f9390a0f92c2d27d389e72f9",
-      uncompressedBytes: 378160995,
+      url: "https://github.com/nearform/lastlight/releases/download/image-v0.1.0/agentic-pi-dev-x86_64.tar.gz",
+      sha256: "438a0464bea625e4ef370473648a895c07a1871c9d1b9e6a9b3134f91b1b12a4",
+      uncompressedBytes: 378520500,
     },
   },
 };
