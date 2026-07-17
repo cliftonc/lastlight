@@ -1,15 +1,18 @@
 name: Publish release
 
 # The release pipeline: on a GitHub Release, run CI checks, THEN build+push the
-# Docker images to GHCR — in that order, as two chained jobs (`images` needs
-# `checks`).
+# Docker images to GHCR, THEN publish the npm packages — in that order, as three
+# chained jobs (`images` needs `checks`, `npm` needs `images`).
 #
-# npm publishing is MANUAL (migration decision 15): there is no `npm` job here.
-# After this workflow pushes the `:vX.Y.Z` GHCR images, the operator publishes
-# the five npm packages by hand, in dependency order — see docs/RELEASING.md.
-# The images-before-npm guarantee that used to be enforced by job-chaining is
-# now procedural: never publish a `lastlight` version whose images aren't yet in
-# GHCR (RELEASING.md spells out the sequence).
+# npm publishing is AUTOMATED here again (reversing migration decision 15): the
+# `npm` job publishes the workspace's five public packages (workflow-engine →
+# shared → core → cli → evals) via npm OIDC TRUSTED PUBLISHING — no NPM_TOKEN
+# secret, provenance attestations on. It needs `id-token: write` (set on the job)
+# and a trusted-publisher entry configured on npmjs.com for EACH package (repo
+# nearform/lastlight, workflow publish.yml). Images-before-npm is enforced by
+# job-chaining (`npm` needs `images`): the CLI only reaches npm once the
+# `:vX.Y.Z` images it tells hosts to pull already exist in GHCR — otherwise a
+# `npm i -g lastlight@X.Y.Z && server update` in the gap would fail the pull.
 #
 # `checks` runs FIRST, so a failing test/type error fails the release in a
 # couple of minutes BEFORE the slow Docker build — instead of after images are
@@ -19,8 +22,8 @@ name: Publish release
 # no drift.
 #
 # `workflow_dispatch` rebuilds the IMAGES for a specific tag only (still gated
-# behind `checks`). Both triggers are now image-(re)build paths — neither
-# publishes to npm.
+# behind `checks`); it never publishes to npm — the `npm` job is gated to
+# `release` events.
 #
 # Build the four locally-built images (agent + sandbox-base + sandbox +
 # sandbox-qa) once and push them to GHCR, so `lastlight server update` PULLS them
@@ -138,7 +141,55 @@ jobs:
           TAG: ${{ env.TAG }}
           PUSH_LATEST: ${{ env.PUSH_LATEST }}
 
-  # NOTE: npm publishing is intentionally NOT a job here (migration decision 15).
-  # Once this workflow's images are in GHCR, the operator publishes the five npm
-  # packages manually in dependency order (engine → shared → core → cli →
-  # evals) per docs/RELEASING.md.
+  # Publish the five public npm packages — ONLY after `images` succeeds, and ONLY
+  # for a real Release (a workflow_dispatch image rebuild never publishes to npm).
+  # Typecheck + tests already ran in `checks` (transitively via `images`), so this
+  # job only builds dist/ and publishes.
+  npm:
+    needs: images
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing + provenance — no NPM_TOKEN secret
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      # OIDC trusted publishing (tokenless) needs a recent npm; the one bundled
+      # with Node 22 predates it. pnpm 9 doesn't do the OIDC exchange itself, so
+      # we pack with pnpm (rewrites `workspace:*` → the real version) and publish
+      # the tarball with npm (does the OIDC exchange + provenance).
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm turbo run build
+
+      # Publish in DEPENDENCY order so a consumer never sees a package before the
+      # deps it pins exist on npm. Private packages (root, www, both dashboards)
+      # are simply not in this list. Each `pnpm pack` rewrites `workspace:*` to the
+      # concrete version; `npm publish <tarball>` mints provenance via OIDC.
+      - name: Publish to npm (deps first, provenance via OIDC)
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          for pkg in lastlight-workflow-engine lastlight-shared lastlight-core lastlight lastlight-evals; do
+            echo "::group::publish $pkg"
+            pnpm --filter "$pkg" pack --pack-destination "$out"
+            npm publish "$out"/*.tgz --access public --provenance
+            rm -f "$out"/*.tgz
+            echo "::endgroup::"
+          done

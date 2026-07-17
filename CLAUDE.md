@@ -21,7 +21,7 @@ lastlight/                     # repo root — private orchestration package (la
 ├── docs/                      # cross-cutting docs (migration plan, RELEASING.md)
 ├── .github/workflows/         # ci / publish / deploy-www / deploy-evals
 ├── apps/
-│   ├── server/                # @lastlight/core — the harness + server + Docker stack + ./evals barrel
+│   ├── server/                # lastlight-core — the harness + server + Docker stack + ./evals barrel
 │   │   ├── CLAUDE.md          # ← the full dev guide
 │   │   ├── src/ config/ workflows/ skills/ agent-context/ deploy/ spec/ sandbox/ tests/
 │   │   ├── Dockerfile  sandbox*.Dockerfile  docker-compose.yml  docker-bake.hcl
@@ -31,22 +31,24 @@ lastlight/                     # repo root — private orchestration package (la
 │       └── dashboard/         # @lastlight/evals-dashboard — nested, private
 └── packages/
     ├── cli/                   # published "lastlight" — the lean global bin + host-local server cmds
-    ├── shared/                # @lastlight/shared — light modules used by cli + core
-    └── workflow-engine/       # @lastlight/workflow-engine — core/ ports/ test-support/
+    ├── shared/                # lastlight-shared — light modules used by cli + core
+    └── workflow-engine/       # lastlight-workflow-engine — core/ ports/ test-support/
 ```
 
 ## Published packages (five)
 
-`lastlight` (cli), `@lastlight/core`, `@lastlight/workflow-engine`,
-`@lastlight/shared`, `lastlight-evals`. Everything else is `private: true`
-(root, `lastlight-www`, both dashboards). Publishing is **manual and
-operator-run** — see [`docs/RELEASING.md`](docs/RELEASING.md). There is no CI
-`npm` job; `publish.yml` only builds the GHCR images on a GitHub Release.
+`lastlight` (cli), `lastlight-core`, `lastlight-workflow-engine`,
+`lastlight-shared`, `lastlight-evals` — all unscoped (the `@lastlight` npm scope
+is held by an unrelated account). Everything else is `private: true` (root,
+`lastlight-www`, both dashboards). Publishing is **automated**: a GitHub Release
+fires `publish.yml`, which builds the GHCR images then publishes the five npm
+packages via OIDC trusted publishing (no secret). See
+[`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Dependency graph (workspace edges)
 
-`@lastlight/workflow-engine` ← `@lastlight/shared` ← {`lastlight` (cli),
-`@lastlight/core`} ← `lastlight-evals`. Invariants: **no edge from
+`lastlight-workflow-engine` ← `lastlight-shared` ← {`lastlight` (cli),
+`lastlight-core`} ← `lastlight-evals`. Invariants: **no edge from
 `shared`/`workflow-engine` back to `core`** (dep-cruiser gate, runs in
 `typecheck`); **the cli never gains an edge to `core`**. Turbo `^build` orders
 builds; there are no TS project references.
@@ -56,13 +58,13 @@ builds; there are no TS project references.
 ```bash
 pnpm install                       # one lockfile for the whole workspace
 pnpm turbo run typecheck test build   # the CI gate — turbo skips untouched packages
-pnpm dev                           # → pnpm --filter @lastlight/core dev
+pnpm dev                           # → pnpm --filter lastlight-core dev
 pnpm --filter <pkg> <script>       # run a script in one package
 ```
 
 Node is pinned to 22 (`.nvmrc`, `engines.node >= 22.12`). Per-package commands
 (`npm run dev` etc.) referenced in `apps/server/CLAUDE.md` become
-`pnpm --filter @lastlight/core <script>` at the workspace level.
+`pnpm --filter lastlight-core <script>` at the workspace level.
 
 ## Where the docs are
 

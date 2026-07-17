@@ -1,10 +1,14 @@
 # Releasing Last Light
 
 The monorepo publishes **five** npm packages plus **four** Docker images.
-Publishing is **manual and operator-run** — there is no Changesets, no CI `npm`
-job (migration decision 15). CI (`publish.yml`) only builds and pushes the GHCR
-images on a GitHub Release; the operator then publishes to npm by hand, in
-dependency order, from a clean checkout.
+Publishing is **automated**: cutting a GitHub Release fires `publish.yml`, which
+runs CI checks → builds+pushes the GHCR images → publishes the five npm packages
+in dependency order via npm **OIDC trusted publishing** (no `NPM_TOKEN` secret,
+provenance attestations on). The operator's job is to bump versions, tag, and cut
+the Release; the pipeline does the rest. (The manual `pnpm -r publish` sequence
+below is kept as the bootstrap/fallback path — e.g. the one-time first publish of
+a brand-new package name, which OIDC trusted publishing can't do until the
+package exists.)
 
 This document is the runbook. Read it end-to-end before your first release.
 
@@ -14,11 +18,11 @@ This document is the runbook. Read it end-to-end before your first release.
 
 | Package | Dir | Line | Notes |
 |---|---|---|---|
-| `@lastlight/workflow-engine` | `packages/workflow-engine` | 0.1.x | zod-only; leaf of the graph |
-| `@lastlight/shared` | `packages/shared` | 0.1.x | light modules used by cli + core |
-| `@lastlight/core` | `apps/server` | 0.16.x | the harness + server + `./evals` barrel + shipped assets |
+| `lastlight-workflow-engine` | `packages/workflow-engine` | 0.1.x | zod-only; leaf of the graph |
+| `lastlight-shared` | `packages/shared` | 0.1.x | light modules used by cli + core |
+| `lastlight-core` | `apps/server` | 0.16.x | the harness + server + `./evals` barrel + shipped assets |
 | `lastlight` | `packages/cli` | 0.16.x | the lean global CLI (`bin.lastlight`); ships `plugins/` + `.claude-plugin/` |
-| `lastlight-evals` | `apps/evals` | 0.7.x | eval harness; dep `@lastlight/core: workspace:*` |
+| `lastlight-evals` | `apps/evals` | 0.7.x | eval harness; dep `lastlight-core: workspace:*` |
 
 Everything else is `private: true` and never publishes: the root package
 (`lastlight-monorepo`), `lastlight-www`, `@lastlight/dashboard`,
@@ -31,12 +35,12 @@ Everything else is `private: true` and never publishes: the root package
 ## The dependency graph (why order matters)
 
 ```
-@lastlight/workflow-engine   (zod only)
+lastlight-workflow-engine   (zod only)
         ▲            ▲
-@lastlight/shared    │
+lastlight-shared    │
    ▲        ▲        │
    │        │        │
-lastlight   @lastlight/core
+lastlight   lastlight-core
   (cli)            ▲
                    │ workspace:*
              lastlight-evals
@@ -54,9 +58,9 @@ and every package that consumes it**, transitively:
 
 | You changed… | Also bump (they pick up the change) |
 |---|---|
-| `@lastlight/workflow-engine` | `@lastlight/core`, `@lastlight/shared` (if it consumes engine), `lastlight` (cli), `lastlight-evals` (via core) |
-| `@lastlight/shared` | `@lastlight/core`, `lastlight` (cli), `lastlight-evals` (via core) |
-| `@lastlight/core` | `lastlight-evals` (its `workspace:*` dep) |
+| `lastlight-workflow-engine` | `lastlight-core`, `lastlight-shared` (if it consumes engine), `lastlight` (cli), `lastlight-evals` (via core) |
+| `lastlight-shared` | `lastlight-core`, `lastlight` (cli), `lastlight-evals` (via core) |
+| `lastlight-core` | `lastlight-evals` (its `workspace:*` dep) |
 | `lastlight` (cli) | — (nothing depends on the cli) |
 | `lastlight-evals` | — (nothing depends on evals) |
 
@@ -70,8 +74,8 @@ Rules:
   capability, major = break. The CLI and core continue the 0.x line together for
   legibility; engine + shared are on 0.1.x; evals continues 0.7.x.
 - **Baselines** (set in Phase 4 of the migration): `lastlight` **0.16.0**,
-  `@lastlight/core` **0.16.0**, `@lastlight/workflow-engine` **0.1.0**,
-  `@lastlight/shared` **0.1.0**, `lastlight-evals` **0.7.1**. The first
+  `lastlight-core` **0.16.0**, `lastlight-workflow-engine` **0.1.0**,
+  `lastlight-shared` **0.1.0**, `lastlight-evals` **0.7.1**. The first
   post-migration release is strictly greater than the last frozen `lastlight`
   release (`v0.16.0` was the pre-migration tag; the CLI's first published
   version must exceed it — e.g. `0.17.0`).
@@ -82,7 +86,9 @@ Bump a package with `pnpm --filter <name> version <patch|minor|major>
 
 ## Publish order (dependency order)
 
-Always: **engine → shared → core → cli → evals.**
+Always: **engine → shared → core → cli → evals.** The `publish.yml` `npm` job
+does exactly this on every Release; the commands below are the **manual
+fallback** (a bootstrap first-publish, or recovering a half-published release).
 
 ```bash
 # From a clean `main`, in sync with origin, after the version bumps are committed
@@ -96,9 +102,9 @@ pnpm -r publish --dry-run --access public --no-git-checks
 pnpm -r publish --access public
 
 # …or, when only some packages changed, publish just those (still in dep order):
-pnpm --filter @lastlight/workflow-engine publish --access public
-pnpm --filter @lastlight/shared          publish --access public
-pnpm --filter @lastlight/core            publish --access public
+pnpm --filter lastlight-workflow-engine publish --access public
+pnpm --filter lastlight-shared          publish --access public
+pnpm --filter lastlight-core            publish --access public
 pnpm --filter lastlight                  publish --access public
 pnpm --filter lastlight-evals            publish --access public
 ```
@@ -109,25 +115,22 @@ to re-run, and safe when only a subset changed. Confirm each landed:
 
 ```bash
 npm view lastlight@X.Y.Z version --prefer-online          # note: no leading `v` on npm
-npm view @lastlight/core@X.Y.Z version --prefer-online
+npm view lastlight-core@X.Y.Z version --prefer-online
 # …etc for each package you bumped.
 ```
 
-## Images before npm (procedural guarantee)
+## Images before npm (enforced by job-chaining)
 
-The old pipeline chained an `npm` job after `images` so the CLI could never go
-live before its images. That chain is gone; the guarantee is now **procedural**
-and you MUST honour it by hand:
+`publish.yml` chains the `npm` job **after** `images` (`npm` needs `images`), so
+the CLI can never reach npm before its images exist:
 
-> Never publish a `lastlight` CLI version to npm until the `:vX.Y.Z` GHCR images
-> for that version already exist.
+> A `lastlight` CLI version only publishes to npm once the `:vX.Y.Z` GHCR images
+> for that version are already pushed.
 
-Why: a deploy host runs `npm i -g lastlight@X.Y.Z && lastlight server update`,
-which **pulls** `ghcr.io/nearform/lastlight-*:vX.Y.Z`. If the CLI is on npm
-before the images exist, that pull fails.
-
-The ordering therefore is: **tag + GitHub Release first → `publish.yml` pushes
-the images → confirm green → then publish to npm.**
+Why it matters: a deploy host runs `npm i -g lastlight@X.Y.Z && lastlight server
+update`, which **pulls** `ghcr.io/nearform/lastlight-*:vX.Y.Z`. If the CLI were
+on npm before the images existed, that pull would fail. The chain guarantees the
+order automatically — no manual sequencing needed.
 
 ## Cutting a release — the full sequence
 
@@ -140,7 +143,7 @@ Run on a clean `main`, up to date with origin.
 
    ```bash
    # bump each changed package + its dependents (example: a core-only change)
-   pnpm --filter @lastlight/core version minor --no-git-tag-version
+   pnpm --filter lastlight-core version minor --no-git-tag-version
    pnpm --filter lastlight-evals version patch --no-git-tag-version   # picks up core
    # edit plugins/lastlight/.claude-plugin/plugin.json if the CLI bumped
    pnpm install --lockfile-only
@@ -166,8 +169,9 @@ Run on a clean `main`, up to date with origin.
    ```
 
    `publish.yml` runs `checks` (reuses `ci.yml`) → `images` (`docker buildx bake
-   --push core`, then `sandbox-qa` non-fatal). `:latest` moves only for a real,
-   non-prerelease Release.
+   --push core`, then `sandbox-qa` non-fatal) → `npm` (publishes the five packages
+   in dependency order via OIDC trusted publishing). `:latest` moves only for a
+   real, non-prerelease Release.
 
    The same Release also fires the two Cloudflare site deploys —
    `deploy-www.yml` (→ lastlight.dev, re-rendering `apps/server/spec`) and
@@ -178,18 +182,18 @@ Run on a clean `main`, up to date with origin.
    sample — re-run the manual `npm run deploy` afterward to restore real
    results.
 
-5. **Wait for the images to be green:**
+5. **Watch the release run** (`checks → images → npm`) to green:
 
    ```bash
    gh run watch <run-id> --exit-status
    ```
 
-6. **Publish to npm** (only now — step "images before npm"):
+6. **Confirm npm published** (the `npm` job did it automatically):
 
    ```bash
-   pnpm -r publish --dry-run --access public --no-git-checks   # preview
-   pnpm -r publish --access public                              # publish
-   npm view lastlight@X.Y.Z version --prefer-online             # confirm
+   npm view lastlight@X.Y.Z version --prefer-online   # note: no leading `v`
+   npm view lastlight-core@X.Y.Z version --prefer-online
+   # …each package you bumped
    ```
 
    For an annotated tag, `git rev-parse vX.Y.Z` returns the tag object, not the
@@ -232,7 +236,7 @@ the general sequence above with three extras:
    all five packages you're publishing (dependency-aware) + `plugin.json`.
 2. **Skip anything already published manually.** Per migration decision 5's
    carve-out, the operator may have already published the fresh scoped names
-   (`@lastlight/workflow-engine`, `@lastlight/shared`) during their phases.
+   (`lastlight-workflow-engine`, `lastlight-shared`) during their phases.
    `pnpm -r publish` skips versions already on npm, so re-running is safe — but
    bump them if they changed since.
 3. **CLI-before-deploy is load-bearing here, not hygiene.** The pre-migration
