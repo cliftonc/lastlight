@@ -168,27 +168,26 @@ Both server scripts call `apps/server/scripts/dev-local.sh`, which:
 
 #### Triggering work via the CLI
 
-The CLI talks to the running server — it does not execute agents directly. The
-CLI source lives in the `lastlight` package (`packages/cli/`, entry `src/cli.ts`);
-from a checkout run it via `pnpm --filter lastlight exec tsx src/cli.ts`. Start
-the server first, then in another terminal:
+The CLI talks to the running server — it does not execute agents directly.
+Install it globally, then start the server first and, in another terminal:
 
 ```bash
+npm i -g lastlight
+
 # Cheap, safe defaults — single agent invocation
-pnpm --filter lastlight exec tsx src/cli.ts owner/repo#42                            # triage that one issue
-pnpm --filter lastlight exec tsx src/cli.ts https://github.com/owner/repo/issues/42  # same, full URL form
-pnpm --filter lastlight exec tsx src/cli.ts https://github.com/owner/repo/pull/99    # review that one PR
-pnpm --filter lastlight exec tsx src/cli.ts triage owner/repo                        # scan repo for new issues to triage
-pnpm --filter lastlight exec tsx src/cli.ts review owner/repo                        # scan repo for PRs to review
-pnpm --filter lastlight exec tsx src/cli.ts health owner/repo                        # weekly health report
+lastlight owner/repo#42                            # triage that one issue
+lastlight https://github.com/owner/repo/issues/42  # same, full URL form
+lastlight https://github.com/owner/repo/pull/99    # review that one PR
+lastlight triage owner/repo                        # scan repo for new issues to triage
+lastlight review owner/repo                        # scan repo for PRs to review
+lastlight health owner/repo                        # weekly health report
 
 # Expensive, opt-in — full Architect → Executor → Reviewer → PR cycle
-pnpm --filter lastlight exec tsx src/cli.ts build owner/repo#42
-pnpm --filter lastlight exec tsx src/cli.ts build https://github.com/owner/repo/issues/42
+lastlight build owner/repo#42
+lastlight build https://github.com/owner/repo/issues/42
 ```
 
-> Installed globally, these are just `lastlight owner/repo#42` etc. — the
-> subcommands are identical.
+> From a source checkout, swap `lastlight` for `pnpm --filter lastlight exec tsx src/cli.ts`.
 
 The default for a single-issue/PR shorthand is the **cheap** action (triage or review). Build cycles require the explicit `build` subcommand to opt in.
 
@@ -200,22 +199,19 @@ pi-ai picks credentials from the provider env vars the harness forwards (the ful
 
 Instead of an API key you can authenticate with a paid subscription. pi-ai
 supports three OAuth providers; log in once on the host and Last Light stores
-and refreshes the token for you. In this from-source checkout the CLI runs via
-`tsx` from the `lastlight` package (`packages/cli/`); installed globally, `npm i
--g lastlight` gives you the same `lastlight oauth …` commands:
+and refreshes the token for you:
 
 ```bash
-pnpm --filter lastlight exec tsx src/cli.ts oauth login openai-codex   # ChatGPT Plus/Pro (Codex)
-pnpm --filter lastlight exec tsx src/cli.ts oauth login anthropic      # Claude Pro/Max
-pnpm --filter lastlight exec tsx src/cli.ts oauth login github-copilot # GitHub Copilot
-pnpm --filter lastlight exec tsx src/cli.ts oauth list                 # providers + who's logged in
-pnpm --filter lastlight exec tsx src/cli.ts oauth status               # store path + token expiry
-pnpm --filter lastlight exec tsx src/cli.ts oauth test openai-codex    # verify a stored login refreshes
-pnpm --filter lastlight exec tsx src/cli.ts oauth logout [provider]    # remove one (or all)
+lastlight oauth login openai-codex   # ChatGPT Plus/Pro (Codex)
+lastlight oauth login anthropic      # Claude Pro/Max
+lastlight oauth login github-copilot # GitHub Copilot
+lastlight oauth list                 # providers + who's logged in
+lastlight oauth status               # store path + token expiry
+lastlight oauth test openai-codex    # verify a stored login refreshes
+lastlight oauth logout [provider]    # remove one (or all)
 ```
 
-> Installed globally, these are just `lastlight oauth login …` etc. — the
-> subcommands are identical.
+> From a source checkout, swap `lastlight` for `pnpm --filter lastlight exec tsx src/cli.ts`.
 
 Then point the model at that provider and restart the agent:
 
@@ -348,11 +344,11 @@ With the container running:
 # Health check
 curl http://localhost:8644/health
 
-# Trigger a build cycle (or just `lastlight …` with the installed CLI)
-pnpm --filter lastlight exec tsx src/cli.ts https://github.com/owner/repo/issues/42
+# Trigger a build cycle
+lastlight https://github.com/owner/repo/issues/42
 
 # Trigger triage
-pnpm --filter lastlight exec tsx src/cli.ts triage owner/repo
+lastlight triage owner/repo
 ```
 
 ---
