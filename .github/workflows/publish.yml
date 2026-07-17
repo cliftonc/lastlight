@@ -113,7 +113,11 @@ jobs:
       # Required set: agent + sandbox-base + sandbox, built in one bake graph so
       # `sandbox` links to `target:sandbox-base` by content (see docker-bake.hcl).
       - name: Build & push core images
-        run: docker buildx bake -f apps/server/docker-bake.hcl --push core
+        # Invoke from apps/server/ (where docker-bake.hcl lives) so its
+        # `context = "../.."` resolves to the repo root — buildx resolves bake
+        # relative paths against the working dir, not the -f file's location.
+        working-directory: apps/server
+        run: docker buildx bake -f docker-bake.hcl --push core
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ env.TAG }}
@@ -127,7 +131,8 @@ jobs:
       # layer cached across releases.
       - name: Build & push sandbox-qa (non-fatal)
         continue-on-error: true
-        run: docker buildx bake -f apps/server/docker-bake.hcl --push sandbox-qa
+        working-directory: apps/server
+        run: docker buildx bake -f docker-bake.hcl --push sandbox-qa
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ env.TAG }}
