@@ -1,20 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "fs";
-import { dirname, join, relative, resolve } from "path";
-import { parse } from "yaml";
+import { dirname, join, resolve } from "path";
 
 /**
  * Drift guard for the committed sandbox agentic-pi pin.
  *
- * The sandbox images install agentic-pi from `sandbox/agentic-pi.pin` (two
- * lines: version, sha512 integrity) rather than COPYing the whole
- * pnpm-lock.yaml — the lockfile's hash changes on every release and busted
- * the sandbox's agentic-pi layer (and, downstream, sandbox-qa's Chromium) on
- * every version bump. This test asserts the committed pin still matches the
- * lockfile, so a forgotten `scripts/agentic-pi-pin.sh` regeneration fails CI
- * instead of silently installing a stale agentic-pi into the sandbox.
+ * The sandbox images install the PUBLISHED agentic-pi from npm (the Dockerfiles
+ * curl `agentic-pi-<version>.tgz` and verify its sha512 against this pin's
+ * integrity line) rather than the in-repo build. agentic-pi now lives in this
+ * monorepo as a `workspace:*` package, so the pnpm-lock.yaml no longer carries a
+ * registry `resolution.integrity` for it — the pin is derived from the package's
+ * own version (packages/agentic-pi/package.json) + the integrity npm reports for
+ * that published version (scripts/agentic-pi-pin.sh).
+ *
+ * This guard is deliberately OFFLINE: it asserts the pin's version line matches
+ * packages/agentic-pi/package.json (so a forgotten `scripts/agentic-pi-pin.sh`
+ * regeneration after a version bump fails CI) and that the integrity line is a
+ * well-formed sha512 SRI string. It does NOT re-fetch from npm — verifying the
+ * integrity actually matches the published tarball is the Dockerfile's job at
+ * build time.
  */
-/** Walk upward from `start` to the directory holding the workspace lockfile. */
+/** Walk upward from `start` to the monorepo root (the dir holding pnpm-lock.yaml). */
 function findWorkspaceRoot(start: string): string {
   let dir = start;
   while (!existsSync(join(dir, "pnpm-lock.yaml"))) {
@@ -26,31 +32,24 @@ function findWorkspaceRoot(start: string): string {
 }
 
 describe("sandbox/agentic-pi.pin", () => {
-  it("matches the agentic-pi version + integrity in pnpm-lock.yaml", () => {
-    // The single pnpm-lock.yaml lives at the MONOREPO root; this package's
-    // importer key is its path relative to that root (e.g. "apps/server").
-    const packageRoot = resolve(".");
-    const workspaceRoot = findWorkspaceRoot(packageRoot);
-    const importer = relative(workspaceRoot, packageRoot) || ".";
-    const lock = parse(readFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "utf-8"));
-    const dep = lock.importers?.[importer]?.dependencies?.["agentic-pi"];
-    expect(dep, "agentic-pi missing from lockfile").toBeTruthy();
+  it("pins the agentic-pi workspace package's version + a valid sha512 integrity", () => {
+    const workspaceRoot = findWorkspaceRoot(resolve("."));
+    const pkg = JSON.parse(
+      readFileSync(join(workspaceRoot, "packages/agentic-pi/package.json"), "utf-8"),
+    );
 
-    // The importer's resolved version may carry a peer-dependency suffix,
-    // e.g. "0.2.16(ws@8.21.0)(zod@4.4.3)" — the bare version precedes it.
-    const version = (dep.version as string).replace(/\(.*$/, "");
-    const pkg = lock.packages?.[`agentic-pi@${version}`];
-    expect(
-      pkg?.resolution?.integrity,
-      `agentic-pi@${version} resolution missing from lockfile`,
-    ).toBeTruthy();
-
-    const expected = `${version}\n${pkg.resolution.integrity}\n`;
-    const actual = readFileSync(resolve("sandbox/agentic-pi.pin"), "utf-8");
+    const pin = readFileSync(resolve("sandbox/agentic-pi.pin"), "utf-8");
+    const [version, integrity] = pin.split("\n");
 
     expect(
-      actual,
-      "sandbox/agentic-pi.pin is out of date — run scripts/agentic-pi-pin.sh",
-    ).toBe(expected);
+      version,
+      "sandbox/agentic-pi.pin version is out of date — run scripts/agentic-pi-pin.sh",
+    ).toBe(pkg.version);
+
+    // sha512-<base64> — the Subresource-Integrity form npm and the Dockerfile use.
+    expect(
+      integrity,
+      "sandbox/agentic-pi.pin integrity line is not a sha512 SRI string",
+    ).toMatch(/^sha512-[A-Za-z0-9+/]+={0,2}$/);
   });
 });

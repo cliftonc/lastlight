@@ -31,8 +31,8 @@ importers:
         specifier: ^22.0.0
         version: 22.19.19
       agentic-pi:
-        specifier: ^0.2.11
-        version: 0.2.16(@earendil-works/pi-tui@0.80.6)(ws@8.21.0)(zod@4.4.3)
+        specifier: workspace:*
+        version: link:../../packages/agentic-pi
       tsx:
         specifier: ^4.0.0
         version: 4.22.3
@@ -161,8 +161,8 @@ importers:
         specifier: ^7.16.0
         version: 7.16.0
       agentic-pi:
-        specifier: ^0.2.16
-        version: 0.2.16(@earendil-works/pi-tui@0.80.6)(ws@8.21.0)(zod@4.4.3)
+        specifier: workspace:*
+        version: link:../../packages/agentic-pi
       arctic:
         specifier: ^3.7.0
         version: 3.7.0
@@ -225,8 +225,8 @@ importers:
         specifier: ^12.10.2
         version: 12.10.2(@types/react@18.3.29)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       agentic-pi:
-        specifier: ^0.2.4
-        version: 0.2.16(@earendil-works/pi-tui@0.80.6)(ws@8.21.0)(zod@4.4.3)
+        specifier: workspace:*
+        version: link:../../../packages/agentic-pi
       ansi-to-html:
         specifier: ^0.7.2
         version: 0.7.2
@@ -316,6 +316,76 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
+
+  packages/agentic-pi:
+    dependencies:
+      '@earendil-works/gondolin':
+        specifier: ^0.12.0
+        version: 0.12.0
+      '@earendil-works/pi-ai':
+        specifier: ^0.80.6
+        version: 0.80.6(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-coding-agent':
+        specifier: ^0.80.6
+        version: 0.80.6(ws@8.21.0)(zod@4.4.3)
+      '@ff-labs/pi-fff':
+        specifier: ^0.9.4
+        version: 0.9.4(@earendil-works/pi-coding-agent@0.80.6(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-tui@0.80.6)(@sinclair/typebox@0.34.49)
+      '@octokit/auth-app':
+        specifier: ^7.1.4
+        version: 7.2.2
+      '@octokit/rest':
+        specifier: ^21.0.2
+        version: 21.1.1
+      '@opentelemetry/api':
+        specifier: ^1.9.0
+        version: 1.9.1
+      '@opentelemetry/core':
+        specifier: ^2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/exporter-metrics-otlp-http':
+        specifier: ^0.219.0
+        version: 0.219.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/exporter-trace-otlp-http':
+        specifier: ^0.219.0
+        version: 0.219.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/resources':
+        specifier: ^2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-metrics':
+        specifier: ^2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-base':
+        specifier: ^2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-node':
+        specifier: ^2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/semantic-conventions':
+        specifier: ^1.41.0
+        version: 1.41.1
+      '@sinclair/typebox':
+        specifier: ^0.34.0
+        version: 0.34.49
+      '@types/jsonwebtoken':
+        specifier: ^9.0.10
+        version: 9.0.10
+      jsonwebtoken:
+        specifier: ^9.0.3
+        version: 9.0.3
+    devDependencies:
+      '@biomejs/biome':
+        specifier: 2.5.3
+        version: 2.5.3
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/cli:
     dependencies:
@@ -635,6 +705,59 @@ packages:
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
+
+  '@biomejs/biome@2.5.3':
+    resolution: {integrity: sha512-MrJswFdei9EfDwwUy2tQrPDpK0AO+RmMFvBoaaJ6ayBc3sUbHdCE+XG5N8vp+5So41ZupZJQm0roHFFhMGVD7A==}
+    engines: {node: '>=14.21.3'}
+    hasBin: true
+
+  '@biomejs/cli-darwin-arm64@2.5.3':
+    resolution: {integrity: sha512-QhYP9muVQ0nUO5zztFuPbEwi4+94sJWVjaZds9aMi1l/KNZBiUjdiSUrGHsTaMGDXrYl+r4AS2sUKfgH3w+V3g==}
+    engines: {node: '>=14.21.3'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@biomejs/cli-darwin-x64@2.5.3':
+    resolution: {integrity: sha512-NC1Ss13UaW7QZX+y8j44bF7AP0jSJdBl6iRhe0MAkvaSqZy+mWg3GaXsrb+eSoHoGDBtaXWEbMVV0iVN2cZ7cQ==}
+    engines: {node: '>=14.21.3'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@biomejs/cli-linux-arm64-musl@2.5.3':
+    resolution: {integrity: sha512-fccix0w6xp6csCXgxeC0dU/3ecgRQal0y+cv2SP9ajNlhe7Yrk2Ug7UDe2j9AT9ZDYitkXpvUKgZjjuoYeP4Vg==}
+    engines: {node: '>=14.21.3'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@biomejs/cli-linux-arm64@2.5.3':
+    resolution: {integrity: sha512-ksx1KWeyYW18ILL04msF/J4ZBtBDN33znYK8Z/aNv/vlBVxL9/g3mGP+omgHJKy4+KWbK87vcmmpmurfNjSgiA==}
+    engines: {node: '>=14.21.3'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@biomejs/cli-linux-x64-musl@2.5.3':
+    resolution: {integrity: sha512-O/yU9YKRUiHhmcjF2f38PSjseVk3G4VLWYc0G2HWpzdBVREV6G8IGWIVEFf7MFPfWIzNUIvPsEjeAZQIOgnLcQ==}
+    engines: {node: '>=14.21.3'}
+    cpu: [x64]
+    os: [linux]
+
+  '@biomejs/cli-linux-x64@2.5.3':
+    resolution: {integrity: sha512-yMkJtilsgvILDcVkh187aVLTb64xYsrxYajx5kym+r1ULkO5HUOfu9AYKLGQbOVLwJtT2utNw7hhFNg+17mUYA==}
+    engines: {node: '>=14.21.3'}
+    cpu: [x64]
+    os: [linux]
+
+  '@biomejs/cli-win32-arm64@2.5.3':
+    resolution: {integrity: sha512-cX5z+GYwRcqEok0AH3KSfQGgqYd0Nomfp6Fbe1uiTtELE38hdH2k842wQ9wLNaF/JJ7r4rjJQ4VR+ce+fRmQbw==}
+    engines: {node: '>=14.21.3'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@biomejs/cli-win32-x64@2.5.3':
+    resolution: {integrity: sha512-ExSaJWi4/u6+GXCszlSKpWSjKNbDseAYqqkCznsCsZ/4uidZ/BEqsCc5/3ctlq6dfIubdIIRSVLC/PG9xPl70Q==}
+    engines: {node: '>=14.21.3'}
+    cpu: [x64]
+    os: [win32]
 
   '@capsizecss/unpack@4.0.1':
     resolution: {integrity: sha512-CuNiSqg7+e1cO/GjffyMOm5Tt2jUF9CWHHnvQ/UkqvtkGfHdgwEC0wpmq7fkN3gxwpRnrAN0WzO3vREKmNolMQ==}
@@ -1359,6 +1482,7 @@ packages:
   '@ff-labs/fff-node@0.9.4':
     resolution: {integrity: sha512-yUphwzcVBuNrg1iEAE5XVPOWfCLuq/BE1scUxtHMmLo+e1KuKWBRgSKFXGjNBfL8lV3c5VGwIgK66aBqmhqVBQ==}
     engines: {node: '>=18.0.0'}
+    cpu: [x64, arm64]
     os: [darwin, linux, win32]
 
   '@ff-labs/pi-fff@0.9.4':
@@ -3326,11 +3450,6 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
-
-  agentic-pi@0.2.16:
-    resolution: {integrity: sha512-C2T3hjHfQjSI+H+Awkwu7q1bLf5r6t1Hw7tzW3G4pbFqDNdgSUktv8PNjWpWnDP/7C/gdmjwzWgP/uIRWY3gsA==}
-    engines: {node: '>=20'}
-    hasBin: true
 
   ajv-draft-04@1.0.0:
     resolution: {integrity: sha512-mv00Te6nmYbRp5DCwclxtt7yV/joXJPGS7nM+97GdxvuttCOfgI3K4U25zboyeX0O+myI8ERluxQe5wljMmVIw==}
@@ -6865,6 +6984,41 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
+  '@biomejs/biome@2.5.3':
+    optionalDependencies:
+      '@biomejs/cli-darwin-arm64': 2.5.3
+      '@biomejs/cli-darwin-x64': 2.5.3
+      '@biomejs/cli-linux-arm64': 2.5.3
+      '@biomejs/cli-linux-arm64-musl': 2.5.3
+      '@biomejs/cli-linux-x64': 2.5.3
+      '@biomejs/cli-linux-x64-musl': 2.5.3
+      '@biomejs/cli-win32-arm64': 2.5.3
+      '@biomejs/cli-win32-x64': 2.5.3
+
+  '@biomejs/cli-darwin-arm64@2.5.3':
+    optional: true
+
+  '@biomejs/cli-darwin-x64@2.5.3':
+    optional: true
+
+  '@biomejs/cli-linux-arm64-musl@2.5.3':
+    optional: true
+
+  '@biomejs/cli-linux-arm64@2.5.3':
+    optional: true
+
+  '@biomejs/cli-linux-x64-musl@2.5.3':
+    optional: true
+
+  '@biomejs/cli-linux-x64@2.5.3':
+    optional: true
+
+  '@biomejs/cli-win32-arm64@2.5.3':
+    optional: true
+
+  '@biomejs/cli-win32-x64@2.5.3':
+    optional: true
+
   '@capsizecss/unpack@4.0.1':
     dependencies:
       fontkitten: 1.0.3
@@ -9785,35 +9939,6 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  agentic-pi@0.2.16(@earendil-works/pi-tui@0.80.6)(ws@8.21.0)(zod@4.4.3):
-    dependencies:
-      '@earendil-works/gondolin': 0.12.0
-      '@earendil-works/pi-ai': 0.80.6(ws@8.21.0)(zod@4.4.3)
-      '@earendil-works/pi-coding-agent': 0.80.6(ws@8.21.0)(zod@4.4.3)
-      '@ff-labs/pi-fff': 0.9.4(@earendil-works/pi-coding-agent@0.80.6(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-tui@0.80.6)(@sinclair/typebox@0.34.49)
-      '@octokit/auth-app': 7.2.2
-      '@octokit/rest': 21.1.1
-      '@opentelemetry/api': 1.9.1
-      '@opentelemetry/core': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/exporter-metrics-otlp-http': 0.219.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/exporter-trace-otlp-http': 0.219.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/resources': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-metrics': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-trace-base': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-trace-node': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
-      '@sinclair/typebox': 0.34.49
-      '@types/jsonwebtoken': 9.0.10
-      jsonwebtoken: 9.0.3
-    transitivePeerDependencies:
-      - '@earendil-works/pi-tui'
-      - '@modelcontextprotocol/sdk'
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
   ajv-draft-04@1.0.0(ajv@8.20.0):
     optionalDependencies:
       ajv: 8.20.0
@@ -11202,7 +11327,7 @@ snapshots:
       lodash.isstring: 4.0.1
       lodash.once: 4.1.1
       ms: 2.1.3
-      semver: 7.8.1
+      semver: 7.8.5
 
   jwa@2.0.1:
     dependencies:

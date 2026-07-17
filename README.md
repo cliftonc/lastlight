@@ -11,7 +11,7 @@
 
 An AI agent that maintains GitHub repositories: triaging issues, reviewing PRs, monitoring repo health, and building features through an Architect → Executor → Reviewer development cycle.
 
-Built on [agentic-pi](https://github.com/nearform/agentic-pi) (workflow phases) and [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) (in-process chat) with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `LASTLIGHT_MODEL` at any `provider/model` pi-ai supports (defaults to `anthropic/claude-sonnet-4-6`).
+Built on [agentic-pi](https://github.com/nearform/lastlight/tree/main/packages/agentic-pi) (workflow phases) and [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) (in-process chat) with a lightweight TypeScript harness for webhook ingestion, cron scheduling, and process management. Provider-agnostic — point `LASTLIGHT_MODEL` at any `provider/model` pi-ai supports (defaults to `anthropic/claude-sonnet-4-6`).
 
 ## Monorepo layout
 
@@ -370,7 +370,7 @@ sudo bash deploy/native/install.sh        # second run: starts the service
 
 Re-deploys: `git pull && sudo bash deploy/native/install.sh` (idempotent — rebuilds and restarts the service), from `apps/server/`.
 
-**Required:** the host kernel must expose `/dev/kvm` (bare-metal Linux or KVM-enabled VM). Hetzner Cloud, Cloud Run, Fly Machines (without `--vm-cpu-class shared`), and most managed container hosts do **not** expose nested virt — see `agentic-pi`'s `SPIKE-gondolin.md` for the full constraint matrix.
+**Required:** the host kernel must expose `/dev/kvm` (bare-metal Linux or KVM-enabled VM). Hetzner Cloud, Cloud Run, Fly Machines (without `--vm-cpu-class shared`), and most managed container hosts do **not** expose nested virt — see `packages/agentic-pi/SPIKE-gondolin.md` for the full constraint matrix.
 
 If KVM isn't available, fall back to the Docker deploy above with `LASTLIGHT_SANDBOX=docker`.
 
@@ -687,7 +687,7 @@ If you're on an old `lastlight-sandbox:latest`, this picks up the install step t
 
 Gondolin requires `/dev/kvm` on Linux or HVF on macOS. Inside a container with no nested virt, `VM.create()` succeeds but the first `vm.exec()` hangs. Symptoms: phase shows "running" indefinitely with no JSONL events after `sandbox_status`.
 
-Either switch to `LASTLIGHT_SANDBOX=docker` (sibling containers via socket) or move the harness to a KVM-capable host. Full analysis: `agentic-pi/SPIKE-gondolin.md`.
+Either switch to `LASTLIGHT_SANDBOX=docker` (sibling containers via socket) or move the harness to a KVM-capable host. Full analysis: `packages/agentic-pi/SPIKE-gondolin.md`.
 
 ### Agent run fails with a quota / billing error
 

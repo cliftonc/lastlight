@@ -1,11 +1,17 @@
 /**
  * Baked-in manifest for the `default` agentic-pi-dev image.
  *
- * The image is built and released by `.github/workflows/image.yml`,
- * which tags releases on `image-v*` (independent from the npm `v*`
- * stream). After cutting an `image-v<x.y.z>` release, copy the
- * per-arch URLs and sha256s from the release's `manifest.json` into
- * the placeholders below and ship a new npm version.
+ * The image is built and released by the monorepo's
+ * `.github/workflows/agentic-pi-image.yml`, which tags releases on
+ * `image-v*` (independent from the monorepo npm `v*` stream). After
+ * cutting an `image-v<x.y.z>` release, copy the per-arch URLs and
+ * sha256s from the release's `manifest.json` into the placeholders
+ * below and ship a new npm version.
+ *
+ * NOTE: the URLs below still point at the pre-monorepo `nearform/agentic-pi`
+ * release (where the `image-v0.1.0` assets live and remain downloadable). The
+ * FIRST `image-v*` release cut from this monorepo will produce a
+ * `nearform/lastlight` `manifest.json`; repoint these URLs to it then.
  *
  * The sha256 is the authoritative signature — the loader verifies it
  * before extracting. Reproducibility across rebuilds is best-effort

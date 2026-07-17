@@ -5,8 +5,8 @@ name: Publish release
 # chained jobs (`images` needs `checks`, `npm` needs `images`).
 #
 # npm publishing is AUTOMATED here again (reversing migration decision 15): the
-# `npm` job publishes the workspace's five public packages (workflow-engine →
-# shared → core → cli → evals) via npm OIDC TRUSTED PUBLISHING — no NPM_TOKEN
+# `npm` job publishes the workspace's six public packages (workflow-engine →
+# shared → agentic-pi → core → cli → evals) via npm OIDC TRUSTED PUBLISHING — no NPM_TOKEN
 # secret, provenance attestations on. It needs `id-token: write` (set on the job)
 # and a trusted-publisher entry configured on npmjs.com for EACH package (repo
 # nearform/lastlight, workflow publish.yml). Images-before-npm is enforced by
@@ -141,7 +141,7 @@ jobs:
           TAG: ${{ env.TAG }}
           PUSH_LATEST: ${{ env.PUSH_LATEST }}
 
-  # Publish the five public npm packages — ONLY after `images` succeeds, and ONLY
+  # Publish the six public npm packages — ONLY after `images` succeeds, and ONLY
   # for a real Release (a workflow_dispatch image rebuild never publishes to npm).
   # Typecheck + tests already ran in `checks` (transitively via `images`), so this
   # job only builds dist/ and publishes.
@@ -186,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$(mktemp -d)"
-          for pkg in lastlight-workflow-engine lastlight-shared lastlight-core lastlight lastlight-evals; do
+          for pkg in lastlight-workflow-engine lastlight-shared agentic-pi lastlight-core lastlight lastlight-evals; do
             echo "::group::publish $pkg"
             pnpm --filter "$pkg" pack --pack-destination "$out"
             npm publish "$out"/*.tgz --access public --provenance

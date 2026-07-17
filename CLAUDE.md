@@ -32,23 +32,30 @@ lastlight/                     # repo root — private orchestration package (la
 └── packages/
     ├── cli/                   # published "lastlight" — the lean global bin + host-local server cmds
     ├── shared/                # lastlight-shared — light modules used by cli + core
-    └── workflow-engine/       # lastlight-workflow-engine — core/ ports/ test-support/
+    ├── workflow-engine/       # lastlight-workflow-engine — core/ ports/ test-support/
+    └── agentic-pi/            # published "agentic-pi" — the coding-agent harness core runs in the sandbox
 ```
 
-## Published packages (five)
+## Published packages (six)
 
 `lastlight` (cli), `lastlight-core`, `lastlight-workflow-engine`,
-`lastlight-shared`, `lastlight-evals` — all unscoped (the `@lastlight` npm scope
-is held by an unrelated account). Everything else is `private: true` (root,
-`lastlight-www`, both dashboards). Publishing is **automated**: a GitHub Release
-fires `publish.yml`, which builds the GHCR images then publishes the five npm
-packages via OIDC trusted publishing (no secret). See
+`lastlight-shared`, `lastlight-evals`, and `agentic-pi` — all unscoped (the
+`@lastlight` npm scope is held by an unrelated account). Everything else is
+`private: true` (root, `lastlight-www`, both dashboards). Publishing is
+**automated**: a GitHub Release fires `publish.yml`, which builds the GHCR images
+then publishes the six npm packages via OIDC trusted publishing (no secret).
+`agentic-pi` moved in from the standalone `nearform/agentic-pi` repo but stays a
+public npm package; it also carries its own `image-v*` VM-image release stream
+(`agentic-pi-image.yml`), and the sandbox installs its *published* build from npm
+via `apps/server/sandbox/agentic-pi.pin`. See
 [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Dependency graph (workspace edges)
 
 `lastlight-workflow-engine` ← `lastlight-shared` ← {`lastlight` (cli),
-`lastlight-core`} ← `lastlight-evals`. Invariants: **no edge from
+`lastlight-core`} ← `lastlight-evals`. `agentic-pi` is a second leaf (no
+workspace deps) consumed by `lastlight-core` + `lastlight-evals` (and the private
+dashboard) via `workspace:*`. Invariants: **no edge from
 `shared`/`workflow-engine` back to `core`** (dep-cruiser gate, runs in
 `typecheck`); **the cli never gains an edge to `core`**. Turbo `^build` orders
 builds; there are no TS project references.

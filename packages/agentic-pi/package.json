@@ -5,11 +5,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nearform/agentic-pi.git"
+    "url": "git+https://github.com/nearform/lastlight.git",
+    "directory": "packages/agentic-pi"
   },
-  "homepage": "https://github.com/nearform/agentic-pi#readme",
+  "homepage": "https://github.com/nearform/lastlight/tree/main/packages/agentic-pi#readme",
   "bugs": {
-    "url": "https://github.com/nearform/agentic-pi/issues"
+    "url": "https://github.com/nearform/lastlight/issues"
   },
   "keywords": [
     "agent",
@@ -40,6 +41,7 @@
     "test:unit": "node scripts/run-tests.mjs --unit",
     "test:integration": "node scripts/run-tests.mjs --integration",
     "check": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "lint": "biome lint",
     "format": "biome format --write",
     "fix": "biome check --write",
@@ -72,6 +74,6 @@
     "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   }
 }

@@ -2,28 +2,34 @@
 # Regenerate / verify sandbox/agentic-pi.pin — the two-line
 # (version, sha512 integrity) pin the sandbox images use to install agentic-pi.
 #
-# WHY a committed pin file instead of COPYing pnpm-lock.yaml into the sandbox
-# build: the lockfile's content hash changes on EVERY release (a version bump
-# touches it), which busted the sandbox image's agentic-pi
-# layer — and, because sandbox-qa is FROM the base sandbox, re-downloaded its
-# ~300 MB Chromium — on every version bump. This tiny pin file changes ONLY when
-# agentic-pi's version/integrity actually changes, so the layer (and Chromium)
-# stays cached across ordinary releases. The Dockerfiles COPY this file; manual
-# `docker compose build` needs no build-args.
+# WHY a committed pin file: the sandbox Dockerfiles install the PUBLISHED
+# agentic-pi from npm (`curl .../agentic-pi-<version>.tgz` + explicit integrity
+# check), NOT the in-repo build. agentic-pi now lives in this monorepo as a
+# workspace package (packages/agentic-pi) consumed via `workspace:*`, so the
+# pnpm-lock.yaml no longer carries a registry `resolution.integrity` for it —
+# the pin is therefore derived from the package's own version
+# (packages/agentic-pi/package.json) plus the integrity npm reports for that
+# published version. Keeping the sandbox on the published tarball keeps its
+# agentic-pi layer (and sandbox-qa's ~300 MB Chromium) cached across ordinary
+# releases, since this tiny file changes only when agentic-pi's version does.
 #
-# A drift guard (tests/agentic-pi-pin.test.ts) asserts this file matches the
-# lockfile, so a forgotten regeneration fails CI rather than silently installing
-# a stale agentic-pi.
+# ORDERING: a new agentic-pi version must be PUBLISHED to npm before this pin
+# can reference its integrity (npm view returns nothing for an unpublished
+# version). So on an agentic-pi release: publish first, then regenerate the pin.
+#
+# A drift guard (tests/agentic-pi-pin.test.ts) asserts — offline — that the pin's
+# version matches packages/agentic-pi/package.json, so a forgotten regeneration
+# fails CI rather than silently installing a stale agentic-pi.
 #
 # Usage:
-#   scripts/agentic-pi-pin.sh            # regenerate sandbox/agentic-pi.pin
-#   scripts/agentic-pi-pin.sh --check    # exit non-zero if it's out of date
+#   scripts/agentic-pi-pin.sh            # regenerate sandbox/agentic-pi.pin (needs network: npm view)
+#   scripts/agentic-pi-pin.sh --check    # exit non-zero if it's out of date (needs network)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# The single pnpm-lock.yaml lives at the WORKSPACE root (the monorepo root,
-# two levels up from this package) — walk upward until we find it, so the
-# script keeps working if the package ever moves again.
+# The single pnpm-lock.yaml lives at the WORKSPACE root (the monorepo root) —
+# walk upward until we find it, so the script keeps working if the package ever
+# moves again. agentic-pi's package.json is resolved relative to that root.
 WORKSPACE_ROOT="$ROOT"
 while [ ! -f "$WORKSPACE_ROOT/pnpm-lock.yaml" ]; do
   parent="$(dirname "$WORKSPACE_ROOT")"
@@ -33,25 +39,27 @@ while [ ! -f "$WORKSPACE_ROOT/pnpm-lock.yaml" ]; do
   fi
   WORKSPACE_ROOT="$parent"
 done
-LOCK="$WORKSPACE_ROOT/pnpm-lock.yaml"
+PKG_JSON="$WORKSPACE_ROOT/packages/agentic-pi/package.json"
 PIN="$ROOT/sandbox/agentic-pi.pin"
-# The lockfile importer key for this package (`.` when the package IS the
-# workspace root, else its relative path, e.g. `apps/server`).
-IMPORTER="$(node -e "process.stdout.write(require('path').relative('$WORKSPACE_ROOT','$ROOT')||'.')")"
 
-pin_from_lock() {
-  node -e "const {parse}=require('$ROOT/node_modules/yaml'); \
-           const fs=require('fs'); \
-           const lock=parse(fs.readFileSync('$LOCK','utf-8')); \
-           const dep=lock.importers?.['$IMPORTER']?.dependencies?.['agentic-pi']; \
-           if(!dep) throw new Error('agentic-pi missing from lockfile'); \
-           const version=dep.version.replace(/\(.*\$/,''); \
-           const pkg=lock.packages?.['agentic-pi@'+version]; \
-           if(!pkg?.resolution?.integrity) throw new Error('agentic-pi@'+version+' resolution missing from lockfile'); \
-           process.stdout.write(version + '\n' + pkg.resolution.integrity + '\n')"
+pin_from_registry() {
+  if [ ! -f "$PKG_JSON" ]; then
+    echo "$PKG_JSON not found — is agentic-pi still a workspace package?" >&2
+    exit 1
+  fi
+  local version integrity
+  version="$(node -e "process.stdout.write(require('$PKG_JSON').version)")"
+  # npm reports the tarball's Subresource-Integrity string (sha512-<base64>) —
+  # exactly what the Dockerfile recomputes from the downloaded .tgz and compares.
+  integrity="$(npm view "agentic-pi@${version}" dist.integrity 2>/dev/null || true)"
+  if [ -z "$integrity" ]; then
+    echo "npm has no dist.integrity for agentic-pi@${version} — publish it first, then regenerate the pin" >&2
+    exit 1
+  fi
+  printf '%s\n%s\n' "$version" "$integrity"
 }
 
-expected="$(pin_from_lock)"
+expected="$(pin_from_registry)"
 
 if [ "${1:-}" = "--check" ]; then
   if [ ! -f "$PIN" ] || [ "$(cat "$PIN")" != "$expected" ]; then

@@ -33,6 +33,9 @@ cache/
 audio_cache/
 image_cache/
 images/
+# ...but agentic-pi ships tracked VM-image build configs (heavy out-* artifacts stay ignored)
+!packages/agentic-pi/images/
+packages/agentic-pi/images/*/out-*/
 sandboxes/
 
 # Debug

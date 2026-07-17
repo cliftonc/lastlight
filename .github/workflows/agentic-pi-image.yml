@@ -1,9 +1,10 @@
 name: Build & release agentic-pi-dev image
 
-# Image releases run on their own tag stream (`image-v*`) so they don't
-# collide with npm releases (`v*`). The npm package and the VM image
-# version independently; consumers pick up a new image when we bump the
-# baked URL in src/sandbox/images/manifest.ts and ship a new npm version.
+# The agentic-pi VM sandbox image (packages/agentic-pi). Image releases run on
+# their own tag stream (`image-v*`) so they don't collide with the monorepo's
+# npm release stream (`v*`). The npm package and the VM image version
+# independently; consumers pick up a new image when we bump the baked URL in
+# packages/agentic-pi/src/sandbox/images/manifest.ts and ship a new npm version.
 on:
   push:
     tags:
@@ -45,7 +46,7 @@ jobs:
           node-version: '22'
 
       # gondolin's build pipeline shells out to these. Names match what
-      # scripts/build-image.sh checks for locally.
+      # packages/agentic-pi/scripts/build-image.sh checks for locally.
       - name: Install host tooling
         run: |
           sudo apt-get update
@@ -59,7 +60,7 @@ jobs:
       - name: Build image
         run: |
           gondolin build \
-            --config images/agentic-pi-dev/build-config.json \
+            --config packages/agentic-pi/images/agentic-pi-dev/build-config.json \
             --arch "${{ matrix.arch }}" \
             --output "./out-${{ matrix.arch }}"
 

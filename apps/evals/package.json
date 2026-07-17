@@ -48,11 +48,11 @@
     "yaml": "^2.5.0"
   },
   "peerDependencies": {
-    "agentic-pi": "^0.2.11"
+    "agentic-pi": "^0.2.16"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "agentic-pi": "^0.2.11",
+    "agentic-pi": "workspace:*",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.4",
