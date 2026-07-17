@@ -45,7 +45,7 @@ const BOOLEAN_FLAGS = new Set([
   "json", "follow", "f", "no-browser", "password", "help", "h", "full",
   "version", "v",
   // `server` lifecycle flags
-  "no-core", "no-overlay", "no-build", "yes", "local",
+  "no-core", "no-overlay", "no-build", "no-prune", "yes", "local",
   // `setup` mode selectors (skip the interactive client/server prompt)
   "client", "server",
   // `fork` — overwrite existing overlay assets
@@ -273,8 +273,8 @@ ${chalk.bold("Server")} (host-local — run on the server; manages the docker st
   lastlight server stop [service]    Stop one service, or the whole stack (down)
   lastlight server restart [service] Restart a service (default: agent)
   lastlight server update            Pull core + overlay, fetch prebuilt images, recreate, restart sidecars
-                                     [--no-core] [--no-overlay] [--no-build] [--local] [--yes]
-                                     ${chalk.dim("(pulls prebuilt images from GHCR by default; --local builds from source)")}
+                                     [--no-core] [--no-overlay] [--no-build] [--no-prune] [--local] [--yes]
+                                     ${chalk.dim("(pulls prebuilt images from GHCR by default; --local builds from source; prunes old image versions unless --no-prune)")}
   lastlight server status            Compose state + core/overlay version drift
   ${chalk.dim("Working dir resolves from --home, then LASTLIGHT_HOME, then ~/.lastlight, then ~/lastlight.")}
 
@@ -841,6 +841,7 @@ async function cmdServer(): Promise<void> {
         overlay: !flags["no-overlay"],
         build: !flags["no-build"],
         local: flags.local === true,
+        prune: !flags["no-prune"],
       });
       case "status": {
         const res = await srv.serverStatus({ home });
@@ -854,7 +855,7 @@ async function cmdServer(): Promise<void> {
     "Usage:\n" +
       "  lastlight server list|logs [service|container] [--tail n] [--since dur] [--follow]\n" +
       "  lastlight server setup|build|start|stop|restart|update|status [service] [--home dir]\n" +
-      "    update flags: --no-core --no-overlay --no-build --local --yes\n" +
+      "    update flags: --no-core --no-overlay --no-build --no-prune --local --yes\n" +
       "    (update pulls prebuilt images from GHCR by default; --local builds from source)",
   );
 }

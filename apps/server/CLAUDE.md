@@ -504,9 +504,10 @@ lastlight server update                # the canonical deploy: pull core+overlay
                                         # prebuilt images from GHCR (ghcr.io/nearform/lastlight-*)
                                         # tagged by deploy.version (else :latest) + re-tag to the
                                         # local names, up -d --remove-orphans, restart sidecars,
-                                        # health-check. --local builds from source instead (the
-                                        # old behaviour). [--no-core --no-overlay --no-build
-                                        # --local --yes]
+                                        # health-check, then prune superseded image versions
+                                        # (keeps the newest two per repo). --local builds from
+                                        # source instead (the old behaviour). [--no-core
+                                        # --no-overlay --no-build --no-prune --local --yes]
 lastlight server status                # compose ps + core/overlay version drift +
                                         # forked-asset overrides (shadows default / added)
 
@@ -831,6 +832,17 @@ sudo -u lastlight -i lastlight server update
    `nginx-egress-strict`, `nginx-egress-open`, `otel-collector`) so they
    re-read any regenerated nginx/coredns/collector configs.
 6. Health-checks `http://127.0.0.1:8644/health`, with live progress throughout.
+7. **Prunes superseded images.** Each pulled version leaves the previous
+   `ghcr.io/nearform/lastlight-*:vX.Y.Z` tags on disk (four repos × ~3 GB), so
+   without cleanup a host fills up (an early nearform outage: sandboxes failed
+   to start at 95% disk). After a successful `up`, `server update` removes the
+   old GHCR version tags beyond the newest `KEEP_IMAGE_VERSIONS` (2) per repo —
+   plus the tag just deployed — then `docker image prune -f` for the images the
+   repeated `:latest` re-pulls left dangling. All best-effort (a live image's
+   tag only untags; docker refuses to delete an in-use image) so it never fails
+   a converged deploy. `--no-prune` keeps every version; only runs when
+   `--no-build` didn't skip the image step. Pure retention logic (`tagsToPrune`)
+   is unit-tested in `packages/cli/tests/cli-server.test.ts`.
 
 The CLI is the control plane — npm-versioned and **separate from the agent
 image it builds**, so it survives the agent container recreating itself.

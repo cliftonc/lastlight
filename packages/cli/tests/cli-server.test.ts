@@ -13,6 +13,8 @@ import {
   restartSidecarsArgv,
   parseLsRemoteSha,
   resolveImageTag,
+  tagsToPrune,
+  KEEP_IMAGE_VERSIONS,
   IMAGE_REGISTRY,
   PUBLISHED_IMAGES,
   SIDECARS,
@@ -104,6 +106,38 @@ describe("PUBLISHED_IMAGES", () => {
     expect(PUBLISHED_IMAGES.find((i) => i.repo === "lastlight-sandbox-qa")?.optional).toBe(true);
     expect(PUBLISHED_IMAGES.find((i) => i.repo === "lastlight-agent")?.optional).toBeUndefined();
     expect(IMAGE_REGISTRY).toBe("ghcr.io/nearform");
+  });
+});
+
+describe("tagsToPrune", () => {
+  it("keeps the newest KEEP_IMAGE_VERSIONS versions, drops older ones (numeric sort)", () => {
+    // v0.12.8 must outrank v0.12.5 but rank below v0.13.0 — numeric, not lexical.
+    const tags = ["v0.13.0", "v0.12.5", "v0.16.0", "v0.12.8", "v0.15.0", "v0.14.0"];
+    expect(KEEP_IMAGE_VERSIONS).toBe(2);
+    expect(tagsToPrune(tags, "v0.16.0")).toEqual(
+      expect.arrayContaining(["v0.14.0", "v0.13.0", "v0.12.8", "v0.12.5"]),
+    );
+    // Newest two survive.
+    expect(tagsToPrune(tags, "v0.16.0")).not.toContain("v0.16.0");
+    expect(tagsToPrune(tags, "v0.16.0")).not.toContain("v0.15.0");
+  });
+
+  it("never prunes the deployed tag even when it isn't in the newest window", () => {
+    const tags = ["v0.16.0", "v0.15.0", "v0.14.0", "v0.13.0"];
+    // Pinned rollback to an older version → keep newest two AND the deployed one.
+    const removed = tagsToPrune(tags, "v0.13.0");
+    expect(removed).not.toContain("v0.13.0");
+    expect(removed).toContain("v0.14.0");
+  });
+
+  it("ignores floating tags like `latest` (left to dangling cleanup)", () => {
+    expect(tagsToPrune(["latest", "v0.16.0", "v0.15.0"], "v0.16.0")).toEqual([]);
+    expect(tagsToPrune(["latest", "main", "edge"], "latest")).toEqual([]);
+  });
+
+  it("removes nothing when at or below the retention window", () => {
+    expect(tagsToPrune(["v0.16.0"], "v0.16.0")).toEqual([]);
+    expect(tagsToPrune(["v0.16.0", "v0.15.0"], "v0.16.0")).toEqual([]);
   });
 });
 

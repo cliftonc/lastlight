@@ -94,6 +94,37 @@ export function resolveImageTag(instance: string): string {
   return readCorePin(instance) ?? "latest";
 }
 
+/** How many superseded GHCR version tags per repo `server update` keeps when it
+ *  prunes (newest-first). Two = the current deploy plus one rollback target. */
+export const KEEP_IMAGE_VERSIONS = 2;
+
+/** Descending semver-ish compare for `vMAJOR.MINOR.PATCH` tags (numeric, so
+ *  `v0.12.8` sorts below `v0.13.0`). Non-numeric parts compare as 0. */
+function cmpVersionDesc(a: string, b: string): number {
+  const parts = (t: string) => t.replace(/^v/, "").split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pb[i] ?? 0) - (pa[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+/**
+ * Decide which of a repo's local tags `server update` should delete: keep the
+ * `keep` newest `vX.Y.Z` version tags plus `keepTag` (the one just deployed),
+ * drop the rest. Only ever returns version-like tags — floating tags such as
+ * `latest` are left to dangling-image cleanup, never removed here. Pure, so the
+ * retention policy is unit-tested without touching docker.
+ */
+export function tagsToPrune(tags: string[], keepTag: string, keep = KEEP_IMAGE_VERSIONS): string[] {
+  const versions = tags.filter((t) => /^v\d/.test(t));
+  const keepSet = new Set([...versions].sort(cmpVersionDesc).slice(0, keep));
+  keepSet.add(keepTag);
+  return versions.filter((t) => !keepSet.has(t));
+}
+
 // ── pure argv builders (unit-tested) ─────────────────────────────────────────
 
 /** `docker compose` args for `server start [service]`. */
@@ -370,6 +401,8 @@ export interface UpdateOpts extends ServerOpts {
   build?: boolean;
   /** `--local` → build images from source instead of pulling prebuilt (default). */
   local?: boolean;
+  /** `--no-prune` → keep every old image version instead of reclaiming disk. */
+  prune?: boolean;
 }
 
 /** Resolve the working dir and fail clearly if it isn't a checkout yet. */
@@ -584,6 +617,35 @@ async function pullImages(home: string, tag: string): Promise<void> {
 }
 
 /**
+ * Reclaim disk after an image change: for each published repo, delete the
+ * superseded GHCR version tags beyond the `keep` newest (plus `keepTag`, the
+ * tag just deployed), then prune the images left dangling by the pulls. Every
+ * step is best-effort — a pruning hiccup must never fail a deploy that already
+ * converged. Safe because it runs AFTER `up`: removing a version tag that shares
+ * an image id with a live local tag (`lastlight-agent`, …) merely untags it,
+ * and docker refuses to delete an image a running container uses (we swallow
+ * that). Without this, every `server update` leaves ~12 GB of old images behind
+ * (four repos × ~3 GB) until the host fills up.
+ */
+async function pruneOldImages(home: string, keepTag: string, keep = KEEP_IMAGE_VERSIONS): Promise<void> {
+  p.log.step(chalk.bold("Prune superseded images"));
+  let removed = 0;
+  for (const img of PUBLISHED_IMAGES) {
+    const repo = `${IMAGE_REGISTRY}/${img.repo}`;
+    const out = await captureSoft("docker", ["images", repo, "--format", "{{.Tag}}"], home);
+    if (!out) continue;
+    const tags = out.split("\n").map((t) => t.trim()).filter(Boolean);
+    for (const tag of tagsToPrune(tags, keepTag, keep)) {
+      // In use / already gone → best-effort, keep going.
+      if (await captureSoft("docker", ["rmi", `${repo}:${tag}`], home) !== null) removed++;
+    }
+  }
+  // Sweep images the repeated `:latest` re-pulls left untagged.
+  await captureSoft("docker", ["image", "prune", "-f"], home);
+  console.log(chalk.dim(`  removed ${removed} superseded tag(s)`));
+}
+
+/**
  * `lastlight server build` — build the docker images FROM SOURCE without starting
  * anything. The local-build escape hatch: `server update` pulls prebuilt images
  * by default (use `server update --local` to build + up). Does not pull git or
@@ -648,6 +710,13 @@ export async function serverUpdate(opts: UpdateOpts): Promise<void> {
 
   await composeRun(home, "Recreate services", upArgv());
   await composeRun(home, "Restart egress sidecars", restartSidecarsArgv());
+
+  // Reclaim disk from the versions this update superseded. After `up`, so the
+  // live stack's images are safe. Skipped by `--no-prune`, and when `--no-build`
+  // left the images untouched (nothing new to supersede).
+  if (doBuild && opts.prune !== false) {
+    await pruneOldImages(home, resolveImageTag(instance));
+  }
 
   p.log.step(chalk.bold("Health check"));
   const healthy = await healthCheck();
