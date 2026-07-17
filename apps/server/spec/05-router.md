@@ -56,6 +56,7 @@ instead. Only the configured handle matches — there is no legacy fallback (see
 |---|---|---|
 | `issue.opened` / `issue.reopened` | `skill: issue-triage` | `reopened=true` for the latter |
 | `pr.opened` / `pr.synchronize` / `pr.reopened` | `skill: pr-review` | |
+| `pr.checks_failed` | classifier → the workflow claiming the intent (else `ignore`) | A failing `check_suite`; the classifier routes a recognised dependency-update PR to `dependabot-ci-fix`. Unlike other structured events, routing goes through the intent classifier so workflows self-register via `classification` |
 | `comment.created` with pending reply gate | `skill: explore-reply` | Reply-gate short-circuit — see below |
 | `comment.created` on a pre-build issue, plain (no `@last-light`) | `skill: issue-triage` (`mode: retriage`) | Reporter-driven re-triage — see below |
 | `comment.created` without `@last-light` | `ignore` | reason: "no bot mention" |
@@ -297,7 +298,7 @@ is handled in the harness:
 | `status-report` | `664–675` — list running executions |
 | `approval-response` | `839–893` — resume or fail paused run |
 | `explore-reply` | `750–836` — feed comment into paused explore loop |
-| `pr-fix` | `689–744` — lightweight fix-and-push |
+| `pr-fix`, `dependabot-ci-fix` | `handlePrFix` — lightweight fix-and-push (both are `PR_FIX_SHAPED_WORKFLOWS`; resolves the PR head branch + failed-check summary, skips fork PRs, dispatches the named workflow) |
 | `github-orchestrator` | `896–976` — full build cycle on an issue |
 | `answer` | `982–1014` — generic `dispatchWorkflow()` for `answer.yaml`; answers a question issue directly (routed via `routes.github.issue_answer` / `routes.slack.answer`) |
 | `pr-review`, `pr-comment`, `issue-triage`, `issue-comment`, `explore`, `security-review`, `security-feedback`, `verify`, `qa-test`, `demo` | `982–1014` — generic `dispatchWorkflow()` + ack |

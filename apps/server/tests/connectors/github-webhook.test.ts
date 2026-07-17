@@ -187,6 +187,96 @@ describe("GitHubWebhookConnector — re-run checks", () => {
   });
 });
 
+/** POST a signed `check_suite` webhook (with conclusion + head_commit). */
+async function postCheckSuiteCompleted(
+  conn: GitHubWebhookConnector,
+  opts: {
+    conclusion: string;
+    prNumber?: number;
+    senderLogin?: string;
+    commitMessage?: string;
+    commitAuthor?: string;
+  },
+): Promise<{ status: number; json: any; emitted: any | null }> {
+  let emitted: any = null;
+  conn.on("event", (e) => { emitted = e; });
+  const senderLogin = opts.senderLogin ?? "github-actions[bot]";
+  const payload = {
+    action: "completed",
+    repository: { full_name: REPO },
+    sender: { login: senderLogin, type: senderLogin.endsWith("[bot]") ? "Bot" : "User" },
+    check_suite: {
+      id: 1,
+      conclusion: opts.conclusion,
+      pull_requests: opts.prNumber ? [{ number: opts.prNumber, head: { ref: "dependabot/npm/lodash-4.17.21" } }] : [],
+      head_commit: {
+        message: opts.commitMessage ?? "Bump lodash from 4.17.20 to 4.17.21",
+        author: { name: opts.commitAuthor ?? "dependabot[bot]" },
+      },
+    },
+  };
+  const body = JSON.stringify(payload);
+  const res = await conn.honoApp.request("/webhooks/github", {
+    method: "POST",
+    headers: {
+      "x-hub-signature-256": sign(body),
+      "x-github-event": "check_suite",
+      "x-github-delivery": "test-delivery",
+      "content-type": "application/json",
+    },
+    body,
+  });
+  const json = await res.json();
+  await new Promise((r) => setImmediate(r));
+  return { status: res.status, json, emitted };
+}
+
+describe("GitHubWebhookConnector — failed checks", () => {
+  beforeEach(() => {
+    setRuntimeConfig({ managedRepos: [REPO] } as unknown as LastLightConfig);
+  });
+  afterEach(() => resetRuntimeConfigForTests());
+
+  it("emits pr.checks_failed for a failing check_suite, even from a bot sender", async () => {
+    const { status, emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "failure",
+      prNumber: 681,
+    });
+    expect(status).toBe(202);
+    expect(emitted).not.toBeNull();
+    expect(emitted.type).toBe("pr.checks_failed");
+    expect(emitted.prNumber).toBe(681);
+    // classifier signal comes from the head commit (the PR ref carries neither)
+    expect(emitted.title).toBe("Bump lodash from 4.17.20 to 4.17.21");
+    expect(emitted.issueAuthor).toBe("dependabot[bot]");
+  });
+
+  it("also emits for a timed_out conclusion", async () => {
+    const { emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "timed_out",
+      prNumber: 5,
+    });
+    expect(emitted?.type).toBe("pr.checks_failed");
+  });
+
+  it("ignores a successful check_suite", async () => {
+    const { json, emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "success",
+      prNumber: 5,
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+  });
+
+  it("ignores a failing check_suite with no associated PR (e.g. a fork)", async () => {
+    const { json, emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "failure",
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+  });
+});
+
 /** POST a signed `issue_comment` webhook; capture any emitted envelope. */
 async function postIssueComment(
   conn: GitHubWebhookConnector,

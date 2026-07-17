@@ -72,6 +72,7 @@ export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProf
   switch (workflowName) {
     case "build":
     case "pr-fix":
+    case "dependabot-ci-fix":
       return "repo-write";
     case "pr-review":
       return "review-write";

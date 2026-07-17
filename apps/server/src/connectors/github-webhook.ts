@@ -139,7 +139,13 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
       const isPrAttention =
         eventType === "pull_request" &&
         (action === "opened" || action === "synchronize" || action === "reopened");
-      if (isBotSender && !isPrAttention) {
+      // A `check_suite.completed` (CI went red) is always sent by a bot — the
+      // CI app / github-actions[bot] — so it would be dropped by the bot-sender
+      // filter below without this exception. It carries nothing the agent
+      // replies to (it drives the pr.checks_failed → fix path), so there's no
+      // self-reply loop risk. See normalize()'s check_suite case.
+      const isCheckAttention = eventType === "check_suite" && action === "completed";
+      if (isBotSender && !isPrAttention && !isCheckAttention) {
         return c.json({ filtered: true, reason: "bot sender" }, 200);
       }
 
@@ -335,6 +341,31 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
           prNumber = payload.check_suite?.pull_requests?.[0]?.number;
           issueNumber = prNumber;
           if (prNumber) type = "pr.synchronize";
+        } else if (
+          action === "completed" &&
+          (payload.check_suite?.conclusion === "failure" ||
+            payload.check_suite?.conclusion === "timed_out")
+        ) {
+          // A PR's CI has gone red. Emit a dedicated event so a workflow can
+          // react (e.g. fix a failing Dependabot PR). We use check_suite
+          // (aggregate — ~one event per push) rather than per-check_run.completed
+          // to avoid a burst of duplicates. `pull_requests[]` is populated for
+          // same-repo PRs (fork PRs carry an empty array and are dropped below).
+          const pr = payload.check_suite?.pull_requests?.[0];
+          prNumber = pr?.number;
+          issueNumber = prNumber;
+          if (prNumber) {
+            type = "pr.checks_failed";
+            // The check_suite `pull_requests[]` entry is minimal (number/refs
+            // only — no title or author). The head commit carries the useful
+            // classifier signal instead: for a Dependabot PR the commit message
+            // is the bump description ("Bump lodash from …") and the commit
+            // author name is "dependabot[bot]". The router feeds these to the
+            // classifier; the dispatcher later fetches the full PR for the fix.
+            const headCommit = payload.check_suite?.head_commit;
+            title = (headCommit?.message || "").split("\n")[0] || title;
+            issueAuthor = headCommit?.author?.name || issueAuthor;
+          }
         }
         break;
     }

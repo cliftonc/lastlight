@@ -164,6 +164,46 @@ export async function routeEvent(
         },
       };
 
+    case "pr.checks_failed": {
+      // CI went red on a PR. Route through the classifier (not a fixed route
+      // key) so any workflow that claims a check-failure intent via its
+      // `classification:` block can pick it up — e.g. a Dependabot
+      // dependency-bump fixer. Only a NOVEL claimed intent (resolved via
+      // getWorkflowByIntent) is eligible; a well-known comment intent
+      // (build/review/…) is ignored here, so the general classifier can't
+      // misfire this structured event onto an unrelated workflow.
+      const text =
+        `Pull request #${envelope.prNumber} "${envelope.title || ""}" ` +
+        `by ${envelope.issueAuthor || "unknown"} — its CI checks have failed.`;
+      const { intent } = await classifyComment(text, {
+        issueTitle: envelope.title,
+        isPullRequest: true,
+      });
+      const handler = fallbackWorkflowForIntent(intent);
+      if (!handler) {
+        return {
+          action: "ignore",
+          reason: `no workflow claims failed-checks intent '${intent}'`,
+        };
+      }
+      console.log(
+        `[router] Failed checks on ${envelope.repo}#${envelope.prNumber} → ${handler} (intent: ${intent})`,
+      );
+      return {
+        action: "handler",
+        handler,
+        context: {
+          repo: envelope.repo,
+          prNumber: envelope.prNumber,
+          title: envelope.title,
+          body: envelope.body,
+          sender: envelope.sender,
+          author: envelope.issueAuthor,
+          labels: envelope.labels,
+        },
+      };
+    }
+
     case "comment.created": {
       // Reply-gate short-circuit: if a paused socratic explore run is
       // waiting for any free-form message on this issue, feed the comment

@@ -7,6 +7,7 @@ import type { ChatResult } from "./chat/chat.js";
 import { routeEvent, type Route, type RouterDeps } from "./router.js";
 import { runDashboardUrl } from "../notify/model.js";
 import { getRuntimeConfig } from "../config/config.js";
+import { PR_FIX_SHAPED_WORKFLOWS } from "../workflows/target-policy.js";
 
 /**
  * Hand a workflow to the runner. Matches `dispatchWorkflow` in index.ts — the
@@ -136,8 +137,15 @@ export async function dispatch(
     return { kind: "skipped", reason: `${handler} already running for ${triggerId}` };
   }
 
-  // PR fix: lightweight fix-and-push driven by CI failures / a comment.
-  if ((routeKey === "github.pr_fix" || handler === "pr-fix") && context.prNumber && context.repo) {
+  // PR fix: lightweight fix-and-push driven by CI failures / a comment. Also
+  // covers pr-fix-shaped workflows (e.g. dependabot-ci-fix) reached via the
+  // classifier — they all need the PR head branch + failed-check summary that
+  // handlePrFix resolves, and it dispatches the passed `handler` unchanged.
+  if (
+    (routeKey === "github.pr_fix" || PR_FIX_SHAPED_WORKFLOWS.has(handler)) &&
+    context.prNumber &&
+    context.repo
+  ) {
     return handlePrFix(context, handler, deps);
   }
 

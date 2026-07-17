@@ -22,7 +22,18 @@
  * *refresh* a stale checkout (that would reset onto the old feature branch);
  * it recreates the workspace from the default branch.
  */
-export const PER_TARGET_REUSE_WORKFLOWS = new Set(["pr-review", "pr-fix"]);
+export const PER_TARGET_REUSE_WORKFLOWS = new Set(["pr-review", "pr-fix", "dependabot-ci-fix"]);
+
+/**
+ * Workflows shaped like `pr-fix`: dispatched off a PR event, they resolve the
+ * PR's head branch + failed-check details and push a fix to that branch. The
+ * dispatcher routes all of them through `handlePrFix` (branch resolution, CI
+ * failure summary, fork-PR skip), and `dispatchWorkflow` honours the `branch`
+ * they plumb through context as the pre-populate branch. `dependabot-ci-fix`
+ * (fix a failing dependency-update PR, then auto-merge trivial ones) is the
+ * second member. Kept here so the dispatcher and `src/index.ts` share one list.
+ */
+export const PR_FIX_SHAPED_WORKFLOWS = new Set(["pr-fix", "dependabot-ci-fix"]);
 
 /**
  * Workflows whose per-target workspace is **recreated from the default branch**

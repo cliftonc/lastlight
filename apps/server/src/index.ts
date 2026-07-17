@@ -24,7 +24,7 @@ import { authMiddleware, authIsEnabled } from "./admin/auth.js";
 import { GitHubClient } from "./engine/github/github.js";
 import { setInstallationRepos } from "./managed-repos.js";
 import { screenForInjection, flagPrefix } from "./engine/screen/screen.js";
-import { runSimpleWorkflow, PR_HEADREF_PREPOPULATE_WORKFLOWS, type SimpleWorkflowRequest } from "./workflows/simple.js";
+import { runSimpleWorkflow, PR_HEADREF_PREPOPULATE_WORKFLOWS, PR_FIX_SHAPED_WORKFLOWS, type SimpleWorkflowRequest } from "./workflows/simple.js";
 import type { RunnerCallbacks } from "./workflows/runner.js";
 import { resumeOrphanedWorkflows, resumeSimpleRun, type ResumeOptions } from "./workflows/resume.js";
 import { createAdmissionController, type AdmissionController } from "./workflows/admission.js";
@@ -311,12 +311,13 @@ async function main() {
     // a workspace that's already a checkout of the PR's actual code —
     // saves a redundant clone_repo MCP call inside the session.
     //
-    // pr-fix already plumbs `branch` through context (line ~709 below)
-    // because the architect/executor need the branch name to push to;
-    // we honor that here as the pre-populate branch too.
+    // pr-fix (and other pr-fix-shaped workflows like dependabot-ci-fix) already
+    // plumb `branch` through context (set by handlePrFix) because the fix phase
+    // needs the branch name to push to; we honor that here as the pre-populate
+    // branch too so the workspace is pre-checked-out at the PR head.
     let prePopulateBranch: string | undefined =
       typeof ctxPrePopulateBranch === "string" ? ctxPrePopulateBranch : undefined;
-    if (!prePopulateBranch && typeof ctxBranch === "string" && ctxBranch && workflowName === "pr-fix") {
+    if (!prePopulateBranch && typeof ctxBranch === "string" && ctxBranch && PR_FIX_SHAPED_WORKFLOWS.has(workflowName)) {
       prePopulateBranch = ctxBranch;
     }
     // PR-scoped read workflows that benefit from a workspace pre-checked-out at

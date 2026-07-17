@@ -151,6 +151,37 @@ describe('routeEvent — PR events', () => {
   });
 });
 
+describe('routeEvent — pr.checks_failed', () => {
+  it('routes to the workflow that claims the classified intent', async () => {
+    mockClassifyComment.mockResolvedValueOnce({ intent: 'dependabot-ci-fix' } as any);
+    mockGetWorkflowByIntent.mockReturnValue({ name: 'dependabot-ci-fix' } as any);
+    const result = await routeEvent(
+      makeEnvelope({
+        type: 'pr.checks_failed',
+        prNumber: 681,
+        title: 'Bump lodash from 4.17.20 to 4.17.21',
+        issueAuthor: 'dependabot[bot]',
+      }),
+    );
+    expect(result.action).toBe('handler');
+    if (result.action === 'handler') {
+      expect(result.handler).toBe('dependabot-ci-fix');
+      expect(result.context.prNumber).toBe(681);
+      expect(result.context.author).toBe('dependabot[bot]');
+    }
+  });
+
+  it('ignores the event when no workflow claims the intent', async () => {
+    mockClassifyComment.mockResolvedValueOnce({ intent: 'review' } as any);
+    // getWorkflowByIntent stays undefined (well-known intents are excluded by
+    // fallbackWorkflowForIntent anyway).
+    const result = await routeEvent(
+      makeEnvelope({ type: 'pr.checks_failed', prNumber: 5, title: 'Some PR' }),
+    );
+    expect(result.action).toBe('ignore');
+  });
+});
+
 describe('routeEvent — comment.created', () => {
   beforeEach(() => {
     mockClassifyComment.mockResolvedValue({ intent: 'chat' });

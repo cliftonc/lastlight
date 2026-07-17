@@ -150,6 +150,8 @@ Every file in `workflows/prompts/`.
 | File | Purpose | Writes |
 |---|---|---|
 | `pr-fix.md` | Read maintainer comment + CI section, fix issues, run guardrails, push. | Commits on PR branch |
+| `dependabot-ci-fix.md` | Read the CI failures on a red dependency-update PR, make the smallest fix (lockfile / call-site / type), run the gate, push. | Commits on PR branch |
+| `dependabot-assess.md` | Assess the pushed diff; if trivial, call `github_enable_auto_merge` (merge-once-green), else comment for a human. | Enables auto-merge / posts a comment |
 
 ### Explore (Socratic + publish)
 

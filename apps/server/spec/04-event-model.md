@@ -63,6 +63,7 @@ export type EventType =
   | "pr.reopened"
   | "pr.closed"
   | "pr.merged"
+  | "pr.checks_failed"    // a check_suite completed with a failure conclusion
   | "comment.created"
   | "pr_review.submitted"
   | "pr_review_comment.created"
