@@ -30,25 +30,30 @@ RUN corepack enable
 WORKDIR /repo
 
 # Workspace manifests first — deps layer changes only when these change.
-# lastlight-core depends on the in-repo packages lastlight-shared +
-# lastlight-workflow-engine (workspace:*), so their manifests must be present
-# for the filtered frozen install to resolve the workspace links.
+# lastlight-core depends on the in-repo packages lastlight-shared,
+# lastlight-workflow-engine, and agentic-pi (all workspace:*), so their
+# manifests must be present for the filtered frozen install to resolve the
+# workspace links AND install each one's own deps (agentic-pi's are needed to
+# build it below — it's vendored, not pulled from npm anymore).
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/package.json
 COPY apps/server/dashboard/package.json apps/server/dashboard/package.json
 COPY packages/workflow-engine/package.json packages/workflow-engine/package.json
 COPY packages/shared/package.json packages/shared/package.json
+COPY packages/agentic-pi/package.json packages/agentic-pi/package.json
 RUN pnpm install --frozen-lockfile --filter lastlight-core... --filter @lastlight/dashboard...
 
 # Workspace source: the server (with its nested dashboard) + its package deps.
 COPY apps/server/ apps/server/
 COPY packages/workflow-engine/ packages/workflow-engine/
 COPY packages/shared/ packages/shared/
+COPY packages/agentic-pi/ packages/agentic-pi/
 
 # Build in dependency order (turbo's ^build graph, done explicitly here):
-# engine → shared → core + dashboard. core's tsc + the dashboard need the
-# built dist of the packages they import.
-RUN pnpm --filter lastlight-workflow-engine build \
+# agentic-pi + engine (leaves) → shared → core + dashboard. core's tsc imports
+# agentic-pi's types from its dist, so it must be built first.
+RUN pnpm --filter agentic-pi build \
+ && pnpm --filter lastlight-workflow-engine build \
  && pnpm --filter lastlight-shared build \
  && pnpm --filter lastlight-core build \
  && pnpm --filter @lastlight/dashboard build
