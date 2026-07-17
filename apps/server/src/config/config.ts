@@ -146,6 +146,7 @@ export interface LastLightConfig {
   exploreDefaultRepo?: string;
   publicUrl?: string;
   reviewPostsCheck: boolean;
+  concurrency: { maxWorkflows: number; maxQueueWaitMs: number };
 }
 
 let currentConfig: LastLightConfig | undefined;
@@ -411,6 +412,7 @@ export function loadConfig(): LastLightConfig {
     exploreDefaultRepo: fileCfg.exploreDefaultRepo,
     publicUrl: resolvePublicUrl(),
     reviewPostsCheck: fileCfg.reviewPostsCheck,
+    concurrency: fileCfg.concurrency,
   };
   setRuntimeConfig(config);
   return config;
@@ -436,6 +438,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   exploreDefaultRepo?: string;
   reviewPostsCheck: boolean;
   otel: OtelConfig;
+  concurrency: { maxWorkflows: number; maxQueueWaitMs: number };
 } {
   const managedRepos = stringArray(raw.managedRepos, "managedRepos");
   const botName = typeof raw.botName === "string" && raw.botName.trim() ? raw.botName.trim() : "last-light";
@@ -451,6 +454,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   const reviewRaw = isPlainObject(raw.review) ? raw.review : {};
   const approvalRaw = isPlainObject(raw.approval) ? raw.approval : {};
   const otelRaw = isPlainObject(raw.otel) ? raw.otel : {};
+  const concurrencyRaw = isPlainObject(raw.concurrency) ? raw.concurrency : {};
 
   const models: ModelConfig = { default: typeof modelsRaw.default === "string" ? modelsRaw.default : DEFAULT_MODEL };
   for (const [k, v] of Object.entries(modelsRaw)) if (typeof v === "string") models[k] = v;
@@ -466,6 +470,14 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   const bootstrapLabel = typeof bootstrapRaw.label === "string" ? bootstrapRaw.label : "lastlight:bootstrap";
   const exploreDefaultRepo = typeof exploreRaw.defaultRepo === "string" ? exploreRaw.defaultRepo : undefined;
   const reviewPostsCheck = reviewRaw.postsCheck === true;
+  const maxWorkflows =
+    typeof concurrencyRaw.maxWorkflows === "number" && concurrencyRaw.maxWorkflows > 0
+      ? concurrencyRaw.maxWorkflows
+      : 4;
+  const maxQueueWaitMs =
+    typeof concurrencyRaw.maxQueueWaitMs === "number" && concurrencyRaw.maxQueueWaitMs > 0
+      ? concurrencyRaw.maxQueueWaitMs
+      : 1_800_000;
 
   return {
     managedRepos,
@@ -488,6 +500,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
     exploreDefaultRepo,
     reviewPostsCheck,
     otel: normalizeOtelFileConfig(otelRaw),
+    concurrency: { maxWorkflows, maxQueueWaitMs },
   };
 }
 
@@ -633,6 +646,11 @@ function buildEnvConfigLayer(env: NodeJS.ProcessEnv): Record<string, unknown> {
   setBoolEnv(otel, "forwardToSandbox", env.LASTLIGHT_OTEL_FORWARD_TO_SANDBOX);
   setBoolEnv(otel, "strict", env.LASTLIGHT_OTEL_STRICT);
   if (Object.keys(otel).length) layer.otel = otel;
+
+  const concurrency: Record<string, unknown> = {};
+  if (env.MAX_CONCURRENT_WORKFLOWS) concurrency.maxWorkflows = parseInt(env.MAX_CONCURRENT_WORKFLOWS, 10);
+  if (env.MAX_QUEUE_WAIT_MS) concurrency.maxQueueWaitMs = parseInt(env.MAX_QUEUE_WAIT_MS, 10);
+  if (Object.keys(concurrency).length) layer.concurrency = concurrency;
 
   if (env.GITHUB_APP_BOT_NAME) layer.botName = env.GITHUB_APP_BOT_NAME;
   if (env.BOOTSTRAP_LABEL) layer.bootstrap = { label: env.BOOTSTRAP_LABEL };

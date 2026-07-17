@@ -37,6 +37,7 @@ function elapsed(run: WorkflowRun): string {
 
 function StatusBadge({ status }: { status: WorkflowRun["status"] }) {
   const cls = clsx("badge badge-xs font-mono", {
+    "badge-neutral": status === "queued",
     "badge-info": status === "running",
     "badge-warning": status === "paused",
     "badge-success": status === "succeeded",

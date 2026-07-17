@@ -898,7 +898,9 @@ export function createAdminRoutes(
 
     let statuses: string[] | undefined;
     if (statusParam === "active") {
-      statuses = ["running", "paused"];
+      // `active` includes queued runs so the live filter shows them alongside
+      // running/paused ones in the dashboard header.
+      statuses = ["queued", "running", "paused"];
     } else if (statusParam) {
       statuses = statusParam.split(",").filter(Boolean);
     }
@@ -975,7 +977,7 @@ export function createAdminRoutes(
     const id = c.req.param("id");
     const run = db.runs.getRun(id);
     if (!run) return c.json({ error: "workflow run not found" }, 404);
-    if (run.status !== "running" && run.status !== "paused") {
+    if (run.status !== "running" && run.status !== "paused" && run.status !== "queued") {
       return c.json({ error: `cannot cancel a run with status '${run.status}'` }, 400);
     }
     db.runs.cancelRun(id);

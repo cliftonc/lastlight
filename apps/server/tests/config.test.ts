@@ -328,3 +328,41 @@ describe('loadConfig — structure', () => {
     expect(config.maxTurns).toBe(200);
   });
 });
+
+describe('loadConfig — concurrency defaults and env overrides', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_APP_ID', '');
+    vi.stubEnv('SLACK_BOT_TOKEN', '');
+    vi.stubEnv('MAX_CONCURRENT_WORKFLOWS', '');
+    vi.stubEnv('MAX_QUEUE_WAIT_MS', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('concurrency.maxWorkflows defaults to 4', () => {
+    const config = loadConfig();
+    expect(config.concurrency.maxWorkflows).toBe(4);
+  });
+
+  it('concurrency.maxQueueWaitMs defaults to 1800000', () => {
+    const config = loadConfig();
+    expect(config.concurrency.maxQueueWaitMs).toBe(1_800_000);
+  });
+
+  it('MAX_CONCURRENT_WORKFLOWS env overrides maxWorkflows', () => {
+    vi.stubEnv('MAX_CONCURRENT_WORKFLOWS', '8');
+    const config = loadConfig();
+    expect(config.concurrency.maxWorkflows).toBe(8);
+  });
+
+  it('MAX_QUEUE_WAIT_MS env overrides maxQueueWaitMs', () => {
+    vi.stubEnv('MAX_QUEUE_WAIT_MS', '600000');
+    const config = loadConfig();
+    expect(config.concurrency.maxQueueWaitMs).toBe(600_000);
+  });
+
+  it('falls back to default when MAX_CONCURRENT_WORKFLOWS is 0 (invalid)', () => {
+    vi.stubEnv('MAX_CONCURRENT_WORKFLOWS', '0');
+    const config = loadConfig();
+    expect(config.concurrency.maxWorkflows).toBe(4);
+  });
+});

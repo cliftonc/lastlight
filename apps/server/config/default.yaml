@@ -50,6 +50,15 @@ sandbox:
 buildAssets:
   location: repo
 
+# Global concurrency limiter (issue #172). Caps how many sandboxed workflow
+# runs execute at once; excess triggers are persisted as `queued` in
+# workflow_runs and admitted when a slot frees. Resumes/orphan restarts bypass
+# the cap (finish in-flight work first). Queued runs older than
+# maxQueueWaitMs are cancelled with a "waited too long" notice.
+concurrency:
+  maxWorkflows: 4          # env override: MAX_CONCURRENT_WORKFLOWS
+  maxQueueWaitMs: 1800000  # 30 min; env override: MAX_QUEUE_WAIT_MS
+
 # Pin which core version an instance runs. Set `deploy.version` to a git tag/ref
 # (e.g. v0.10.6) in your private overlay's config.yaml — `lastlight server
 # update|setup` then checks core out at that tag and rebuilds, instead of

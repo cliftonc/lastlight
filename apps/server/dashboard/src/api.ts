@@ -101,7 +101,7 @@ export interface WorkflowRun {
   issueNumber?: number;
   currentPhase: string;
   phaseHistory: PhaseHistoryEntry[];
-  status: "running" | "paused" | "succeeded" | "failed" | "cancelled";
+  status: "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
   context?: Record<string, unknown>;
   startedAt: string;
   updatedAt: string;

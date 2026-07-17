@@ -17,7 +17,7 @@ export type DispatchWorkflowFn = (
   workflowName: string,
   context: Record<string, unknown>,
   onRunStart?: (runId: string) => Promise<void>,
-) => Promise<{ success: boolean; error?: string; paused?: boolean }>;
+) => Promise<{ success: boolean; error?: string; paused?: boolean; queued?: boolean }>;
 
 /** Run one in-process chat turn. Injected so the chat branch is testable. */
 export type RunChatFn = (
@@ -53,7 +53,15 @@ export type DispatchOutcome =
   | { kind: "replied"; message: string }
   | { kind: "skipped"; reason: string }
   | { kind: "handled"; handler: string }
-  | { kind: "dispatched"; workflow: string };
+  | { kind: "dispatched"; workflow: string }
+  /**
+   * The workflow was accepted but queued (concurrency cap reached). The
+   * persisted `queued` row is the reliable signal — this outcome is only
+   * observable on paths that await the dispatch promise (e.g. handleBuild).
+   * Fire-and-forget webhook paths return `dispatched` before the promise
+   * resolves, so they never see this variant synchronously.
+   */
+  | { kind: "queued"; workflow: string };
 
 /**
  * Turn an EventEnvelope into a workflow dispatch (or an in-process handler
@@ -234,7 +242,9 @@ async function handleMessageDispatch(
 
   deps.dispatchWorkflow(handler, { ...workflowContext, _triggerType: "chat" }, onRunStart)
     .then(async (result) => {
-      if (result.paused) {
+      if (result.queued) {
+        // Queued — the enqueue ack was already posted by runSimpleWorkflow.
+      } else if (result.paused) {
         // Paused at a gate — the workflow already posted instructions.
       } else if (result.success) {
         await envelope.reply(`*${handler}* completed.`);
@@ -333,6 +343,12 @@ async function handleWebhookDispatch(
     const prNumber = prNumberForCheck;
     workflowPromise
       .then(async (result) => {
+        // Queued: the run hasn't started yet — leave the in-progress check as-is
+        // rather than completing it with a misleading conclusion. The admission
+        // path's resume will run the full workflow and the terminal review
+        // comment will eventually update the PR. (Documented limitation: the
+        // check stays in-progress until admission fires.)
+        if (result.queued) return;
         try {
           // Re-fetch head SHA in case the PR was rebased mid-review.
           const headSha = await github.getPullRequestHeadSha(owner, repo, prNumber);
@@ -461,7 +477,7 @@ async function handleBuild(
       error: result.success ? undefined : "Build cycle failed",
       durationMs: 0,
     });
-    if (envelope.type === "message") {
+    if (!result.queued && envelope.type === "message") {
       envelope.reply(result.success ? `Build cycle complete.` : `Build cycle failed.`);
     }
   }).catch((err) => {

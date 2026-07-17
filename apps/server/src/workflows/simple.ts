@@ -170,6 +170,7 @@ export async function runSimpleWorkflow(
   approvalConfig?: ApprovalGateConfig,
   bootstrapLabel = "lastlight:bootstrap",
   variants?: VariantConfig,
+  concurrency?: { maxWorkflows: number; maxQueueWaitMs: number },
 ): Promise<WorkflowResult> {
   // Kill switch — if an admin has disabled this workflow in the dashboard,
   // skip every trigger source (cron, webhooks, mentions, Slack) without
@@ -257,6 +258,8 @@ export async function runSimpleWorkflow(
     // workflows (explore, health, etc.) get a run-scoped dir so
     // concurrent sessions never overlap.
     issueDir = `.lastlight/${buildAssetIssueKey(workflowName, number, workflowId)}`;
+    const overCap = concurrency !== undefined && db.runs.countRunning() >= concurrency.maxWorkflows;
+    const runStatus: "running" | "queued" = overCap ? "queued" : "running";
     db.runs.createRun({
       id: workflowId,
       workflowName,
@@ -264,7 +267,7 @@ export async function runSimpleWorkflow(
       repo,
       issueNumber: issueNumber ?? prNumber,
       currentPhase: definition.phases[0]?.name || "phase_0",
-      status: "running",
+      status: runStatus,
       context: {
         kind: definition.kind,
         owner,
@@ -278,7 +281,15 @@ export async function runSimpleWorkflow(
       },
       startedAt: new Date().toISOString(),
     });
-    console.log(`[simple] Created workflow run ${workflowId} (${workflowName})`);
+    console.log(`[simple] Created workflow run ${workflowId} (${workflowName}) status=${runStatus}`);
+    if (overCap) {
+      await notify(
+        `\`${workflowName}\` is queued — the concurrency limit` +
+        ` (${concurrency!.maxWorkflows}) is reached.` +
+        ` It'll start automatically when a slot frees.`,
+      );
+      return { success: true, queued: true, phases: [] };
+    }
   }
 
   // Surface the run id to the dispatch layer as soon as it's known (either
@@ -471,6 +482,15 @@ async function handleExistingRun(
   notify: (msg: string) => Promise<void>,
   db: StateDb,
 ): Promise<WorkflowResult | null> {
+  // Dedup: a duplicate trigger on an already-queued run must be a no-op.
+  // Do NOT fall through to runWorkflow — that would execute it outside the cap.
+  if (run.status === "queued") {
+    console.log(
+      `[simple] Duplicate trigger for queued run ${run.id} (${run.workflowName}) — returning queued dedup`,
+    );
+    return { success: true, queued: true, phases: [] };
+  }
+
   // Workflow already completed: currentPhase is a terminal set_phase marker
   // (e.g. "complete") — i.e. not a declared phase, not a generated loop label
   // (`*_fix_N` / `*_recheck_N` / `*_iter_N`), and not the synthetic

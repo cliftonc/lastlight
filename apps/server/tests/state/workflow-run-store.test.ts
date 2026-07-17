@@ -393,3 +393,122 @@ describe("hasRunForTrigger", () => {
     expect(db.runs.hasRunForTrigger("acme/widgets#16", "build")).toBe(false);
   });
 });
+
+// ── New methods for #172 concurrency cap ──────────────────────────────────
+
+describe("countRunning", () => {
+  it("counts only running runs, excludes queued and paused", () => {
+    makeRun({ status: "running" });
+    makeRun({ status: "running" });
+    makeRun({ status: "queued" });
+    makeRun({ status: "paused" });
+    makeRun({ status: "succeeded" });
+    expect(db.runs.countRunning()).toBe(2);
+  });
+
+  it("returns 0 when no running runs", () => {
+    makeRun({ status: "queued" });
+    expect(db.runs.countRunning()).toBe(0);
+  });
+});
+
+describe("listQueued", () => {
+  it("returns queued runs ordered by started_at ascending (FIFO)", () => {
+    const id1 = makeRun({ status: "queued", startedAt: "2024-01-01T00:00:00.000Z" });
+    const id2 = makeRun({ status: "queued", startedAt: "2024-01-01T00:01:00.000Z" });
+    const id3 = makeRun({ status: "queued", startedAt: "2024-01-01T00:02:00.000Z" });
+    makeRun({ status: "running" }); // not queued — excluded
+    const queued = db.runs.listQueued();
+    expect(queued.map((r) => r.id)).toEqual([id1, id2, id3]);
+  });
+
+  it("returns empty array when no queued runs", () => {
+    makeRun({ status: "running" });
+    expect(db.runs.listQueued()).toHaveLength(0);
+  });
+});
+
+describe("admitRun", () => {
+  it("returns 1 and sets status to running when run is queued", () => {
+    const id = makeRun({ status: "queued" });
+    const changes = db.runs.admitRun(id);
+    expect(changes).toBe(1);
+    expect(db.runs.getRun(id)!.status).toBe("running");
+  });
+
+  it("returns 0 (CAS) when run is already running — prevents double-admit", () => {
+    const id = makeRun({ status: "queued" });
+    db.runs.admitRun(id); // first admit wins
+    const changes = db.runs.admitRun(id); // second is a no-op
+    expect(changes).toBe(0);
+    expect(db.runs.getRun(id)!.status).toBe("running");
+  });
+
+  it("returns 0 when run does not exist", () => {
+    expect(db.runs.admitRun("nonexistent-id")).toBe(0);
+  });
+
+  it("does not touch started_at or restart_count", () => {
+    const startedAt = "2024-01-01T00:00:00.000Z";
+    const id = makeRun({ status: "queued", startedAt });
+    db.runs.admitRun(id);
+    const run = db.runs.getRun(id)!;
+    expect(run.startedAt).toBe(startedAt);
+    expect(run.restartCount ?? 0).toBe(0);
+  });
+});
+
+describe("expireQueued", () => {
+  it("transitions queued → cancelled and records the reason", () => {
+    const id = makeRun({ status: "queued" });
+    const changes = db.runs.expireQueued(id, "dropped from queue after waiting too long");
+    expect(changes).toBe(1);
+    const run = db.runs.getRun(id)!;
+    expect(run.status).toBe("cancelled");
+    expect(run.context?.error).toBe("dropped from queue after waiting too long");
+    expect(run.finishedAt).toBeTruthy();
+  });
+
+  it("returns 0 when run is not queued (CAS guard)", () => {
+    const id = makeRun({ status: "running" });
+    expect(db.runs.expireQueued(id, "reason")).toBe(0);
+    expect(db.runs.getRun(id)!.status).toBe("running");
+  });
+
+  it("returns 0 when run does not exist", () => {
+    expect(db.runs.expireQueued("no-such-id", "reason")).toBe(0);
+  });
+});
+
+describe("getByTrigger includes queued", () => {
+  it("returns a queued run for the trigger", () => {
+    const id = makeRun({ status: "queued", triggerId: "acme/repo#42" });
+    const run = db.runs.getByTrigger("acme/repo#42");
+    expect(run).not.toBeNull();
+    expect(run!.id).toBe(id);
+    expect(run!.status).toBe("queued");
+  });
+
+  it("returns running run over older queued run", () => {
+    makeRun({ status: "queued", triggerId: "acme/repo#43", startedAt: "2024-01-01T00:00:00.000Z" });
+    const runId = makeRun({ status: "running", triggerId: "acme/repo#43", startedAt: "2024-01-01T00:01:00.000Z" });
+    const run = db.runs.getByTrigger("acme/repo#43");
+    expect(run!.id).toBe(runId);
+  });
+});
+
+describe("listActive includes queued", () => {
+  it("includes queued, running, and paused runs", () => {
+    const q = makeRun({ status: "queued" });
+    const r = makeRun({ status: "running" });
+    const p = makeRun({ status: "paused" });
+    makeRun({ status: "succeeded" });
+    makeRun({ status: "failed" });
+    const active = db.runs.listActive();
+    const ids = active.map((x) => x.id);
+    expect(ids).toContain(q);
+    expect(ids).toContain(r);
+    expect(ids).toContain(p);
+    expect(active).toHaveLength(3);
+  });
+});
