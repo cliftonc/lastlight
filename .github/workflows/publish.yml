@@ -84,6 +84,13 @@ jobs:
       # Only move `:latest` on a real, non-prerelease Release — never when a
       # workflow_dispatch rebuilds an arbitrary (possibly older) tag.
       PUSH_LATEST: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+      # The bake targets use `context = "../.."` (the repo root — the monorepo
+      # build context sits above apps/server/ where docker-bake.hcl lives).
+      # Newer buildx guards reading a parent-dir context behind a filesystem
+      # entitlement; this is a trusted first-party build reading its own repo, so
+      # disable the FS entitlement check (the sanctioned escape hatch) rather than
+      # hardcode the runner's absolute `--allow=fs.read=/home/runner/work` path.
+      BUILDX_BAKE_ENTITLEMENTS_FS: "0"
     steps:
       - uses: actions/checkout@v6
         with:
