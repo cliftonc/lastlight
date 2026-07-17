@@ -30,10 +30,10 @@ import {
   getWorkflowOrigin,
   listAgentWorkflows,
   resolveSkillPaths,
-} from "@lastlight/shared";
-import { phaseSkillNames } from "@lastlight/workflow-engine";
+} from "lastlight-shared";
+import { phaseSkillNames } from "lastlight-workflow-engine";
 import { resolveServerHome } from "./cli-config.js";
-import { enumerateOverlayAssets } from "@lastlight/shared";
+import { enumerateOverlayAssets } from "lastlight-shared";
 
 export interface ForkOpts {
   /** `--home <dir>` override for the working directory (the core checkout). */
@@ -60,7 +60,7 @@ function hasBuiltins(dir: string): boolean {
 /**
  * Pick the first candidate that actually ships the built-in assets we fork
  * *from* (`workflows/` + `skills/`). The lean CLI package no longer bundles
- * those asset dirs (locked decision 12 — they live in `@lastlight/core`, read
+ * those asset dirs (locked decision 12 — they live in `lastlight-core`, read
  * from a server checkout), so there is no self-bundled fallback: when no
  * candidate qualifies we error with a pointer at `--home <server checkout>`.
  */

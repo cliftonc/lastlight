@@ -17,12 +17,12 @@ importers:
       '@clack/prompts':
         specifier: ^1.2.0
         version: 1.4.0
-      '@lastlight/core':
-        specifier: workspace:*
-        version: link:../server
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
+      lastlight-core:
+        specifier: workspace:*
+        version: link:../server
       yaml:
         specifier: ^2.5.0
         version: 2.9.0
@@ -121,12 +121,6 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.13
         version: 1.19.14(hono@4.12.29)
-      '@lastlight/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-      '@lastlight/workflow-engine':
-        specifier: workspace:*
-        version: link:../../packages/workflow-engine
       '@octokit/auth-app':
         specifier: ^8.2.0
         version: 8.2.0
@@ -181,6 +175,12 @@ importers:
       hono:
         specifier: ^4.12.14
         version: 4.12.29
+      lastlight-shared:
+        specifier: workspace:*
+        version: link:../../packages/shared
+      lastlight-workflow-engine:
+        specifier: workspace:*
+        version: link:../../packages/workflow-engine
       octokit:
         specifier: ^5.0.5
         version: 5.0.5
@@ -269,7 +269,7 @@ importers:
         version: 18.3.7(@types/react@18.3.29)
       '@vitejs/plugin-react':
         specifier: ^6.0.3
-        version: 6.0.3(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.3)(yaml@2.9.0))
+        version: 6.0.3(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
       autoprefixer:
         specifier: ^10.4.20
         version: 10.5.0(postcss@8.5.16)
@@ -287,7 +287,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^8.1.4
-        version: 8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.3)(yaml@2.9.0)
+        version: 8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0)
 
   apps/www:
     dependencies:
@@ -322,18 +322,18 @@ importers:
       '@clack/prompts':
         specifier: ^1.2.0
         version: 1.4.0
-      '@lastlight/shared':
-        specifier: workspace:*
-        version: link:../shared
-      '@lastlight/workflow-engine':
-        specifier: workspace:*
-        version: link:../workflow-engine
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
       cli-table3:
         specifier: ^0.6.5
         version: 0.6.5
+      lastlight-shared:
+        specifier: workspace:*
+        version: link:../shared
+      lastlight-workflow-engine:
+        specifier: workspace:*
+        version: link:../workflow-engine
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -356,12 +356,12 @@ importers:
       '@earendil-works/pi-ai':
         specifier: ^0.79.8
         version: 0.79.8(ws@8.21.0)(zod@4.4.3)
-      '@lastlight/workflow-engine':
-        specifier: workspace:*
-        version: link:../workflow-engine
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
+      lastlight-workflow-engine:
+        specifier: workspace:*
+        version: link:../workflow-engine
       yaml:
         specifier: ^2.8.3
         version: 2.9.0
@@ -9600,10 +9600,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitejs/plugin-react@6.0.3(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.3)(yaml@2.9.0))':
+  '@vitejs/plugin-react@6.0.3(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.3)(yaml@2.9.0)
+      vite: 8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0)
 
   '@vitest/expect@4.1.7':
     dependencies:
@@ -13125,7 +13125,7 @@ snapshots:
       tsx: 4.22.3
       yaml: 2.9.0
 
-  vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.3)(yaml@2.9.0):
+  vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.5
@@ -13136,7 +13136,7 @@ snapshots:
       '@types/node': 24.13.3
       esbuild: 0.28.1
       fsevents: 2.3.3
-      jiti: 1.21.7
+      jiti: 2.7.0
       tsx: 4.22.3
       yaml: 2.9.0
 

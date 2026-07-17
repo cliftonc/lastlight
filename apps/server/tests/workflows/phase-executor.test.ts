@@ -28,7 +28,7 @@ import {
   type PhaseResolver,
   type PhaseRunContext,
 } from "#src/workflows/phase-executor.js";
-import type { EnginePorts, WorkflowStateStore } from "@lastlight/workflow-engine";
+import type { EnginePorts, WorkflowStateStore } from "lastlight-workflow-engine";
 
 const mockExecuteAgent = vi.mocked(executeAgent);
 const mockExecuteCommand = vi.mocked(executeCommand);

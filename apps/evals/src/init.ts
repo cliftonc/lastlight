@@ -25,7 +25,7 @@ import { promisify } from "node:util";
 
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { detectGh, bootstrapOverlayRepo } from "@lastlight/core/evals";
+import { detectGh, bootstrapOverlayRepo } from "lastlight-core/evals";
 
 import { builtinDatasetsRoot, builtinModelsPath } from "./paths.js";
 

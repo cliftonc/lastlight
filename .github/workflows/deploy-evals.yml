@@ -51,11 +51,11 @@ jobs:
       # build:site is self-contained: it builds the evals dashboard (a standalone
       # Vite SPA with no workspace deps) and runs scripts/build-site.ts via tsx
       # over apps/evals/src — whose import graph (build-site -> report ->
-      # schema/grade) never reaches @lastlight/core, so no workspace `dist/` is
+      # schema/grade) never reaches lastlight-core, so no workspace `dist/` is
       # needed here. It assembles dist-site/ (SPA shell + baked /api/index +
       # /data copy — from the vendored sample-results/ in CI, see the header note).
       #
-      # NOTE: if build:site ever imports the core barrel (@lastlight/core/evals),
+      # NOTE: if build:site ever imports the core barrel (lastlight-core/evals),
       # add a `pnpm --filter ...lastlight-evals build` step BEFORE this to build
       # dependencies first — the leading-dots `...pkg` form (dependencies), not
       # the trailing `pkg...` (dependents), which is a no-op here since nothing

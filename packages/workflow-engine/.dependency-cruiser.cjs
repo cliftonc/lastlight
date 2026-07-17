@@ -1,10 +1,10 @@
 /**
- * Package-local boundary gate for @lastlight/workflow-engine. The engine may
+ * Package-local boundary gate for lastlight-workflow-engine. The engine may
  * import only its own `src/**` tree, `zod`, and node built-ins — never any
  * other package or heavy external. (The app-side belt lives in
  * apps/server/.dependency-cruiser.cjs.)
  *
- *   pnpm --filter @lastlight/workflow-engine run lint:boundaries
+ *   pnpm --filter lastlight-workflow-engine run lint:boundaries
  */
 module.exports = {
   forbidden: [

@@ -1,4 +1,4 @@
-# Design: `@lastlight/workflow-engine`
+# Design: `lastlight-workflow-engine`
 
 Extract Last Light's bespoke workflow engine out of `src/workflows/` into a
 standalone, port-driven, publishable package. The goal is testability (fake
@@ -15,7 +15,7 @@ relocate files.
 ## 1. Module boundary
 
 ```
-@lastlight/workflow-engine
+lastlight-workflow-engine
   core/
     dag.ts            pure graph: buildDag, getReadyNodes, getNodesToSkip, isComplete, topoSort
     phase-ref.ts      loop-iteration label format()/parse()
@@ -301,7 +301,7 @@ it to the package once the boundary is proven.
 
 **Milestone B — package**
 9. Lift `src/workflow-engine/` into a workspace package
-   `@lastlight/workflow-engine` (`core/` + `ports/` + `test-support/`). Only
+   `lastlight-workflow-engine` (`core/` + `ports/` + `test-support/`). Only
    after the gate in step 8 is green. Point the old `src/workflows/*` shims at
    the package.
 

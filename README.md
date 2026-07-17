@@ -20,21 +20,21 @@ now live under `apps/server/` (formerly the repo root). At a glance:
 
 ```
 apps/
-  server/   @lastlight/core  — the harness + server (src, config, workflows,
+  server/   lastlight-core  — the harness + server (src, config, workflows,
                                skills, agent-context, deploy, dashboard, spec, …)
   www/      lastlight-www     — the Astro marketing/docs site → lastlight.dev
   evals/    lastlight-evals   — the eval harness → evals.lastlight.dev
 packages/
   cli/               lastlight              — the lean, published global CLI (+ the Claude Code plugin)
-  shared/            @lastlight/shared      — shared utilities (e.g. the provider registry)
-  workflow-engine/   @lastlight/workflow-engine — the reusable workflow runner
+  shared/            lastlight-shared      — shared utilities (e.g. the provider registry)
+  workflow-engine/   lastlight-workflow-engine — the reusable workflow runner
 ```
 
-Five packages publish to npm: `lastlight`, `@lastlight/core`,
-`@lastlight/workflow-engine`, `@lastlight/shared`, and `lastlight-evals`. The
+Five packages publish to npm: `lastlight`, `lastlight-core`,
+`lastlight-workflow-engine`, `lastlight-shared`, and `lastlight-evals`. The
 root package (`lastlight-monorepo`) is private. Common scripts run from the root
 via Turborepo: `pnpm build` / `pnpm test` / `pnpm typecheck` (each `turbo run …`),
-and `pnpm dev` (= `pnpm --filter @lastlight/core dev`). See the root `CLAUDE.md`
+and `pnpm dev` (= `pnpm --filter lastlight-core dev`). See the root `CLAUDE.md`
 for the canonical workspace map and orientation.
 
 ## Production Setup (Clean Server)
@@ -128,7 +128,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Run
 
-`pnpm --filter @lastlight/core dev` runs the harness on your host. Sandbox mode is selected by `LASTLIGHT_SANDBOX`:
+`pnpm --filter lastlight-core dev` runs the harness on your host. Sandbox mode is selected by `LASTLIGHT_SANDBOX`:
 
 - **`gondolin`** (default) — agentic-pi spawns a per-phase QEMU micro-VM in-process. Uses HVF on macOS, KVM on Linux. No Docker needed.
 - **`docker`** — agentic-pi runs inside a per-phase sibling Docker container (the `lastlight-sandbox:latest` image). Requires Docker. Useful for prod-like smoke testing.
@@ -151,13 +151,13 @@ docker compose --profile build-only build sandbox
 ```
 
 Then run the harness (server + dashboard, with hot reload). These scripts live
-in the `@lastlight/core` package (`apps/server/`); run them with `pnpm --filter`
+in the `lastlight-core` package (`apps/server/`); run them with `pnpm --filter`
 from anywhere in the repo:
 
 ```bash
-pnpm --filter @lastlight/core dev            # both server and dashboard, concurrent
-pnpm --filter @lastlight/core dev:server     # server only
-pnpm --filter @lastlight/core dev:dashboard  # dashboard only
+pnpm --filter lastlight-core dev            # both server and dashboard, concurrent
+pnpm --filter lastlight-core dev:server     # server only
+pnpm --filter lastlight-core dev:dashboard  # dashboard only
 ```
 
 Both server scripts call `apps/server/scripts/dev-local.sh`, which:
@@ -223,7 +223,7 @@ The login writes `auth.json` under `$STATE_DIR` (same JSON shape pi-ai's own
 `npx @earendil-works/pi-ai login` writes; override with `LASTLIGHT_AUTH_FILE`).
 It's **host-local** — the browser OAuth flow runs where you type the command,
 so run it on the machine that runs the agent, then restart (`pnpm --filter
-@lastlight/core dev:server` from source, or `lastlight server restart agent` for the installed deploy) to
+lastlight-core dev:server` from source, or `lastlight server restart agent` for the installed deploy) to
 pick it up. Note `tsx watch` does **not** reload on `.env` changes — restart
 after switching `LASTLIGHT_MODEL`.
 
@@ -617,7 +617,7 @@ lastlight/                      # private root package (lastlight-monorepo)
   .claude-plugin/               # Claude Code marketplace manifest (repo = a marketplace)
   plugins/lastlight/            # the Claude Code plugin (skills) — staged into packages/cli at build
   apps/
-    server/                     # @lastlight/core — the harness + server
+    server/                     # lastlight-core — the harness + server
       src/                      #   index.ts (entry), engine/, connectors/,
                                 #   workflows/, sandbox/, cron/, admin/, state/ …
       config/                   #   config loader + config/default.yaml
@@ -638,8 +638,8 @@ lastlight/                      # private root package (lastlight-monorepo)
       src/                      #   cli.ts (entry), cli-server.ts, oauth-cli.ts, …
       scripts/copy-plugin.mjs   #   stages the root plugins/ + .claude-plugin/ into
                                 #   this package at build (so the npm tarball ships them)
-    shared/                     # @lastlight/shared — e.g. src/providers.ts (registry)
-    workflow-engine/            # @lastlight/workflow-engine — reusable phase runner
+    shared/                     # lastlight-shared — e.g. src/providers.ts (registry)
+    workflow-engine/            # lastlight-workflow-engine — reusable phase runner
 ```
 
 Core internals that used to sit at the repo root (`src/`, `workflows/`,
@@ -654,18 +654,18 @@ Core internals that used to sit at the repo root (`src/`, `workflows/`,
 It's a thin client + host-local `server` lifecycle and carries none of the
 server's native or AI dependencies (no `better-sqlite3`, no `@google/genai`), so
 the install is fast and free of the transitive-deprecation noise those deps used
-to print. The heavy runtime lives in `@lastlight/core` (`apps/server/`) and is
+to print. The heavy runtime lives in `lastlight-core` (`apps/server/`) and is
 installed on the host separately (the docker stack or `lastlight server` build).
 
 ### Server won't start
 
 ```bash
 # Check .env is loaded
-pnpm --filter @lastlight/core dev:server
+pnpm --filter lastlight-core dev:server
 # Look for "Required environment variable not set" errors
 ```
 
-### `pnpm --filter @lastlight/core dev` says the sandbox image is missing (docker-sandbox mode)
+### `pnpm --filter lastlight-core dev` says the sandbox image is missing (docker-sandbox mode)
 
 ```bash
 docker compose --profile build-only build sandbox-base   # shared base first

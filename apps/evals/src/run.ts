@@ -999,8 +999,8 @@ async function runServe(): Promise<number> {
   return 0;
 }
 
-/** This package's version + the resolved `@lastlight/core` version, on one line,
- * e.g. `lastlight-evals 0.7.1 (@lastlight/core 0.16.0)`. Both are read from the actual
+/** This package's version + the resolved `lastlight-core` version, on one line,
+ * e.g. `lastlight-evals 0.7.1 (lastlight-core 0.16.0)`. Both are read from the actual
  * installed `package.json`s (core resolved the same way `bootstrap.ts` does), so
  * the line is always truthful about what's running. Missing/unresolvable → `?`. */
 function versionLine(): string {
@@ -1012,7 +1012,7 @@ function versionLine(): string {
       return "?";
     }
   };
-  return `lastlight-evals ${read("../package.json")} (@lastlight/core ${read("@lastlight/core/package.json")})`;
+  return `lastlight-evals ${read("../package.json")} (lastlight-core ${read("lastlight-core/package.json")})`;
 }
 
 const USAGE = `lastlight-evals — eval harness for Last Light workflows

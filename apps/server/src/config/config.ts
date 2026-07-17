@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { parse as parseYaml } from "yaml";
 import { normalizeAllowlistHost } from "../sandbox/egress-allowlist.js";
 import { resolveConfigLayers } from "./config-resolve.js";
-import type { SandboxBackend, BuildAssetsLocation, OtelConfig } from "@lastlight/workflow-engine";
+import type { SandboxBackend, BuildAssetsLocation, OtelConfig } from "lastlight-workflow-engine";
 
 /**
  * Load .env file into process.env (simple, no dependency).
@@ -64,14 +64,14 @@ export interface VariantConfig {
 // (which lives there now) has no back-edge to the config layer. Imported for
 // in-file use and re-exported so every existing `../config/config.js` import
 // keeps resolving unchanged.
-export type { SandboxBackend, BuildAssetsLocation, OtelConfig } from "@lastlight/workflow-engine";
+export type { SandboxBackend, BuildAssetsLocation, OtelConfig } from "lastlight-workflow-engine";
 
-// DisabledConfig / RouteConfig moved into `@lastlight/shared` (the workflow
+// DisabledConfig / RouteConfig moved into `lastlight-shared` (the workflow
 // loader — which lives there now — needs them, and shared must never depend
 // back on core; locked decision 11). Imported for in-file use and re-exported
 // so every existing `../config/config.js` importer keeps resolving unchanged.
-import type { DisabledConfig, RouteConfig } from "@lastlight/shared/config-types";
-export type { DisabledConfig, RouteConfig } from "@lastlight/shared/config-types";
+import type { DisabledConfig, RouteConfig } from "lastlight-shared/config-types";
+export type { DisabledConfig, RouteConfig } from "lastlight-shared/config-types";
 
 export interface PublicConfigBundle {
   default: Record<string, unknown>;

@@ -1,9 +1,9 @@
 /**
- * `@lastlight/workflow-engine` — the port-driven workflow engine extracted from
+ * `lastlight-workflow-engine` — the port-driven workflow engine extracted from
  * Last Light. Domain-agnostic (zod + node built-ins only); the embedding app
  * supplies the agent/asset/liveness/telemetry seams via {@link EnginePorts}.
  *
- * The `test-support` subpath (`@lastlight/workflow-engine/test-support`) ships
+ * The `test-support` subpath (`lastlight-workflow-engine/test-support`) ships
  * in-memory fakes; it stays a separate entry so the fakes never enter a
  * consumer's production import graph.
  */

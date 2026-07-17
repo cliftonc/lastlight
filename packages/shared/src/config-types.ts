@@ -1,7 +1,7 @@
 /**
- * Config types the workflow loader needs, lifted out of `@lastlight/core`'s
+ * Config types the workflow loader needs, lifted out of `lastlight-core`'s
  * `config/config.ts` so `shared` never depends back on core (locked decision
- * 11). Core re-exports these from `@lastlight/shared` so its own
+ * 11). Core re-exports these from `lastlight-shared` so its own
  * `config/config.js` import surface is unchanged.
  */
 

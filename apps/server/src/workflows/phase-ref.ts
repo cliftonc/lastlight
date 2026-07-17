@@ -1,1 +1,1 @@
-export * from "@lastlight/workflow-engine";
+export * from "lastlight-workflow-engine";

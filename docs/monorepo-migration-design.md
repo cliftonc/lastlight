@@ -2,7 +2,7 @@
 
 > **Scope.** Re-architect the three sibling repos (`lastlight`, `lastlight-www`,
 > `lastlight-evals`) into one **pnpm + Turborepo** monorepo. Two package
-> extractions land in this effort: `@lastlight/workflow-engine` (per
+> extractions land in this effort: `lastlight-workflow-engine` (per
 > [`workflow-engine-extraction-design.md`](./workflow-engine-extraction-design.md),
 > folded in as a phase by reference) and a **lean CLI** published as `lastlight`.
 > Each app still publishes/deploys independently (npm + Cloudflare + GHCR).
@@ -35,7 +35,7 @@ that (a) improves DX, (b) extracts core logic into independently testable packag
 and (c) still **publishes/deploys each app separately**.
 
 **Two extractions in scope:**
-1. `@lastlight/workflow-engine` — the port-driven engine per the existing
+1. `lastlight-workflow-engine` — the port-driven engine per the existing
    extraction design (folded in as a phase, not duplicated).
 2. **A lean CLI as the published `lastlight`.** The CLI's whole import graph is light
    (`chalk`, `@clack/prompts`, `cli-table3`, `yaml`, `zod`, the tree-shakeable
@@ -45,7 +45,7 @@ and (c) still **publishes/deploys each app separately**.
    Extracting it makes `npm i -g lastlight` lean and **kills the `better-sqlite3`
    native compile** that global install triggers today. Because the `lastlight` name
    can attach to the lean CLI **or** the heavy evals barrel but not both, the server
-   package is **renamed to `@lastlight/core`** and evals updates its import
+   package is **renamed to `lastlight-core`** and evals updates its import
    in-lockstep.
 
 **Decisions (locked):** preserve git history on import (git subtree); pnpm +
@@ -63,7 +63,7 @@ no Changesets; CI builds only the GHCR images).
   `require.resolve("<core>/package.json")` (`lastlight-evals/src/bootstrap.ts:34`) to
   locate core's *shipped* asset dirs. Both must resolve identically via a
   `workspace:*` symlink and the published tarball. After the rename the address
-  becomes `@lastlight/core/evals` + `require.resolve("@lastlight/core/package.json")`
+  becomes `lastlight-core/evals` + `require.resolve("lastlight-core/package.json")`
   (the `LASTLIGHT_CORE_DIR` override still applies) — updated atomically in-repo.
 - **F2 — the Docker build.** `docker buildx bake` (4 GHCR images) must still build and
   `lastlight server update` must still pull-and-run them after the layout move.
@@ -96,8 +96,8 @@ lastlight/                          # nearform/lastlight repo root (.git here), 
 ├── instance/                       # deployment overlay (prod host clones here; stays at repo root)
 ├── .github/workflows/              # consolidated ci / publish / deploy-www / deploy-evals
 ├── apps/
-│   ├── server/                     # package @lastlight/core — heavy harness + server + Docker + evals barrel
-│   │   ├── package.json            # name:"@lastlight/core", exports("./evals"), files:[assets…]; NO bin
+│   ├── server/                     # package lastlight-core — heavy harness + server + Docker + evals barrel
+│   │   ├── package.json            # name:"lastlight-core", exports("./evals"), files:[assets…]; NO bin
 │   │   ├── tsconfig.json           # Node16 ; keeps #src/* alias
 │   │   ├── src/ config/ workflows/ skills/ agent-context/ deploy/ spec/
 │   │   ├── Dockerfile  sandbox-base.Dockerfile  sandbox.Dockerfile  sandbox-qa.Dockerfile
@@ -108,40 +108,40 @@ lastlight/                          # nearform/lastlight repo root (.git here), 
 │   │   ├── scripts/sync-spec.mjs   # spec source re-pointed to apps/server/spec
 │   │   └── src/content/spec/       # committed fallback copies stay
 │   └── evals/                      # lastlight-evals → evals.lastlight.dev
-│       ├── package.json            # name:"lastlight-evals"; dep @lastlight/core:workspace:*
+│       ├── package.json            # name:"lastlight-evals"; dep lastlight-core:workspace:*
 │       ├── wrangler.jsonc  scripts/build-site.ts  datasets/ examples/
 │       └── dashboard/              # @lastlight/evals-dashboard — stays NESTED
 └── packages/
     ├── cli/                        # package "lastlight" (published, LEAN) — the global bin + host-local server cmds
     │   ├── package.json            # name:"lastlight", bin.lastlight → dist/cli.js, lean deps, ships plugins/ + .claude-plugin/
     │   └── src/ plugins/ .claude-plugin/
-    ├── shared/                     # @lastlight/shared — light modules used by cli + core + barrel
+    ├── shared/                     # lastlight-shared — light modules used by cli + core + barrel
     │   └── src/  (providers, engine/oauth, config/overlay-bootstrap, overlay-assets, core-pin, workflow loader)
-    └── workflow-engine/            # @lastlight/workflow-engine (core/ + ports/ + test-support/) incl. schema
+    └── workflow-engine/            # lastlight-workflow-engine (core/ + ports/ + test-support/) incl. schema
 ```
 
 `pnpm-workspace.yaml`:
 ```yaml
 packages:
-  - "apps/*"              # server(@lastlight/core), www, evals
+  - "apps/*"              # server(lastlight-core), www, evals
   - "apps/*/dashboard"    # @lastlight/dashboard, @lastlight/evals-dashboard (nested)
-  - "packages/*"          # lastlight(cli), @lastlight/shared, @lastlight/workflow-engine
+  - "packages/*"          # lastlight(cli), lastlight-shared, lastlight-workflow-engine
 ```
 
 **Why this shape:**
-- **Heavy server → `apps/server`, renamed `@lastlight/core`.** Primarily a deployed
+- **Heavy server → `apps/server`, renamed `lastlight-core`.** Primarily a deployed
   product (server + Docker) that also exposes the `./evals` library barrel + ships
   asset dirs. Its `bin` moves to the CLI package.
 - **CLI → `packages/cli`, keeps the published name `lastlight`.** Lean, publishable
   binary + host-local `server` lifecycle commands (which shell out to docker/git, so
   they stay light).
-- **`@lastlight/shared`** holds the ~7 light modules the CLI reaches into so it never
+- **`lastlight-shared`** holds the ~7 light modules the CLI reaches into so it never
   drags core's heavy deps: `providers.ts`, `engine/oauth.ts` (imports only the
   tree-shakeable `pi-ai/oauth` subpath), `config/overlay-bootstrap.ts`,
   `config/overlay-assets.ts`, `config/core-pin.ts`, and a light workflow **loader**
   (the `loader→config` link is type-only, erased at compile). The workflow **schema**
-  lives in `@lastlight/workflow-engine` (its core is also light: zod-only) and both
-  CLI and shared import it from there. `@lastlight/core` imports these same modules
+  lives in `lastlight-workflow-engine` (its core is also light: zod-only) and both
+  CLI and shared import it from there. `lastlight-core` imports these same modules
   from `shared`/`workflow-engine` (no duplication).
 - **Both dashboards stay nested** in their consuming app (F3 for admin;
   `build-site.ts` reads `../dashboard/dist` for evals).
@@ -149,8 +149,8 @@ packages:
   `instance/` overlay stays at the repo root (unchanged for prod hosts + overlay
   auto-deploy Actions — see §6).
 
-Five **published** packages result: `lastlight` (CLI), `@lastlight/core`,
-`@lastlight/workflow-engine`, `lastlight-evals`, and `@lastlight/shared` —
+Five **published** packages result: `lastlight` (CLI), `lastlight-core`,
+`lastlight-workflow-engine`, `lastlight-evals`, and `lastlight-shared` —
 shared must publish because it is a runtime `workspace:*` dep of the published
 CLI and core, and pnpm rewrites `workspace:*` to a concrete range on pack
 (no API-stability promise; internal surface). Everything else is `private`.
@@ -182,10 +182,10 @@ vs the others' 22).
 - **`tsconfig.base.json`** holds only shared flags (`target ES2022`, `strict`,
   `esModuleInterop`, `skipLibCheck`, `resolveJsonModule`, decl/maps). It **omits
   `module`/`moduleResolution`** — set per runtime.
-- **Node16** for `@lastlight/core`, `apps/evals`, `packages/{cli,shared,workflow-engine}`
+- **Node16** for `lastlight-core`, `apps/evals`, `packages/{cli,shared,workflow-engine}`
   (needed so `exports` maps + `require.resolve` resolve at runtime; Bundler would break
   F1/F4). **Bundler** for `apps/www` (Astro) + both dashboards (Vite).
-- **Keep the `#src/*` alias package-local** in `@lastlight/core` — compile/test-time
+- **Keep the `#src/*` alias package-local** in `lastlight-core` — compile/test-time
   only (never in `dist/`), so zero churn to the ~75 files that use it. New cross-package
   imports (`core`→engine/shared, `cli`→shared/engine) become real workspace imports.
 - **Turbo ordering, NOT TS project references** (avoid a second hand-maintained graph);
@@ -195,7 +195,7 @@ vs the others' 22).
 
 ## 4. Publish contract across four packages
 
-> **Superseded — five packages, not four.** `@lastlight/shared` also publishes
+> **Superseded — five packages, not four.** `lastlight-shared` also publishes
 > (it is a runtime `workspace:*` dep of two published packages, rewritten to a
 > concrete range on pack). See the migration plan's locked decision 14 and
 > `docs/RELEASING.md` for the authoritative publish contract + manual flow.
@@ -203,8 +203,8 @@ vs the others' 22).
 
 - **`lastlight` (CLI, `packages/cli`)** — `bin.lastlight` → `dist/cli.js`; lean
   `dependencies` (chalk, @clack/prompts, cli-table3, yaml, zod,
-  `@earendil-works/pi-ai` for the oauth subpath) + workspace deps `@lastlight/shared`,
-  `@lastlight/workflow-engine`. `files:` ships `dist` + `plugins/lastlight/` +
+  `@earendil-works/pi-ai` for the oauth subpath) + workspace deps `lastlight-shared`,
+  `lastlight-workflow-engine`. `files:` ships `dist` + `plugins/lastlight/` +
   `.claude-plugin/` (required by `skills-install.ts`, which resolves them at its own
   package root via `import.meta.url`). `fork-cli.ts` reads
   `workflows/`/`skills/`/`agent-context/` from the **server home** at runtime (its
@@ -214,7 +214,7 @@ vs the others' 22).
   footprint dominates (npm installs the whole package even for a subpath import),
   evaluate vendoring the small oauth submodule or a lighter dependency — flagged, not
   blocking.
-- **`@lastlight/core` (`apps/server`)** — `main: dist/index.js`,
+- **`lastlight-core` (`apps/server`)** — `main: dist/index.js`,
   `exports["./evals"]: ./dist/evals-api.js`, **no `bin`**. `files:` ships `dist`,
   `config`, `workflows`, `skills`, `agent-context`, `deploy`, `sandbox.Dockerfile`,
   `docker-compose.yml`. `tsc` runs inside `apps/server` → emits `apps/server/dist/**`.
@@ -222,12 +222,12 @@ vs the others' 22).
   plugin dirs). The barrel re-exports getWorkflow/configureWorkflowAssets (from the
   shared loader), runWorkflow (from core's runner), overlay-bootstrap symbols (from
   shared) — same symbol set as today.
-- **`@lastlight/workflow-engine`** — published public (matches the extraction doc's
+- **`lastlight-workflow-engine`** — published public (matches the extraction doc's
   reuse goal; keeps core's build a plain `tsc`). Core depends on it `workspace:*`.
-- **`lastlight-evals`** — unchanged name; dep flips to `@lastlight/core: workspace:*`;
-  imports `from "@lastlight/core/evals"`; `require.resolve("@lastlight/core/package.json")`.
+- **`lastlight-evals`** — unchanged name; dep flips to `lastlight-core: workspace:*`;
+  imports `from "lastlight-core/evals"`; `require.resolve("lastlight-core/package.json")`.
 
-**F1 both ways:** locally, `workspace:*` symlinks `node_modules/@lastlight/core` →
+**F1 both ways:** locally, `workspace:*` symlinks `node_modules/lastlight-core` →
 `apps/server`, whose dir holds the asset dirs exactly as the tarball root does (**why
 they must stay directly under `apps/server/`**); requires core built first (Turbo
 `^build`). Published: pnpm rewrites `workspace:*` → concrete ranges on pack; barrel
@@ -236,7 +236,7 @@ they must stay directly under `apps/server/`**); requires core built first (Turb
 Note on the name change: the *published* `lastlight` becomes the CLI (no `/evals`
 subpath). Existing `lastlight-evals` releases pinned to old `lastlight` still resolve
 against the already-published 0.15.x tarball; going forward evals depends on
-`@lastlight/core`. The rename is a breaking change to the barrel's *address*, done
+`lastlight-core`. The rename is a breaking change to the barrel's *address*, done
 atomically in-repo (both sides move together), so no live consumer breaks.
 
 ---
@@ -257,7 +257,7 @@ atomically in-repo (both sides move together), so no live consumer breaks.
 ## 6. Docker + the `lastlight server` host-local path split (F2, F5)
 
 **Docker image build context → repo root** (pnpm needs the workspace + lockfile); the
-built package is `@lastlight/core`.
+built package is `lastlight-core`.
 - **`docker-bake.hcl` + compose:** each target/service → `context = "."` (repo root),
   `dockerfile = "apps/server/<name>.Dockerfile"`. Sandbox Dockerfiles repoint their few
   `COPY` paths (`sandbox/agentic-pi.pin`, `agent-context/`) under `apps/server/`.
@@ -272,13 +272,13 @@ built package is `@lastlight/core`.
   COPY apps/server/package.json apps/server/package.json
   COPY apps/server/dashboard/package.json apps/server/dashboard/package.json
   COPY packages/*/package.json packages/  # workflow-engine + shared manifests (core deps)
-  RUN pnpm install --frozen-lockfile --filter @lastlight/core... --filter @lastlight/dashboard...
+  RUN pnpm install --frozen-lockfile --filter lastlight-core... --filter @lastlight/dashboard...
   COPY apps/server/ apps/server/
   COPY packages/    packages/
-  RUN pnpm --filter @lastlight/workflow-engine --filter @lastlight/shared build \
-   && pnpm --filter @lastlight/core build \
+  RUN pnpm --filter lastlight-workflow-engine --filter lastlight-shared build \
+   && pnpm --filter lastlight-core build \
    && pnpm --filter @lastlight/dashboard build
-  RUN pnpm --filter @lastlight/core deploy --prod /app   # isolated node_modules + files → /app
+  RUN pnpm --filter lastlight-core deploy --prod /app   # isolated node_modules + files → /app
 
   FROM node:22-slim
   # same system deps (git ripgrep gosu python3/make/g++ for better-sqlite3), useradd -u 10001, docker CLI
@@ -287,10 +287,10 @@ built package is `@lastlight/core`.
   # VOLUME /app/data, ENV, ARG GIT_SHA/BUILD_DATE, EXPOSE 8644, entrypoint — unchanged
   CMD ["node", "dist/index.js"]
   ```
-  `pnpm deploy --filter @lastlight/core --prod /app` prunes to one deployable package;
+  `pnpm deploy --filter lastlight-core --prod /app` prunes to one deployable package;
   `/app` ends up shaped like today's — **cwd `/app` → F3's `dashboard/dist` resolves.**
   Keep python3/make/g++ (better-sqlite3), UID 10001, egress-init (`/app/dist/...`),
-  entrypoint, GIT_SHA/BUILD_DATE. (Alt: `turbo prune --scope=@lastlight/core` for
+  entrypoint, GIT_SHA/BUILD_DATE. (Alt: `turbo prune --scope=lastlight-core` for
   better layer caching.)
 
 **The `lastlight server` CLI (F5) — the key change.** Today `cli-server.ts` treats
@@ -315,7 +315,7 @@ these — `.git` stays at the repo root, but compose files + assets live under
   status` overrides listing finds the built-in `workflows/skills/agent-context`.
 - **`dev-local.sh`** moves into `apps/server/scripts/`; its `PROJECT_ROOT="$SCRIPT_DIR/.."`
   then equals `apps/server` (still holds `src/index.ts`) — relocation only, no logic
-  change. `npm run dev` becomes `pnpm --filter @lastlight/core dev`.
+  change. `npm run dev` becomes `pnpm --filter lastlight-core dev`.
 - **`server update` GHCR-pull path** is unaffected (it `docker pull`s + re-tags to
   local names, then the recreate step uses the same explicit compose invocation).
 
@@ -336,10 +336,10 @@ One root `.github/workflows/`:
   (dockerfiles under `apps/server/`). **npm publishing is manual** (plan
   decision 15 — no Changesets, no CI npm job): after the release's images land
   in GHCR, the operator publishes in dependency order
-  (`@lastlight/workflow-engine` + `@lastlight/shared` before `@lastlight/core`
+  (`lastlight-workflow-engine` + `lastlight-shared` before `lastlight-core`
   + `lastlight` before `lastlight-evals`; `pnpm -r publish --access public` is
   topological) — pnpm rewrites `workspace:*` → concrete ranges. Version bumps
-  are manual and graph-aware (bump `@lastlight/core` + `lastlight` when
+  are manual and graph-aware (bump `lastlight-core` + `lastlight` when
   shared/engine change); the flow lives in `docs/RELEASING.md`. The
   images-before-npm guarantee becomes procedural: never publish a `lastlight`
   version whose images aren't in GHCR yet.
@@ -393,7 +393,7 @@ bake/compose/Dockerfile paths + the `server` CLI path split (§6). **Gates (F2/F
 `/admin` + runs `node dist/index.js`; asset dirs at `/app/`; `lastlight server
 build|status` work against `home=repo root`, `serverDir=apps/server`. *Risk: HIGH.*
 
-**C — Extract `@lastlight/workflow-engine`** per
+**C — Extract `lastlight-workflow-engine`** per
 [`workflow-engine-extraction-design.md`](./workflow-engine-extraction-design.md) (its
 Milestone A in-repo module + dep-cruiser gate, then Milestone B lift to
 `packages/workflow-engine`, core deps `workspace:*`). **Gates:** that doc's fences
@@ -401,23 +401,23 @@ Milestone A in-repo module + dep-cruiser gate, then Milestone B lift to
 dep-cruiser). Publish the engine (§4). *Risk: medium.*
 
 **D — Extract the lean CLI + shared package + rename core** (F4). Create
-`@lastlight/shared` (the ~7 light modules); create `packages/cli` (`name:"lastlight"`,
+`lastlight-shared` (the ~7 light modules); create `packages/cli` (`name:"lastlight"`,
 bin, lean deps, ships `plugins/`+`.claude-plugin/`, host-local `server` cmds); **rename
-`apps/server` package `lastlight` → `@lastlight/core`, remove its `bin`**, keep the
+`apps/server` package `lastlight` → `lastlight-core`, remove its `bin`**, keep the
 `./evals` barrel + asset `files`. Update the Docker/image references to
-`@lastlight/core`. **Gates:** F4 clean-container `npm i -g lastlight` = lean + no native
-compile; `@lastlight/core` still emits barrel + assets; `pnpm --filter lastlight test`
+`lastlight-core`. **Gates:** F4 clean-container `npm i -g lastlight` = lean + no native
+compile; `lastlight-core` still emits barrel + assets; `pnpm --filter lastlight test`
 green; server image unchanged behaviourally. *Risk: HIGH — the rename + name reassignment.*
 
 **E — Import www** (`git subtree add --prefix=apps/www`). Re-point
 `scripts/sync-spec.mjs`'s sibling fallback `../lastlight/spec` → `apps/server/spec`.
 **Gate:** `pnpm --filter lastlight-www build`. *Risk: low.*
 
-**F — Import evals + wire to `@lastlight/core`** (F1). `git subtree
-add --prefix=apps/evals`; dep → `@lastlight/core: workspace:*`; imports →
-`@lastlight/core/evals`; `require.resolve("@lastlight/core/package.json")`; delete the
+**F — Import evals + wire to `lastlight-core`** (F1). `git subtree
+add --prefix=apps/evals`; dep → `lastlight-core: workspace:*`; imports →
+`lastlight-core/evals`; `require.resolve("lastlight-core/package.json")`; delete the
 nested dashboard lock; `build:dashboard` → `pnpm --filter @lastlight/evals-dashboard
-build`. **Gate:** the harness runs a workflow against `@lastlight/core`'s built `dist/`
+build`. **Gate:** the harness runs a workflow against `lastlight-core`'s built `dist/`
 with mocked GitHub — barrel imports AND asset discovery resolve through the symlink.
 *Risk: HIGH.*
 
@@ -439,17 +439,17 @@ F1 in **F** (with C's type-level contract tests already in place).
 ## Critical files
 
 - `package.json` — split: `bin`+plugin dirs → `packages/cli` (`lastlight`);
-  barrel+assets → `apps/server/package.json` (`@lastlight/core`).
+  barrel+assets → `apps/server/package.json` (`lastlight-core`).
 - `src/cli/*` → `packages/cli/src/*`; the 7 shared imports (`providers`,
   `engine/oauth`, `config/overlay-bootstrap`, `overlay-assets`, `core-pin`,
-  `workflows/loader`+`schema`) → `@lastlight/shared` / `@lastlight/workflow-engine`.
+  `workflows/loader`+`schema`) → `lastlight-shared` / `lastlight-workflow-engine`.
 - `src/cli/cli-server.ts` + `src/config/overlay-assets.ts` — the F5 `home` vs
   `serverDir` split (compose `-f`/`--project-directory`, `coreRoot` repoint).
 - `Dockerfile` + `docker-bake.hcl` + `docker-compose.yml` — pnpm workspace build +
   context/dockerfile repoint to `apps/server/` (F2).
 - `src/admin/index.ts:58-62` — cwd-relative `dashboard/dist` (F3).
 - `lastlight-evals/src/bootstrap.ts:34` + `src/{run-instance,init}.ts` — barrel address
-  + `require.resolve` retarget to `@lastlight/core` (F1).
+  + `require.resolve` retarget to `lastlight-core` (F1).
 - [`docs/workflow-engine-extraction-design.md`](./workflow-engine-extraction-design.md)
   — Phase C, by reference.
 - `lastlight-www/scripts/sync-spec.mjs` — spec-source repoint (Phase E).
@@ -464,15 +464,15 @@ F1 in **F** (with C's type-level contract tests already in place).
 - **B:** `pnpm pack --dry-run` (apps/server) file list stable; build + run the agent
   image, hit `/admin` + `/health`; `lastlight server status`/`build` work with
   `home`=repo root.
-- **C:** `pnpm --filter @lastlight/core test` green incl. the engine fences; dep-cruiser
+- **C:** `pnpm --filter lastlight-core test` green incl. the engine fences; dep-cruiser
   boundary passes.
 - **D:** in a clean container, `npm i -g <packed lastlight cli>` → no better-sqlite3, no
   native compile; `lastlight --help` + a host-local `server status` work; measure install
-  size (flag if pi-ai dominates); `@lastlight/core` barrel still importable.
+  size (flag if pi-ai dominates); `lastlight-core` barrel still importable.
 - **E:** `pnpm --filter lastlight-www build` emits `dist/`; spec pages render from
   `apps/server/spec`.
 - **F:** one eval case end-to-end vs mocked GitHub through the `workspace:*` symlink —
-  `@lastlight/core/evals` + asset discovery resolve; `pnpm --filter lastlight-evals test`
+  `lastlight-core/evals` + asset discovery resolve; `pnpm --filter lastlight-evals test`
   green.
 - **G:** dry-run the release (images-only `workflow_dispatch`); confirm Cloudflare deploy
   jobs fire only on their app's paths; `pnpm -r publish --dry-run` packs exactly the

@@ -13,27 +13,27 @@
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 
-import { configureWorkflowAssets } from "@lastlight/core/evals";
+import { configureWorkflowAssets } from "lastlight-core/evals";
 
 /**
- * The `@lastlight/core` PACKAGE ROOT — the dir holding `workflows/`, `skills/`,
+ * The `lastlight-core` PACKAGE ROOT — the dir holding `workflows/`, `skills/`,
  * `agent-context/`, `config/`, `dist/`.
  *
- * Default: resolve the `@lastlight/core` package (a `workspace:*` dependency in
+ * Default: resolve the `lastlight-core` package (a `workspace:*` dependency in
  * the monorepo; a normal npm dependency once published).
  *
  * Override: `LASTLIGHT_CORE_DIR` repoints the ASSET roots at a local core
  * checkout (the monorepo core package dir, `.../apps/server`), so you can eval
  * un-published workflow/prompt/skill edits — the bulk of what `lastlight server
  * update` ships — without bumping the dep. Caveat: the imported runner CODE
- * still comes from `node_modules/@lastlight/core`; to also exercise
+ * still comes from `node_modules/lastlight-core`; to also exercise
  * working-tree engine code, use the workspace symlink (or a `file:` dep).
  */
 export function resolveCoreRoot(): string {
   const override = process.env.LASTLIGHT_CORE_DIR?.trim();
   if (override) return override;
   const require = createRequire(import.meta.url);
-  return dirname(require.resolve("@lastlight/core/package.json"));
+  return dirname(require.resolve("lastlight-core/package.json"));
 }
 
 export interface BootstrapResult {

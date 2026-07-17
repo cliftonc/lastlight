@@ -9,7 +9,7 @@ import {
   RESERVED_CONTROL_INTENTS,
   type AgentWorkflowDefinition,
   type CronWorkflowDefinition,
-} from "@lastlight/workflow-engine";
+} from "lastlight-workflow-engine";
 import type { DisabledConfig, RouteConfig } from "./config-types.js";
 
 interface AssetLayer {

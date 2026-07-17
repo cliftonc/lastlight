@@ -7,7 +7,7 @@ import {
   OVERLAY_GITIGNORE,
   OVERLAY_ENV_EXAMPLE,
   OVERLAY_CONFIG_PLACEHOLDER,
-} from "@lastlight/shared/overlay-bootstrap";
+} from "lastlight-shared/overlay-bootstrap";
 
 describe("scaffoldOverlayFiles", () => {
   let dir: string;

@@ -1,5 +1,5 @@
 import type { GitHubTokenPermissions } from "./git-auth.js";
-import type { GitAccessProfile } from "@lastlight/workflow-engine";
+import type { GitAccessProfile } from "lastlight-workflow-engine";
 import { loadAgentContext as loadResolvedAgentContext } from "../../workflows/loader.js";
 
 // The shared execution vocabulary (ExecutorConfig / ExecutionResult /
@@ -16,7 +16,7 @@ export type {
   SkillsStatus,
   GitAccessProfile,
   GitSandboxAccess,
-} from "@lastlight/workflow-engine";
+} from "lastlight-workflow-engine";
 
 /**
  * agentic-pi's GitHub extension uses the same four profile names — they

@@ -13,7 +13,7 @@ agent that triages, reviews, and fixes your GitHub repos.
    into a local Claude Code (`lastlight skills install`).
 
 The heavy runtime (the harness, workflow engine, sandbox stack) lives in the
-`@lastlight/core` package; this CLI stays lean and has no native dependencies,
+`lastlight-core` package; this CLI stays lean and has no native dependencies,
 so `npm i -g lastlight` is fast.
 
 ## Install
@@ -107,4 +107,4 @@ lastlight skills list | uninstall
 
 - Website & docs: <https://lastlight.dev>
 - Monorepo: <https://github.com/nearform/lastlight> (this package is at
-  `packages/cli/`; the harness is `@lastlight/core` at `apps/server/`)
+  `packages/cli/`; the harness is `lastlight-core` at `apps/server/`)

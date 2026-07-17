@@ -31,7 +31,7 @@ import {
   type OverlayAsset,
   readCorePin,
   pickTagCommit,
-} from "@lastlight/shared";
+} from "lastlight-shared";
 
 const exec = promisify(execFile);
 
