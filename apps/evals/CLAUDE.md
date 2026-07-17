@@ -19,7 +19,7 @@ entry; the subcommands are `run`, `init`, `add-case`, and `serve`.
 
 The user-facing **agent skill** that teaches people to drive this CLI lives in
 the **same monorepo** — the `lastlight` plugin, at
-`packages/cli/plugins/lastlight/skills/lastlight-evals/SKILL.md` (+ its
+`plugins/lastlight/skills/lastlight-evals/SKILL.md` (+ its
 `references/`). It documents this CLI's surface: the `run` / `init` / `add-case`
 / `serve` subcommands and their flags, defined here in `src/run.ts` (the `USAGE`
 block), `src/init.ts` (the `init` flags), and `src/add-case.ts` (the `add-case`

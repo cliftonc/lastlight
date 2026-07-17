@@ -539,16 +539,20 @@ lastlight skills list                    # show bundled skills + where they're i
 lastlight skills uninstall
 ```
 
-Or register the marketplace directly from a checkout of this repo:
+Or register the marketplace directly — this repo root is itself a Claude Code
+marketplace (from a checkout, or straight from GitHub):
 
 ```bash
-claude plugin marketplace add ./packages/cli
+claude plugin marketplace add ./                 # from a local checkout
+claude plugin marketplace add nearform/lastlight # or straight from GitHub
 claude plugin install lastlight@lastlight-skills
 ```
 
-The skills live under `packages/cli/plugins/lastlight/` (manifest in
-`packages/cli/.claude-plugin/`). These are *Claude Code* skills — distinct from
-Last Light's internal sandbox skills in `apps/server/skills/`.
+The plugin lives at the repo root — `plugins/lastlight/` (manifest in
+`.claude-plugin/`). The published `lastlight` CLI stages a copy into its own
+package at build (`packages/cli/scripts/copy-plugin.mjs`) so `lastlight skills
+install` works offline after a global install. These are *Claude Code* skills —
+distinct from Last Light's internal sandbox skills in `apps/server/skills/`.
 
 ---
 
@@ -614,6 +618,8 @@ the full annotated map lives in the root [`CLAUDE.md`](CLAUDE.md).
 ```
 lastlight/                      # private root package (lastlight-monorepo)
   CLAUDE.md                     # canonical workspace map + dev orientation
+  .claude-plugin/               # Claude Code marketplace manifest (repo = a marketplace)
+  plugins/lastlight/            # the Claude Code plugin (skills) — staged into packages/cli at build
   apps/
     server/                     # @lastlight/core — the harness + server
       src/                      #   index.ts (entry), engine/, connectors/,
@@ -634,8 +640,8 @@ lastlight/                      # private root package (lastlight-monorepo)
   packages/
     cli/                        # lastlight — the lean published global CLI
       src/                      #   cli.ts (entry), cli-server.ts, oauth-cli.ts, …
-      plugins/lastlight/        #   the Claude Code plugin (skills)
-      .claude-plugin/           #   marketplace + plugin manifest
+      scripts/copy-plugin.mjs   #   stages the root plugins/ + .claude-plugin/ into
+                                #   this package at build (so the npm tarball ships them)
     shared/                     # @lastlight/shared — e.g. src/providers.ts (registry)
     workflow-engine/            # @lastlight/workflow-engine — reusable phase runner
 ```

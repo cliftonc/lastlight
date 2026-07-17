@@ -30,7 +30,7 @@ esac
 # $LASTLIGHT_CORE_DIR as an override (also the monorepo root).
 hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 mono_root=${LASTLIGHT_CORE_DIR:-$(CDPATH= cd -- "$hook_dir/../../../.." && pwd)}
-skill_rel="packages/cli/plugins/lastlight/skills/lastlight-evals/SKILL.md"
+skill_rel="plugins/lastlight/skills/lastlight-evals/SKILL.md"
 skill_path="$mono_root/$skill_rel"
 
 if [ -f "$skill_path" ]; then
