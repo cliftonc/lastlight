@@ -117,13 +117,20 @@ export function excludeFromGit(repoDir: string, entry: string): void {
 //
 // In "server" mode the per-phase handoff docs live in the Last Light store
 // rather than being committed into the target repo. The seam is symmetric to
-// the skill bundle but bidirectional: stage the run's stored docs into the
-// repo's `.lastlight/<issueKey>/` before the agent runs (so a later phase /
+// the skill bundle but bidirectional: stage the run's stored docs into
+// `<baseDir>/.lastlight/<issueKey>/` before the agent runs (so a later phase /
 // resumed run sees prior context), and harvest whatever the phase wrote back
-// to the store afterwards. The directory is the SAME relative path as repo
-// mode (`{{issueDir}}`), so prompts are unchanged except for gating their
-// `git add .lastlight/ && commit` off — the dir is git-excluded here too as a
-// backstop against the agent's `git add -A` feature commit sweeping it in.
+// to the store afterwards. `baseDir` is chosen by `hostRepoDirFor` in the
+// orchestrator:
+//   - Relocated runs (server + pre-cloned + docker/none/smol) use the sandbox
+//     **workspace root** — a sibling of the checkout — so the docs sit OUTSIDE
+//     the repo tree and the agent's `git add -A` structurally can't reach them.
+//     The agent gets there via `{{issueDir}}` = `../.lastlight/<issueKey>`, and
+//     `excludeFromGit` below no-ops (the workspace root has no `.git`).
+//   - Otherwise (gondolin, which mounts only cwd; or repo mode) the docs sit at
+//     the in-repo `.lastlight/<issueKey>/` — the SAME relative path as repo
+//     mode — and stay out of git via the prompt-level commit gate plus this
+//     `.git/info/exclude` backstop against a stray `git add -A`.
 const ARTIFACT_DIR_ROOT = ".lastlight";
 
 export interface ServerArtifacts {

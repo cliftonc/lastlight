@@ -127,8 +127,24 @@ function writeAgentsMd(hostWorkspaceDir: string, config: ExecutorConfig): void {
   }
 }
 
-/** Host path of the repo checkout (for build-artifact stage/harvest). */
-function hostRepoDirFor(prov: ProvisionResult, prePopulate?: PrePopulateSpec): string {
+/**
+ * Host path the server-mode artifact seam stages into / harvests from.
+ *
+ * Relocated runs (server mode + pre-cloned + docker/none/smol) put the docs at
+ * the **workspace root** — a sibling of the checkout — so the agent's `git add
+ * -A` can never see them; the agent reaches them via `../.lastlight/…`. Every
+ * other case keeps the in-repo path: the repo checkout for pre-cloned
+ * workflows, else the workspace root (non-pre-cloned clones into a subdir, so
+ * the root is already outside the repo tree). The decision is computed once in
+ * simple.ts and carried on `config.buildAssetsRelocated` so this never
+ * disagrees with the agent-facing `{{issueDir}}`.
+ */
+function hostRepoDirFor(
+  prov: ProvisionResult,
+  prePopulate: PrePopulateSpec | undefined,
+  relocated: boolean,
+): string {
+  if (relocated) return prov.hostWorkspaceDir;
   return prePopulate ? join(prov.hostWorkspaceDir, prePopulate.repo) : prov.hostWorkspaceDir;
 }
 
@@ -159,7 +175,10 @@ export async function runSandboxedAgent(prompt: string, ctx: SandboxRunContext):
     }
 
     // Server-mode build assets: stage in before, harvest after (even on error).
-    const artifacts = serverArtifacts(config, hostRepoDirFor(prov, ctx.prePopulate));
+    const artifacts = serverArtifacts(
+      config,
+      hostRepoDirFor(prov, ctx.prePopulate, config.buildAssetsRelocated === true),
+    );
     stageArtifactsIn(artifacts);
 
     const shim = new AgenticShim({

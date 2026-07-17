@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workflowScopedTaskId, resolveRunBranch, PER_TARGET_REUSE_WORKFLOWS, PER_TARGET_RECREATE_WORKFLOWS, PREPOPULATE_SYNTH_WORKFLOWS, PR_HEADREF_PREPOPULATE_WORKFLOWS } from "#src/workflows/simple.js";
+import { workflowScopedTaskId, resolveRunBranch, artifactIssueDir, PER_TARGET_REUSE_WORKFLOWS, PER_TARGET_RECREATE_WORKFLOWS, PREPOPULATE_SYNTH_WORKFLOWS, PR_HEADREF_PREPOPULATE_WORKFLOWS } from "#src/workflows/simple.js";
 
 const RUN = "abcdef12-3456-7890-abcd-ef1234567890";
 
@@ -33,6 +33,37 @@ describe("workflowScopedTaskId", () => {
   it("does not reuse when a per-PR workflow has no number", () => {
     const id = workflowScopedTaskId("drizzle-cube", undefined, "pr-review", RUN);
     expect(id).toBe("drizzle-cube-pr-review-abcdef12");
+  });
+});
+
+describe("artifactIssueDir", () => {
+  const KEY = "issue-172";
+
+  it("keeps docs in-repo for repo mode regardless of backend / pre-clone", () => {
+    for (const backend of ["docker", "gondolin", "none", "smol"] as const) {
+      expect(artifactIssueDir({ buildAssets: "repo", sandbox: backend }, KEY, true))
+        .toBe(`.lastlight/${KEY}`);
+    }
+  });
+
+  it("relocates to the workspace-root sibling (../) for server mode + pre-clone on docker/none/smol", () => {
+    for (const backend of ["docker", "none", "smol"] as const) {
+      expect(artifactIssueDir({ buildAssets: "server", sandbox: backend }, KEY, true))
+        .toBe(`../.lastlight/${KEY}`);
+    }
+  });
+
+  it("keeps gondolin in-repo (it mounts only cwd, so a workspace sibling is unreachable)", () => {
+    expect(artifactIssueDir({ buildAssets: "server", sandbox: "gondolin" }, KEY, true))
+      .toBe(`.lastlight/${KEY}`);
+    // Unset backend defaults to gondolin.
+    expect(artifactIssueDir({ buildAssets: "server", sandbox: undefined }, KEY, true))
+      .toBe(`.lastlight/${KEY}`);
+  });
+
+  it("does not relocate a non-pre-cloned server run (cwd is already the workspace root, outside the repo subdir)", () => {
+    expect(artifactIssueDir({ buildAssets: "server", sandbox: "docker" }, KEY, false))
+      .toBe(`.lastlight/${KEY}`);
   });
 });
 

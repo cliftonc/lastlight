@@ -33,7 +33,7 @@ AFTER THE GATE PASSES:
    - Test / lint / typecheck results (paste actual output)
    - Any deviations from the plan, known issues
 2. Update {{issueDir}}/status.md: current_phase = executor
-3. git add -A && git commit -m "feat: implement #{{issueNumber}}
+3. git add -A{{#if externalizeArtifacts}} && git reset -q -- .lastlight{{/if}} && git commit -m "feat: implement #{{issueNumber}}
 
 Tested: {test command} -> {result}
 Scope-risk: {low|medium|high}"

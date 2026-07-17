@@ -618,10 +618,16 @@ Runtime:
   Last Light host instead of being committed into the target repo under
   `.lastlight/`. The executor stages the store's docs into the workspace
   before each phase and harvests them back afterwards
-  (`src/engine/agent-executor.ts`); prompts gate their doc commit behind
-  `{{#if !externalizeArtifacts}}`; `{{artifactUrl}}` links resolve to the
-  dashboard's Artifacts view; the admin API serves them read-only at
-  `/admin/api/artifacts`. Equivalent config: `buildAssets.location`.
+  (`src/engine/agent-executor.ts`). For pre-cloned workflows (build, pr-*) on a
+  whole-workspace backend (docker/none/smol) the staged dir is the **workspace
+  root** — a sibling of the checkout — so the agent's `git add -A` structurally
+  can't commit it (`buildAssetsRelocated`; `{{issueDir}}` becomes
+  `../.lastlight/<key>`). gondolin mounts only cwd, so there (and in repo mode)
+  it stays the in-repo `.lastlight/<key>/`, kept out of git by the prompt-level
+  commit gate (`{{#if !externalizeArtifacts}}`) + `.git/info/exclude`.
+  `{{artifactUrl}}` links resolve to the dashboard's Artifacts view; the admin
+  API serves them read-only at `/admin/api/artifacts`. Equivalent config:
+  `buildAssets.location`.
 - `BUILD_ASSETS_DIR` — server-mode build-asset store root
   (default `$STATE_DIR/build-assets`; layout
   `<owner>/<repo>/<issueKey>/*.md`, store in `src/state/build-assets.ts`)

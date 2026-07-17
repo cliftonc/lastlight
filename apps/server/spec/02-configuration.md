@@ -184,9 +184,14 @@ the env override below.
   `$STATE_DIR/build-assets/<owner>/<repo>/<issueKey>/`, never committed. The
   executor stages the store's docs into the workspace before each phase and
   harvests changed docs back afterwards (`stageArtifactsIn`/`harvestArtifactsOut`
-  in `src/engine/agent-executor.ts`), the dir is git-excluded as a backstop,
-  prompts gate their doc commit behind `{{#if !externalizeArtifacts}}`, and
-  `{{artifactUrl}}` resolves to a dashboard deep link
+  in `src/engine/agent-executor.ts`). For **pre-cloned** workflows (build, pr-*)
+  on a whole-workspace backend (docker/none/smol) the staged dir is the
+  **workspace root** — a sibling of the checkout, reached by the agent via
+  `{{issueDir}}` = `../.lastlight/<issueKey>` — so `git add -A` structurally
+  can't see it (`buildAssetsRelocated`, `hostRepoDirFor`). gondolin mounts only
+  cwd, so there (and in repo mode) the dir stays the in-repo `.lastlight/<key>/`
+  and is git-excluded as a backstop. Prompts gate their doc commit behind
+  `{{#if !externalizeArtifacts}}`, and `{{artifactUrl}}` resolves to a dashboard deep link
   (`/admin/?tab=artifacts&repo=…&key=…&doc=…`). The admin API exposes the store
   read-only at `/admin/api/artifacts[/:owner/:repo/:key[/:doc]]`.
 

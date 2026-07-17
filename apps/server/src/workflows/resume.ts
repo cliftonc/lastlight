@@ -291,9 +291,16 @@ export async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Pr
 
   // Server mode: tag the config with this run's artifact identity so the
   // executor's stage-in/harvest seam targets the same store path the original
-  // dispatch used (issueKey = issueDir minus the `.lastlight/` prefix).
+  // dispatch used. issueKey strips the artifact prefix off the stored issueDir
+  // — which may be relocated (`../.lastlight/<key>`, docs at the workspace
+  // root) or in-repo (`.lastlight/<key>`); `buildAssetsRelocated` reads that
+  // decision back so the resumed run stages/harvests in the same place.
   const runConfig = opts.config.buildAssets === "server"
-    ? { ...opts.config, buildAssetsKey: { owner, repo, issueKey: issueDir.replace(/^\.lastlight\//, "") } }
+    ? {
+        ...opts.config,
+        buildAssetsKey: { owner, repo, issueKey: issueDir.replace(/^(\.\.\/)?\.lastlight\//, "") },
+        buildAssetsRelocated: issueDir.startsWith("../"),
+      }
     : opts.config;
 
   try {

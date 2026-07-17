@@ -153,6 +153,33 @@ export function resolveRunBranch(args: {
 }
 
 /**
+ * The agent-facing path for a run's build-handoff docs (`{{issueDir}}`).
+ *
+ * Server mode on a **pre-cloned** workflow (cwd = the checkout) whose backend
+ * mounts the whole workspace (docker/none/smol) relocates the docs to the
+ * workspace ROOT — a sibling of the repo — reached via `../`, so the executor's
+ * `git add -A` can never sweep them into the feature commit. gondolin mounts
+ * only cwd, so a workspace-root sibling would be invisible/unharvestable in the
+ * guest; it keeps the in-repo path and leans on the prompt-level commit gate.
+ * Repo mode always keeps the in-repo path (the docs are meant to be committed).
+ *
+ * The orchestrator's `hostRepoDirFor` must stage/harvest in the same place; it
+ * keys off `config.buildAssetsRelocated`, which simple.ts derives from the
+ * `../` prefix this function produces — so the two can't disagree.
+ */
+export function artifactIssueDir(
+  config: Pick<ExecutorConfig, "buildAssets" | "sandbox">,
+  issueKey: string,
+  preCloned: boolean,
+): string {
+  const relocate =
+    config.buildAssets === "server" &&
+    (config.sandbox ?? "gondolin") !== "gondolin" &&
+    preCloned;
+  return relocate ? `../.lastlight/${issueKey}` : `.lastlight/${issueKey}`;
+}
+
+/**
  * Run a named agent workflow against a target.
  *
  * If a workflow_run row already exists for this trigger, we reuse it and let
@@ -257,7 +284,15 @@ export async function runSimpleWorkflow(
     // Issue-scoped workflows share a dir by issue number; non-issue
     // workflows (explore, health, etc.) get a run-scoped dir so
     // concurrent sessions never overlap.
-    issueDir = `.lastlight/${buildAssetIssueKey(workflowName, number, workflowId)}`;
+    //
+    // Server mode + pre-cloned + a whole-workspace backend relocates the docs
+    // to the workspace root (reached via `../`) so `git add -A` can't sweep
+    // them in; see artifactIssueDir.
+    issueDir = artifactIssueDir(
+      config,
+      buildAssetIssueKey(workflowName, number, workflowId),
+      !!effectivePrePopulateBranch,
+    );
     const overCap = concurrency !== undefined && db.runs.countRunning() >= concurrency.maxWorkflows;
     const runStatus: "running" | "queued" = overCap ? "queued" : "running";
     db.runs.createRun({
@@ -291,6 +326,15 @@ export async function runSimpleWorkflow(
       return { success: true, queued: true, phases: [] };
     }
   }
+
+  // The server-store key for this run's artifacts (owner/repo/issueKey). Kept
+  // separate from issueDir because issueDir is an agent-facing *path* that may
+  // now carry a `../` prefix (relocated runs) — deriving the key by stripping
+  // `.lastlight/` off issueDir would then break. `buildAssetsRelocated` reads
+  // the decision back off the resolved issueDir so reused/resumed rows stay
+  // consistent with however the original dispatch formed it.
+  const issueKey = buildAssetIssueKey(workflowName, number, workflowId);
+  const buildAssetsRelocated = issueDir.startsWith("../");
 
   // Surface the run id to the dispatch layer as soon as it's known (either
   // fresh or reused). Fire-and-forget so a slow/broken downstream hook can't
@@ -402,7 +446,7 @@ export async function runSimpleWorkflow(
     // filename-only references via `{{#if !artifactBaseUrl}}`. issueKey is
     // issueDir minus the `.lastlight/` prefix.
     artifactBaseUrl: callbacks.publicUrl
-      ? `${String(callbacks.publicUrl).replace(/\/+$/, "")}/admin/api/public/artifacts/${owner}/${repo}/${issueDir.replace(/^\.lastlight\//, "")}`
+      ? `${String(callbacks.publicUrl).replace(/\/+$/, "")}/admin/api/public/artifacts/${owner}/${repo}/${issueKey}`
       : "",
     bootstrapLabel,
     contextSnapshot,
@@ -427,18 +471,15 @@ export async function runSimpleWorkflow(
 
   // In server mode, tag the run's config with its artifact identity so the
   // executor's stage-in/harvest seam can locate this run's docs in the store
-  // at `<buildAssetsDir>/<owner>/<repo>/<issueKey>/`. issueKey is issueDir
-  // without the `.lastlight/` prefix, so it tracks however issueDir was formed
-  // (fresh derivation or recovered-from-context on resume).
+  // at `<buildAssetsDir>/<owner>/<repo>/<issueKey>/`, plus whether the docs
+  // live at the workspace root (relocated) so `hostRepoDirFor` stages/harvests
+  // there instead of inside the repo checkout.
   const runConfig: ExecutorConfig =
     config.buildAssets === "server"
       ? {
           ...config,
-          buildAssetsKey: {
-            owner,
-            repo,
-            issueKey: issueDir.replace(/^\.lastlight\//, ""),
-          },
+          buildAssetsKey: { owner, repo, issueKey },
+          buildAssetsRelocated,
         }
       : config;
 

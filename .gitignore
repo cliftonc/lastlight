@@ -28,6 +28,11 @@ memories/
 data/
 mcp-config.json
 
+# Build handoff docs — this repo is maintained by a server-mode Last Light
+# instance, which keeps these on the server (never in the tree). Ignored so a
+# repo-mode run or a stray commit can't reintroduce them.
+.lastlight/
+
 # Caches
 cache/
 audio_cache/

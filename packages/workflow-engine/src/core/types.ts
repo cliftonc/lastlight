@@ -93,6 +93,17 @@ export interface ExecutorConfig {
    */
   buildAssetsKey?: { owner: string; repo: string; issueKey: string };
   /**
+   * True when this run's server-mode artifacts live at the sandbox **workspace
+   * root** (a sibling of the checked-out repo) rather than inside the repo tree.
+   * Set per run from simple.ts when the run is server-mode, pre-cloned, and on a
+   * backend that mounts the whole workspace (docker/none/smol) — so the agent's
+   * `git add -A` can never see the docs and no `.git/info/exclude` backstop is
+   * needed. gondolin mounts only cwd, so it keeps the in-repo path (false) and
+   * relies on the prompt-level commit gate instead. Drives `hostRepoDirFor` in
+   * the orchestrator; the agent-facing `{{issueDir}}` becomes `../.lastlight/…`.
+   */
+  buildAssetsRelocated?: boolean;
+  /**
    * Bypass the HTTP egress allowlist for this phase. When true:
    *   - gondolin: `allowedHttpHosts: ["*"]` is passed to agentic-pi.
    *   - docker:   the sandbox container uses the open CoreDNS/nginx

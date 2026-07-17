@@ -180,15 +180,22 @@ or writes these files — the prompts manage the lifecycle. Each prompt
 commits its outputs before exiting; the next phase clones the branch
 and reads what it needs.
 
-**Server mode (`buildAssets.location = server`).** When externalized, the
-same `{{issueDir}}/` layout is used, but the docs are **not** committed into
-the target repo. Instead the executor stages the server store's copy into the
-workspace before each phase and harvests changes back afterwards
-(`stageArtifactsIn`/`harvestArtifactsOut`, `src/engine/agent-executor.ts`),
-the dir is added to `.git/info/exclude` so the agent's `git add -A` never
-sweeps it into the feature commit, and each prompt gates its
+**Server mode (`buildAssets.location = server`).** When externalized, the docs
+are **not** committed into the target repo. Instead the executor stages the
+server store's copy into the workspace before each phase and harvests changes
+back afterwards (`stageArtifactsIn`/`harvestArtifactsOut`,
+`src/engine/agent-executor.ts`). For **pre-cloned** workflows on a
+whole-workspace backend (docker/none/smol) the staged dir is the **workspace
+root** — a sibling of the checkout — and `{{issueDir}}` becomes
+`../.lastlight/<issueKey>`, so the docs live entirely outside the repo tree and
+the agent's `git add -A` can never sweep them into the feature commit
+(`buildAssetsRelocated`). gondolin mounts only cwd, so there the dir stays the
+in-repo `.lastlight/<issueKey>/` and is added to `.git/info/exclude` as a
+backstop. Either way each prompt also gates its
 `git add .lastlight/ && commit` behind `{{#if !externalizeArtifacts}}` (the
-inverse flag defaults absent⇒repo so any un-tagged render still commits).
+inverse flag defaults absent⇒repo so any un-tagged render still commits), and
+the executor's `git add -A` unstages `.lastlight` before committing in server
+mode as belt-and-suspenders for the gondolin (in-repo) path.
 PR-body links use `{{artifactUrl}}`, which resolves to the dashboard's
 Artifacts view rather than a GitHub blob URL. The browser-QA prompts instead use
 `{{artifactBaseUrl}}` — the unauthenticated, image-only public base

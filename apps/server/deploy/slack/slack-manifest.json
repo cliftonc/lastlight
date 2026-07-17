@@ -1,0 +1,55 @@
+{
+    "display_information": {
+        "name": "last-light",
+        "description": "A helpful bot to work on our repos",
+        "background_color": "#010d38",
+        "long_description": "A coding harness that helps us do work on our repositories, and only able to work on repositories that have been configured for use. Ask it questions, or ask it to build features."
+    },
+    "features": {
+        "app_home": {
+            "home_tab_enabled": false,
+            "messages_tab_enabled": true,
+            "messages_tab_read_only_enabled": false
+        },
+        "assistant_view": {
+            "assistant_description": "Work on your repositories"
+        },
+        "bot_user": {
+            "display_name": "last-light",
+            "always_online": true
+        }
+    },
+    "oauth_config": {
+        "redirect_urls": [
+            "https://YOUR_INSTANCE_DOMAIN/admin/api/oauth/slack/callback"
+        ],
+        "scopes": {
+            "user": [
+                "openid",
+                "profile"
+            ],
+            "bot": [
+                "app_mentions:read",
+                "assistant:write",
+                "chat:write",
+                "im:history",
+                "reactions:write",
+                "users:read"
+            ]
+        },
+        "pkce_enabled": false
+    },
+    "settings": {
+        "event_subscriptions": {
+            "request_url": "https://YOUR_INSTANCE_DOMAIN/webhooks/slack",
+            "bot_events": [
+                "app_mention",
+                "message.im"
+            ]
+        },
+        "org_deploy_enabled": true,
+        "socket_mode_enabled": false,
+        "token_rotation_enabled": false,
+        "is_mcp_enabled": false
+    }
+}
