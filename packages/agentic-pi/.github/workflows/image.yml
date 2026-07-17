@@ -1,0 +1,163 @@
+name: Build & release agentic-pi-dev image
+
+# Image releases run on their own tag stream (`image-v*`) so they don't
+# collide with npm releases (`v*`). The npm package and the VM image
+# version independently; consumers pick up a new image when we bump the
+# baked URL in src/sandbox/images/manifest.ts and ship a new npm version.
+on:
+  push:
+    tags:
+      - 'image-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Pre-existing image-v* tag to (re)build and attach to (e.g. image-v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # creating/updating a GitHub Release needs write
+
+# Pin the gondolin CLI used for the build so a published image is
+# byte-stable against a known CLI version. Bump deliberately.
+env:
+  GONDOLIN_VERSION: '0.12.0'
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # gondolin's build pipeline shells out to these. Names match what
+      # scripts/build-image.sh checks for locally.
+      - name: Install host tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 qemu-system-arm qemu-utils \
+            lz4 cpio e2fsprogs
+
+      - name: Install gondolin CLI
+        run: npm install -g "@earendil-works/gondolin@${GONDOLIN_VERSION}"
+
+      - name: Build image
+        run: |
+          gondolin build \
+            --config images/agentic-pi-dev/build-config.json \
+            --arch "${{ matrix.arch }}" \
+            --output "./out-${{ matrix.arch }}"
+
+      # Tar the output dir so the per-arch artifact is a single file.
+      # `-C` to avoid leading `./out-<arch>/` segments in the archive.
+      - name: Package archive
+        id: pkg
+        run: |
+          archive="agentic-pi-dev-${{ matrix.arch }}.tar.gz"
+          tar -czf "$archive" -C "./out-${{ matrix.arch }}" .
+          sha=$(sha256sum "$archive" | awk '{print $1}')
+          size=$(stat -c%s "$archive")
+          echo "archive=$archive"   >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha"        >> "$GITHUB_OUTPUT"
+          echo "size=$size"         >> "$GITHUB_OUTPUT"
+          # Also write a per-arch metadata stub the release job aggregates.
+          jq -n --arg sha "$sha" --argjson size "$size" --arg archive "$archive" \
+            '{archive: $archive, sha256: $sha, uncompressedBytes: $size}' \
+            > "meta-${{ matrix.arch }}.json"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.arch }}
+          path: |
+            ${{ steps.pkg.outputs.archive }}
+            meta-${{ matrix.arch }}.json
+          if-no-files-found: error
+
+  release:
+    name: attach to release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      # Flatten + compose the manifest the agentic-pi runtime consumes
+      # (URL pattern matches the GH Releases asset URL). Tag is the
+      # ref the run was triggered with.
+      - name: Compose release manifest
+        id: manifest
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          repo="${{ github.repository }}"
+          mkdir -p release-assets
+          mv ./artifacts/image-aarch64/agentic-pi-dev-aarch64.tar.gz release-assets/
+          mv ./artifacts/image-x86_64/agentic-pi-dev-x86_64.tar.gz   release-assets/
+
+          arm_meta=./artifacts/image-aarch64/meta-aarch64.json
+          x86_meta=./artifacts/image-x86_64/meta-x86_64.json
+
+          arm_sha=$(jq -r .sha256 "$arm_meta")
+          arm_size=$(jq -r .uncompressedBytes "$arm_meta")
+          x86_sha=$(jq -r .sha256 "$x86_meta")
+          x86_size=$(jq -r .uncompressedBytes "$x86_meta")
+
+          version="${tag#image-v}"
+
+          jq -n \
+            --arg name "agentic-pi-dev" \
+            --arg version "$version" \
+            --arg arm_url "https://github.com/${repo}/releases/download/${tag}/agentic-pi-dev-aarch64.tar.gz" \
+            --arg arm_sha "$arm_sha" \
+            --argjson arm_size "$arm_size" \
+            --arg x86_url "https://github.com/${repo}/releases/download/${tag}/agentic-pi-dev-x86_64.tar.gz" \
+            --arg x86_sha "$x86_sha" \
+            --argjson x86_size "$x86_size" \
+            '{
+              name: $name,
+              version: $version,
+              archives: {
+                aarch64: { url: $arm_url, sha256: $arm_sha, uncompressedBytes: $arm_size },
+                x86_64:  { url: $x86_url, sha256: $x86_sha, uncompressedBytes: $x86_size }
+              }
+            }' > release-assets/manifest.json
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "::group::manifest.json"
+          cat release-assets/manifest.json
+          echo "::endgroup::"
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.manifest.outputs.tag }}
+          name: ${{ steps.manifest.outputs.tag }}
+          files: |
+            release-assets/agentic-pi-dev-aarch64.tar.gz
+            release-assets/agentic-pi-dev-x86_64.tar.gz
+            release-assets/manifest.json
+          fail_on_unmatched_files: true
+          # Do not overwrite a hand-edited release body; we just attach
+          # the assets. The release notes are written by the human who
+          # cut the tag.
+          generate_release_notes: false
+          draft: false

@@ -1,0 +1,95 @@
+name: Publish to npm
+
+on:
+  # Single trigger: a GitHub Release being published. CI on push:main
+  # already validates the version-bump commit; publish should not
+  # duplicate that work for the same SHA. Creating a release is the
+  # explicit "ship it" signal.
+  release:
+    types: [published]
+
+  # Manual escape hatch: kick off a publish from the Actions tab. Useful
+  # if a release-triggered run failed (network, OIDC config not yet set
+  # up, etc.) and you want to retry without re-cutting the release.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or commit SHA to publish (e.g. v0.1.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # Required for OIDC-based "trusted publishing" with npm. Without this
+  # the OIDC token can't be minted and `npm publish` falls back to
+  # token-based auth (which we don't configure).
+  id-token: write
+
+jobs:
+  publish:
+    name: build, test, publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # `release` events provide the tag in github.event.release.tag_name;
+          # `workflow_dispatch` provides it via inputs.ref.
+          ref: ${{ inputs.ref || github.event.release.tag_name }}
+
+      # setup-node@v6 no longer writes the deprecated `always-auth=true`
+      # to .npmrc (fixed in actions/setup-node#1305). The dummy
+      # `_authToken=${NODE_AUTH_TOKEN}` line it does write is harmless
+      # under OIDC trusted publishing per actions/setup-node#1551.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      # Trusted publishing landed in npm 11.5. Node 22 LTS ships an older
+      # npm; pin to a current major to be safe.
+      - name: Upgrade npm
+        run: npm install --global npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Tag must match package.json version exactly. This catches the
+      # common footgun of tagging v0.2.0 while package.json still says
+      # 0.1.0 — without the check, `npm publish` would happily publish
+      # 0.1.0 again (or fail with "version already exists" if the
+      # previous one's still there).
+      - name: Verify tag matches package.json version
+        run: |
+          # Resolve the tag from whichever trigger fired this run.
+          tag_ref="${{ inputs.ref || github.event.release.tag_name }}"
+          tag="${tag_ref#v}"
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag ref '$tag_ref' (version '$tag') does not match package.json version '$pkg'"
+            exit 1
+          fi
+          echo "Publishing version $pkg"
+
+      - name: Type-check
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      # Unit tests only — integration tests cost real money and the CI
+      # workflow already gated those on every PR / push to main.
+      - name: Unit tests
+        run: npm run test:unit
+
+      # --provenance attaches a signed statement linking the published
+      # package to this exact workflow run + commit SHA. Visible on the
+      # npm package page.
+      # --access public is required for scoped packages but harmless
+      # for unscoped ones.
+      - name: Publish to npm
+        run: npm publish --provenance --access public
