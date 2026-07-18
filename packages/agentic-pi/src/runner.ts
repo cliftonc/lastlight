@@ -12,9 +12,9 @@
  */
 
 import {
-  AuthStorage,
   DefaultResourceLoader,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   createAgentSession,
@@ -64,8 +64,16 @@ export async function runOnce(
   // `config.authFile` lets a caller point at a specific auth.json (e.g. a host
   // store shared across runs); undefined falls back to `<agent-dir>/auth.json`.
   // The model call happens in this process, so the store never enters the VM.
-  const authStorage = AuthStorage.create(config.authFile);
-  const modelRegistry = ModelRegistry.create(authStorage);
+  //
+  // pi 0.80.7+ dropped the `AuthStorage` export and the
+  // `ModelRegistry.create(store)` + `authStorage`/`modelRegistry` session
+  // options in favour of a single `ModelRuntime` (built from the auth path)
+  // threaded into the session. ModelRegistry is now a sync facade over that
+  // runtime; `refresh()` loads models.json so resolveModel's custom-model
+  // fallback can see registered providers.
+  const modelRuntime = await ModelRuntime.create({ authPath: config.authFile });
+  const modelRegistry = new ModelRegistry(modelRuntime);
+  await modelRegistry.refresh();
   const model = resolveModel(config.model, modelRegistry);
 
   const sessionManager = buildSessionManager(config);
@@ -278,8 +286,7 @@ export async function runOnce(
     thinkingLevel: config.thinking,
     sessionManager,
     settingsManager,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     resourceLoader,
     tools: config.tools,
     noTools: noToolsMode,
