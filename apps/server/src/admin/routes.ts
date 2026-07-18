@@ -892,6 +892,7 @@ export function createAdminRoutes(
     const rawOffset = c.req.query("offset");
     const since = c.req.query("since") || undefined;
     const workflowName = c.req.query("workflow") || undefined;
+    const repo = c.req.query("repo") || undefined;
     const statusParam = c.req.query("status");
     const limit = Math.min(Math.max(parseInt(rawLimit ?? "20", 10) || 20, 1), 200);
     const offset = Math.max(parseInt(rawOffset ?? "0", 10) || 0, 0);
@@ -910,6 +911,7 @@ export function createAdminRoutes(
       offset,
       sinceIso: since,
       workflowName,
+      repo,
       statuses,
     });
     return c.json({ workflowRuns: runs, total });
@@ -1299,6 +1301,56 @@ export function createAdminRoutes(
       },
     };
   }
+
+  // Repo-centric index for the dashboard's Repos tab: the union of the
+  // effective managed repos and every repo that has workflow-run activity (or
+  // stored artifacts), each annotated with its run count / last-activity /
+  // artifact-key count. Managed repos with no activity are included so the tab
+  // shows the full fleet; ordered newest-activity first, then name. Read-only —
+  // the server keeps returning global data (see issue #169).
+  app.get("/repos", async (c) => {
+    const managed = new Set(getManagedRepos());
+    const activity = new Map(
+      db.runs.distinctRepos().map((r) => [r.repo, r]),
+    );
+
+    // Fold in artifact-key counts (bounded scan — the tab is a browse view, not
+    // a report). A repo may have artifacts but no runs, so union it in too.
+    const artifactCounts = new Map<string, number>();
+    if (buildAssetStore) {
+      try {
+        const { repos } = await buildAssetStore.listRepos({ limit: 200 });
+        for (const r of repos) artifactCounts.set(r.slug, r.keyCount);
+      } catch {
+        /* store optional — degrade to run activity only */
+      }
+    }
+
+    const names = new Set<string>([
+      ...managed,
+      ...activity.keys(),
+      ...artifactCounts.keys(),
+    ]);
+
+    const repos = [...names]
+      .map((repo) => ({
+        repo,
+        managed: managed.has(repo),
+        runCount: activity.get(repo)?.runCount ?? 0,
+        lastRunAt: activity.get(repo)?.lastRunAt ?? null,
+        artifactKeyCount: artifactCounts.get(repo) ?? 0,
+      }))
+      .sort((a, b) => {
+        // Newest activity first; repos with no runs sink below active ones,
+        // then break ties alphabetically for a stable order.
+        if (a.lastRunAt && b.lastRunAt) return a.lastRunAt < b.lastRunAt ? 1 : -1;
+        if (a.lastRunAt) return -1;
+        if (b.lastRunAt) return 1;
+        return a.repo < b.repo ? -1 : 1;
+      });
+
+    return c.json({ repos });
+  });
 
   // List the repos that actually have stored artifacts (search + paginate).
   // This replaces the old config-driven repo picker, which showed nothing when

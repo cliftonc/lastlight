@@ -205,6 +205,7 @@ export class WorkflowRunStore {
     offset?: number;
     sinceIso?: string;
     workflowName?: string;
+    repo?: string;
     statuses?: string[];
   } = {}): { runs: WorkflowRun[]; total: number } {
     const limit = opts.limit ?? 20;
@@ -219,6 +220,10 @@ export class WorkflowRunStore {
     if (opts.workflowName) {
       where.push("workflow_name = ?");
       params.push(opts.workflowName);
+    }
+    if (opts.repo) {
+      where.push("repo = ?");
+      params.push(opts.repo);
     }
     if (opts.statuses && opts.statuses.length > 0) {
       where.push(`status IN (${opts.statuses.map(() => "?").join(",")})`);
@@ -329,6 +334,25 @@ export class WorkflowRunStore {
       .prepare(`SELECT DISTINCT workflow_name FROM workflow_runs ORDER BY workflow_name ASC`)
       .all() as { workflow_name: string }[];
     return rows.map((r) => r.workflow_name);
+  }
+
+  /**
+   * Per-repo run activity — one row per distinct non-null `repo`, with the
+   * run count and the most-recent `started_at`. Powers the dashboard's Repos
+   * tab, which annotates the managed-repo list with recent activity and sorts
+   * by it. Ordered newest-activity first.
+   */
+  distinctRepos(): { repo: string; runCount: number; lastRunAt: string }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT repo, COUNT(*) AS c, MAX(started_at) AS last
+           FROM workflow_runs
+          WHERE repo IS NOT NULL AND repo != ''
+          GROUP BY repo
+          ORDER BY last DESC`,
+      )
+      .all() as { repo: string; c: number; last: string }[];
+    return rows.map((r) => ({ repo: r.repo, runCount: r.c, lastRunAt: r.last }));
   }
 
   /**

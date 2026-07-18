@@ -10,14 +10,16 @@ import {
 } from "../api";
 
 /**
- * In-SPA navigation to the Artifacts editor for a specific doc. Pushes the
- * deep-link params and fires a synthetic popstate so every `useUrlState` hook
- * (App's `tab`, ArtifactsPage's repo/key/doc) re-reads — no full reload, no
- * callback threading through the run-detail component tree.
+ * In-SPA navigation to the artifact editor for a specific doc — the Repos tab's
+ * Assets sub-tab, which now hosts the viewer. Pushes the deep-link params and
+ * fires a synthetic popstate so every `useUrlState` hook (App's `tab`,
+ * ReposPage's `repo`/`rtab`, ArtifactsPage's key/doc) re-reads — no full reload,
+ * no callback threading through the run-detail component tree.
  */
 function openArtifact(repo: string, key: string, doc: string) {
   const url = new URL(window.location.href);
-  url.searchParams.set("tab", "artifacts");
+  url.searchParams.set("tab", "repos");
+  url.searchParams.set("rtab", "assets");
   url.searchParams.set("repo", repo);
   url.searchParams.set("key", key);
   url.searchParams.set("doc", doc);

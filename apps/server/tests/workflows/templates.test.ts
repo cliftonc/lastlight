@@ -54,7 +54,7 @@ describe("renderTemplate — {{artifactUrl}} (build-assets mode)", () => {
       publicUrl: "https://last.example.com/",
     });
     expect(result).toBe(
-      "https://last.example.com/admin/?tab=artifacts&repo=acme%2Fwidget&key=issue-42&doc=architect-plan.md",
+      "https://last.example.com/admin/?tab=repos&rtab=assets&repo=acme%2Fwidget&key=issue-42&doc=architect-plan.md",
     );
   });
 

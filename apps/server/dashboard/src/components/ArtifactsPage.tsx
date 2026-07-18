@@ -31,9 +31,10 @@ import { timeRangeToSince } from "../lib/timeRange";
  * Both levels page in with "load more" so a busy store never dumps thousands of
  * rows at once.
  *
- * Deep-link params (set by server-mode PR links):
- *   ?tab=artifacts&repo=<owner>/<repo>&key=<issueKey>&doc=<file>
- * land directly on the selected doc.
+ * Deep-link params (set by server-mode PR links via {{artifactUrl}}):
+ *   ?tab=repos&rtab=assets&repo=<owner>/<repo>&key=<issueKey>&doc=<file>
+ * land directly on the selected doc (this page renders as the Repos tab's
+ * Assets sub-tab, locked to the repo).
  *
  * When no store is configured (repo mode) the list endpoints report empty and
  * the page degrades to a clear empty state rather than erroring.
@@ -56,12 +57,22 @@ interface ArtifactsPageProps {
   /** Header free-text search — filters the repo list, or the key list once a
    *  repo is selected. */
   query: string;
+  /**
+   * When set, pin the page to this `owner/repo` — the repo-browser level and
+   * its picker/back controls are hidden and the left pane jumps straight to the
+   * repo's run keys. Used to embed the page inside the Repos tab's repo detail.
+   */
+  lockedRepo?: string;
 }
 
-export function ArtifactsPage({ timeRange, query }: ArtifactsPageProps) {
+export function ArtifactsPage({ timeRange, query, lockedRepo }: ArtifactsPageProps) {
   const [repo, setRepo] = useUrlState<string>("repo", "", stringParser, stringSerializer);
   const [key, setKey] = useUrlState<string>("key", "", stringParser, stringSerializer);
   const [doc, setDoc] = useUrlState<string>("doc", "", stringParser, stringSerializer);
+
+  // When locked, the fixed repo wins over the URL `repo` param so the embed is
+  // decoupled from the browser's own repo state.
+  const effectiveRepo = lockedRepo || repo;
 
   const [repoInput, setRepoInput] = useState(repo);
 
@@ -76,12 +87,13 @@ export function ArtifactsPage({ timeRange, query }: ArtifactsPageProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const [owner, name] = repo.includes("/") ? repo.split("/", 2) : ["", ""];
-  const browsingRepos = !repo || !repo.includes("/");
+  const [owner, name] = effectiveRepo.includes("/") ? effectiveRepo.split("/", 2) : ["", ""];
+  // When locked to a repo, never show the repo-browsing level.
+  const browsingRepos = !lockedRepo && (!repo || !repo.includes("/"));
 
   // ── Reset paging when the search / repo / time window changes ────────────
   useEffect(() => { setRepoLimit(PAGE_SIZE); }, [query]);
-  useEffect(() => { setKeyLimit(PAGE_SIZE); }, [repo, query, timeRange]);
+  useEffect(() => { setKeyLimit(PAGE_SIZE); }, [effectiveRepo, query, timeRange]);
 
   // ── Load the repo list while no repo is selected ─────────────────────────
   useEffect(() => {
@@ -99,11 +111,11 @@ export function ArtifactsPage({ timeRange, query }: ArtifactsPageProps) {
     if (browsingRepos) { setKeys([]); setKeyTotal(0); return; }
     let cancelled = false;
     setError(null);
-    api.listArtifactKeys(repo, { q: query, since: timeRangeToSince(timeRange), limit: keyLimit })
+    api.listArtifactKeys(effectiveRepo, { q: query, since: timeRangeToSince(timeRange), limit: keyLimit })
       .then((res) => { if (!cancelled) { setKeys(res.keys); setKeyTotal(res.total); } })
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
     return () => { cancelled = true; };
-  }, [browsingRepos, repo, query, timeRange, keyLimit]);
+  }, [browsingRepos, effectiveRepo, query, timeRange, keyLimit]);
 
   // ── Load doc filenames for the expanded key ──────────────────────────────
   useEffect(() => {
@@ -113,7 +125,7 @@ export function ArtifactsPage({ timeRange, query }: ArtifactsPageProps) {
       .then((res) => { if (!cancelled) setFiles(res.files); })
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
     return () => { cancelled = true; };
-  }, [browsingRepos, repo, key, owner, name]);
+  }, [browsingRepos, effectiveRepo, key, owner, name]);
 
   const openRepo = useCallback((slug: string) => {
     setRepoInput(slug);
@@ -137,33 +149,38 @@ export function ArtifactsPage({ timeRange, query }: ArtifactsPageProps) {
     <div className="flex flex-1 overflow-hidden bg-base-100">
       {/* ── Left list pane ──────────────────────────────────────────────── */}
       <div className="w-72 shrink-0 border-r border-base-300 flex flex-col overflow-hidden">
-        <div className="border-b border-base-300 px-3 py-3 space-y-2">
-          <label className="text-xs font-semibold text-base-content/70">Repository</label>
-          <div className="flex gap-1">
-            <input
-              type="text"
-              value={repoInput}
-              onChange={(e) => setRepoInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") applyRepo(); }}
-              placeholder="owner/repo"
-              className="flex-1 min-w-0 rounded border border-base-300 bg-base-200 px-2 py-1 text-xs"
-            />
-            <button
-              onClick={applyRepo}
-              className="rounded bg-primary px-2 py-1 text-xs font-medium text-primary-content hover:bg-primary/90"
-            >
-              Go
-            </button>
+        {/* When locked to a repo (embedded in the Repos tab), the repo picker
+            and "all repositories" back-link are hidden — the parent owns repo
+            selection. Just show the run-key list. */}
+        {!lockedRepo && (
+          <div className="border-b border-base-300 px-3 py-3 space-y-2">
+            <label className="text-xs font-semibold text-base-content/70">Repository</label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={repoInput}
+                onChange={(e) => setRepoInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") applyRepo(); }}
+                placeholder="owner/repo"
+                className="flex-1 min-w-0 rounded border border-base-300 bg-base-200 px-2 py-1 text-xs"
+              />
+              <button
+                onClick={applyRepo}
+                className="rounded bg-primary px-2 py-1 text-xs font-medium text-primary-content hover:bg-primary/90"
+              >
+                Go
+              </button>
+            </div>
+            {!browsingRepos && (
+              <button
+                onClick={backToRepos}
+                className="text-[11px] text-base-content/60 hover:text-base-content"
+              >
+                ← All repositories
+              </button>
+            )}
           </div>
-          {!browsingRepos && (
-            <button
-              onClick={backToRepos}
-              className="text-[11px] text-base-content/60 hover:text-base-content"
-            >
-              ← All repositories
-            </button>
-          )}
-        </div>
+        )}
 
         <div className="flex-1 overflow-auto">
           {error && (

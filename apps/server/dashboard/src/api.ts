@@ -79,6 +79,24 @@ export interface ManagedRepos {
   refreshedAt: string | null;
 }
 
+/**
+ * One row in the Repos tab's index — the union of managed repos and repos with
+ * activity, annotated with recent workflow-run + artifact counts. See the admin
+ * `GET /repos` endpoint.
+ */
+export interface RepoEntry {
+  /** `owner/repo` full name. */
+  repo: string;
+  /** Whether this repo is in the effective managed-repo set. */
+  managed: boolean;
+  /** Number of workflow runs recorded for this repo. */
+  runCount: number;
+  /** ISO timestamp of the most recent run's start, or null when idle. */
+  lastRunAt: string | null;
+  /** Number of stored artifact run-keys (build assets) for this repo. */
+  artifactKeyCount: number;
+}
+
 export type OverlayAssetType = "workflow" | "cron" | "prompt" | "skill" | "agent-context";
 
 export interface OverlayAsset {
@@ -401,7 +419,7 @@ export interface ArtifactMetadata {
   lock: ArtifactLock | null;
 }
 
-/** A repo that has stored artifacts, for the Artifacts tab's repo list. */
+/** A repo that has stored artifacts, for the Repos tab's Assets sub-tab. */
 export interface ArtifactRepoEntry {
   owner: string;
   repo: string;
@@ -560,6 +578,8 @@ export const api = {
       offset?: number;
       since?: string;
       workflow?: string;
+      /** Filter to one repo (`owner/repo`) — used by the Repos tab. */
+      repo?: string;
       /** "active" → running+paused; or comma-separated explicit statuses. */
       status?: string;
     } = {},
@@ -569,6 +589,7 @@ export const api = {
     if (opts.offset) qs.set("offset", String(opts.offset));
     if (opts.since) qs.set("since", opts.since);
     if (opts.workflow) qs.set("workflow", opts.workflow);
+    if (opts.repo) qs.set("repo", opts.repo);
     if (opts.status) qs.set("status", opts.status);
     const qss = qs.toString();
     return req<{ workflowRuns: WorkflowRun[]; total: number }>(
@@ -714,6 +735,9 @@ export const api = {
   config: () => req<ConfigBundle>("/config"),
   overrides: () => req<OverridesBundle>("/overrides"),
   managedRepos: () => req<ManagedRepos>("/managed-repos"),
+  // Repo-centric index for the Repos tab — managed repos ∪ active repos, each
+  // with run/artifact activity, newest-activity first.
+  repos: () => req<{ repos: RepoEntry[] }>("/repos"),
 };
 
 export interface CronInfo {

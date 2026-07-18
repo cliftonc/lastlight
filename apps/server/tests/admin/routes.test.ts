@@ -49,6 +49,7 @@ const mockDb = {
   runs: {
     list: vi.fn(() => ({ runs: [], total: 0 })),
     distinctNames: vi.fn(() => []),
+    distinctRepos: vi.fn(() => []),
     getRun: vi.fn(() => null),
   },
   approvals: {
@@ -1316,5 +1317,36 @@ describe("GET /artifact-repos + paginated /artifacts", () => {
   it("400s on a missing/invalid ?repo=", async () => {
     const res = await request(app(), "/artifacts");
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /repos", () => {
+  it("returns the union of managed + active repos, annotated + sorted newest-first", async () => {
+    vi.mocked(mockDb.runs.distinctRepos).mockReturnValueOnce([
+      { repo: "acme/web", runCount: 1, lastRunAt: "2026-01-01T00:00:00.000Z" },
+      { repo: "acme/api", runCount: 3, lastRunAt: "2026-03-01T00:00:00.000Z" },
+    ]);
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/repos");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      repos: { repo: string; managed: boolean; runCount: number; lastRunAt: string | null }[];
+    };
+    // Newest activity first.
+    expect(body.repos.map((r) => r.repo)).toEqual(["acme/api", "acme/web"]);
+    const api = body.repos.find((r) => r.repo === "acme/api")!;
+    expect(api.runCount).toBe(3);
+    // No overlay managedRepos in tests → repos with activity are unmanaged.
+    expect(api.managed).toBe(false);
+  });
+});
+
+describe("GET /workflow-runs ?repo=", () => {
+  it("threads the repo filter into runs.list", async () => {
+    const app = createAdminRoutes(mockDb, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs?repo=acme%2Fapi");
+    expect(res.status).toBe(200);
+    const lastCall = vi.mocked(mockDb.runs.list).mock.calls.at(-1)![0];
+    expect(lastCall).toMatchObject({ repo: "acme/api" });
   });
 });

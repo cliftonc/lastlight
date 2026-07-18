@@ -418,11 +418,13 @@ interface WorkflowListProps {
   timeRange: string;
   /** Header free-text search — matches workflow name, repo, issue number. */
   query: string;
+  /** When set, server-side-filter the run list to this `owner/repo` (Repos tab). */
+  repo?: string;
   /** Optional handler for the "View workflow definition" icon next to the title. */
   onOpenDefinition?: (name: string) => void;
 }
 
-export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowListProps) {
+export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: WorkflowListProps) {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [total, setTotal] = useState(0);
   const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
@@ -447,7 +449,7 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
   // rows after the user narrows.
   useEffect(() => {
     setLimit(WORKFLOW_PAGE_SIZE);
-  }, [timeRange, workflowFilter]);
+  }, [timeRange, workflowFilter, repo]);
 
   const load = useCallback(async () => {
     try {
@@ -460,6 +462,7 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
           since,
           status,
           workflow: workflowFilter ?? undefined,
+          repo,
         }),
         api.approvals().catch(() => ({ approvals: [] as WorkflowApproval[] })),
       ]);
@@ -470,7 +473,7 @@ export function WorkflowList({ timeRange, query, onOpenDefinition }: WorkflowLis
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     }
-  }, [limit, timeRange, workflowFilter]);
+  }, [limit, timeRange, workflowFilter, repo]);
 
   useEffect(() => {
     load();
