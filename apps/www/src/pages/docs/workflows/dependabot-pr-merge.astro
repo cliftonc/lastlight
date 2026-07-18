@@ -39,7 +39,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 	<ul>
 		<li>Inspects each PR through the <code>github_list_pull_request_files</code> tool (changed files + line counts) — no repository checkout is needed — and deliberately skips lockfile diffs, only pulling the full <code>github_get_pull_request_diff</code> for a small non-lockfile source change (reading whole lockfile diffs in scan mode used to overflow the model's context window)</li>
 		<li>Classifies the change conservatively: only lockfile / manifest bumps, GitHub Actions tag/SHA bumps, type-only or mechanical edits count as <strong>trivial</strong>; anything touching runtime logic, anything security-sensitive, and major-version bumps are <strong>functional</strong></li>
-		<li>If trivial, enables GitHub auto-merge (squash) so the PR merges once its checks pass; otherwise it comments and leaves the PR for a human</li>
+		<li>If trivial, enables GitHub auto-merge (squash) so the PR merges once its checks pass. If GitHub refuses auto-merge because the PR is already mergeable with no required checks ("clean status"), it does a direct squash merge instead; if the repository disallows auto-merge outright, it comments for a maintainer. Functional PRs are left for a human with a comment</li>
 		<li>When in doubt, it does not auto-merge</li>
 	</ul>
 
