@@ -35,7 +35,9 @@ ARG BASE_IMAGE=lastlight-sandbox-base:latest
 # Mirrors the agent image's vendored build (apps/server/Dockerfile): manifests
 # first so the install layer caches until deps change, then source, then
 # `pnpm deploy` shapes a self-contained, lockfile-resolved tree.
-FROM node:22-slim AS agentic-pi-build
+FROM node:24-slim AS agentic-pi-build
+# node:24 matches the sandbox base's runtime Node (node:24-slim), so any native
+# deps compile for the ABI agentic-pi actually runs under.
 # python3/make/g++ so optional native deps (e.g. ssh2's cpu-features, pulled in
 # transitively via gondolin) compile instead of erroring out of the install.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \

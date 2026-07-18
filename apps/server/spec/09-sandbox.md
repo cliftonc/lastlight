@@ -108,9 +108,11 @@ agentic-pi's VM. Container name: `lastlight-sandbox-{taskId}-{uuid}`.
 - Timeout: 30 min default; runs longer than that are killed.
 - Image: the lean `lastlight-sandbox:latest` (`sandbox.Dockerfile`) by
   default — built `FROM` the shared `lastlight-sandbox-base:latest`
-  (`sandbox-base.Dockerfile`: `node:20-slim` with fnm-managed Node 22 —
-  default; supports `--experimental-strip-types` for inline TS — plus `python3`,
-  `semgrep`/`gitleaks`, and `uv` for `type: script` `runtime: python`). The base
+  (`sandbox-base.Dockerfile`: `node:24-slim` as the default Node, with `fnm` for
+  on-demand version switches when a repo pins one via `.nvmrc` / `.node-version`
+  (fetched from nodejs.org, on the egress allowlist) — no extra Node versions are
+  pre-baked — plus `python3`, `semgrep`/`gitleaks`, and `uv` for `type: script`
+  `runtime: python`). The base
   holds the heavy, stable toolchain; each leaf image adds only a thin agentic-pi
   (vendored from the workspace via a `pnpm deploy` bundle built in the
   Dockerfile) + agent-context + entrypoint tail, so ordinary releases don't

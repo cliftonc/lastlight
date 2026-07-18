@@ -5,7 +5,7 @@
 # Both leaf images build FROM it and add only their thin, frequently-changing
 # tail (agentic-pi + agent-context + entrypoint):
 #
-#   sandbox-base  (this file)         node20 + fnm + semgrep/gitleaks + uv
+#   sandbox-base  (this file)         node24 + fnm + semgrep/gitleaks + uv
 #     ├── sandbox.Dockerfile          FROM base + agentic-pi + agent-context
 #     └── sandbox-qa.Dockerfile       FROM base + Chromium/Playwright + tail
 #
@@ -21,25 +21,25 @@
 #
 # Build order matters — build this first:
 #   docker compose --profile build-only build sandbox-base sandbox sandbox-qa
-FROM node:20-slim
+FROM node:24-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ripgrep curl jq ca-certificates gettext-base gosu \
     build-essential pkg-config python3 unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# fnm + multiple Node versions so repos pinning a specific Node via .nvmrc /
-# package.json#engines just work. System node from the base image stays at
-# /usr/local/bin; fnm-managed versions are pre-installed under FNM_DIR and
-# selected per-shell by the bashrc hook below.
+# fnm for ON-DEMAND Node switching so repos pinning a specific Node via .nvmrc /
+# package.json#engines just work. The base's own system Node (24, from the
+# node:24-slim image at /usr/local/bin) is the default; we deliberately DON'T
+# pre-bake extra Node versions — that baked ~430 MB of toolchains for versions
+# most runs never touch. Instead a repo pinning another version triggers
+# `fnm install` + `fnm use` via the bashrc hook below, fetching from nodejs.org
+# (on the sandbox egress allowlist, so it works under strict mode).
 ENV FNM_DIR=/usr/local/share/fnm
 ENV PATH=$FNM_DIR/aliases/default/bin:$PATH
 RUN curl -fsSL https://fnm.vercel.app/install \
       | bash -s -- --install-dir "$FNM_DIR" --skip-shell \
  && ln -s "$FNM_DIR/fnm" /usr/local/bin/fnm \
- && fnm install 22 \
- && fnm install 24 \
- && fnm default 22 \
  && chmod -R a+rX "$FNM_DIR" \
  && mkdir -p "$FNM_DIR/multishells" \
  && chmod 1777 "$FNM_DIR/multishells"
@@ -77,7 +77,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
        | tar -xz -C /usr/local/bin gitleaks \
     && apt-get purge -y python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+    # Drop the pip/pipx download + build caches semgrep's install leaves behind
+    # (~tens of MB baked into this layer otherwise).
+    && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/pip-* /tmp/*.whl
 
 # uv — fast, isolated Python runner for `type: script` (runtime: python) phases.
 # Single static binary; `uv run script.py` honours PEP 723 inline dependency
