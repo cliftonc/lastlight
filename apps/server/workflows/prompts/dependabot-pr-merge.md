@@ -20,15 +20,38 @@ STEP 0 — Find candidate PRs.
 List open PRs with `github_list_pull_requests` ({ owner: "{{owner}}",
 repo: "{{repo}}", state: "open" }). Keep only those authored by a dependency
 bot — `user.login` is `dependabot[bot]` or `renovate[bot]` (or a title like
-"Bump …", "chore(deps): …", "Update … requirement"). Skip drafts. Then run the
-procedure below for EACH candidate PR. If there are none, say so and stop.
+"Bump …", "chore(deps): …", "Update … requirement"). Skip drafts. Assess at
+most 10 candidates in one run, oldest first; if there are more, say so and stop
+— the daily cron scan picks up the rest next tick. If there are none, say so and
+stop.
 {{/if}}
 
 For each PR you assess (call it `pull_number`):
 
-STEP 1 — Inspect the change.
-Read the full diff with `github_get_pull_request_diff` ({ owner: "{{owner}}",
-repo: "{{repo}}", pull_number }). Apply the **code-review** skill's rubric.
+STEP 1 — Inspect the change WITHOUT pulling giant diffs.
+Dependency PRs are dominated by lockfile churn (`package-lock.json`,
+`pnpm-lock.yaml`, `yarn.lock`, `Cargo.lock`, `go.sum`, …). A single lockfile diff
+can run to tens of thousands of lines — reading it burns the whole context
+window, and on repos with several open bumps it has overflowed the model outright
+(the run then dies mid-assessment). So NEVER call `github_get_pull_request_diff`
+as your first move. Inspect in tiers instead:
+
+a. Call `github_list_pull_request_files` ({ owner: "{{owner}}", repo: "{{repo}}",
+   pull_number }) to get the changed files with per-file `additions`/`deletions`.
+   This file list — plus the PR title — is your primary signal.
+b. A lockfile / `go.sum` change is expected noise for a version bump. NEVER read
+   its diff; judge the bump from the PR title and the manifest change alone.
+c. If the only NON-lockfile files touched are the manifest (`package.json`,
+   `pyproject.toml`, `go.mod`, `Cargo.toml`) or a GitHub Actions workflow
+   tag/SHA, you already have enough to classify — do NOT fetch the diff.
+d. Only when a non-lockfile *source* file changed AND the non-lockfile change is
+   small (a handful of lines) may you read it — prefer `github_get_file_contents`
+   for that one file, or `github_get_pull_request_diff` only if the whole diff
+   excluding lockfiles is clearly small. If the non-lockfile change is large, or
+   you can't cheaply bound it, treat the PR as **FUNCTIONAL** and leave it for a
+   human — do NOT force the diff into context.
+
+Apply the **code-review** skill's rubric to whatever you inspected.
 
 STEP 2 — Classify the change, conservatively.
 Call it **TRIVIAL** only if ALL of these hold:
@@ -55,6 +78,12 @@ STEP 3 — Act on the classification.
   human review before merging. In scan mode, do not spam — one concise comment
   per functional PR is enough, and skip PRs you have clearly already commented
   on.
+
+You MUST reach an explicit outcome for every PR you assess — enable auto-merge,
+post a comment, or note it was already handled (e.g. you already commented, or
+auto-merge is already enabled). Do NOT end the run having only read files with no
+verdict and no action; a run that inspects diffs and then stops silently is a
+failure, not a success.
 
 OUTPUT: For each PR, state its number, your verdict (TRIVIAL or FUNCTIONAL), a
 one-line justification, and whether you enabled auto-merge or left it for a

@@ -152,7 +152,7 @@ Every file in `workflows/prompts/`.
 | `pr-fix.md` | Read maintainer comment + CI section, fix issues, run guardrails, push. | Commits on PR branch |
 | `dependabot-ci-fix.md` | Read the CI failures on a red dependency-update PR, make the smallest fix (lockfile / call-site / type), run the gate, push. | Commits on PR branch |
 | `dependabot-assess.md` | Assess the pushed diff; if trivial, call `github_enable_auto_merge` (merge-once-green), else comment for a human. | Enables auto-merge / posts a comment |
-| `dependabot-pr-merge.md` | For an **already-green** dependency PR (no fix needed): read the diff via `github_get_pull_request_diff` (no checkout), classify trivial vs functional, and enable auto-merge on the trivial ones. Dual-mode — a single PR (`pr.checks_passed` webhook) or a repo sweep (`mode: scan` cron over Dependabot / Renovate PRs). | Enables auto-merge / posts a comment |
+| `dependabot-pr-merge.md` | For an **already-green** dependency PR (no fix needed): inspect via `github_list_pull_request_files` (file list + line counts, no checkout), **skipping lockfile diffs** — only pull `github_get_pull_request_diff` for a small non-lockfile source change — classify trivial vs functional, and enable auto-merge on the trivial ones. (Reading full lockfile diffs in scan mode used to overflow the model context.) Dual-mode — a single PR (`pr.checks_passed` webhook) or a repo sweep (`mode: scan` cron over Dependabot / Renovate PRs, capped per run). | Enables auto-merge / posts a comment |
 
 ### Explore (Socratic + publish)
 
