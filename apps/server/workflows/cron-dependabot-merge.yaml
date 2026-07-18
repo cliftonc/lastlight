@@ -1,6 +1,10 @@
 kind: cron
 name: merge-green-dependency-prs
-schedule: "*/30 * * * *"
+# Once a day, mid-afternoon (server-local time). The pr.checks_passed webhook
+# does the real-time merging; this sweep is only a backstop for PRs that went
+# green before boot or during a missed delivery, so a daily cadence is plenty
+# (and keeps a stale managedRepos entry from spamming failed runs every 30 min).
+schedule: "0 14 * * *"
 workflow: dependabot-pr-merge
 context:
   mode: scan
