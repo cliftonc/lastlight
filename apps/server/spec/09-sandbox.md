@@ -112,8 +112,9 @@ agentic-pi's VM. Container name: `lastlight-sandbox-{taskId}-{uuid}`.
   default; supports `--experimental-strip-types` for inline TS — plus `python3`,
   `semgrep`/`gitleaks`, and `uv` for `type: script` `runtime: python`). The base
   holds the heavy, stable toolchain; each leaf image adds only a thin agentic-pi
-  (from the committed `sandbox/agentic-pi.pin`) + agent-context + entrypoint
-  tail, so ordinary releases don't rebuild the sandbox images. The shared `/cache` package-manager volume
+  (vendored from the workspace via a `pnpm deploy` bundle built in the
+  Dockerfile) + agent-context + entrypoint tail, so ordinary releases don't
+  rebuild the sandbox images. The shared `/cache` package-manager volume
   is mounted with `npm_config_cache`/`YARN_CACHE_FOLDER`/`UV_CACHE_DIR` pointed
   at it; `UV_PYTHON_DOWNLOADS=never` pins `uv` to the baked-in `python3` so it
   never fetches an interpreter off-allowlist. A phase declaring

@@ -829,10 +829,11 @@ sudo -u lastlight -i lastlight server update
    non-fatal `docker compose build sandbox-qa`. The CI publish workflow builds in
    the same order and passes `GIT_SHA=<release SHA>` so a pulled image's stamped
    version (`GET /admin/api/server/info` + the dashboard drift banner) is
-   correct. The sandbox images install agentic-pi from the committed
-   `sandbox/agentic-pi.pin` (not the whole lockfile), so an ordinary version bump
-   doesn't rebuild them — and sandbox-qa's ~300 MB Chromium stays cached unless
-   its own inputs change.
+   correct. The sandbox images **vendor** agentic-pi from the workspace (a
+   `pnpm deploy` bundle built in a builder stage inside `sandbox*.Dockerfile`,
+   lockfile-pinned — no npm round-trip), COPY'd in above the base's toolchain;
+   the COPY layer is content-addressed on the bundle, so an unchanged agentic-pi
+   doesn't rebuild the tail and sandbox-qa's ~300 MB Chromium stays cached.
 4. `docker compose up -d --remove-orphans` (recreates only what changed).
 5. Force-restarts the egress sidecars (`coredns-strict`, `coredns-open`,
    `nginx-egress-strict`, `nginx-egress-open`, `otel-collector`) so they

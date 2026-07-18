@@ -20,7 +20,7 @@ This document is the runbook. Read it end-to-end before your first release.
 |---|---|---|---|
 | `lastlight-workflow-engine` | `packages/workflow-engine` | 0.1.x | zod-only; leaf of the graph |
 | `lastlight-shared` | `packages/shared` | 0.1.x | light modules used by cli + core |
-| `agentic-pi` | `packages/agentic-pi` | 0.2.x | the coding-agent harness; consumed by core/evals/dashboard via `workspace:*`, AND installed into the sandbox image from npm by `apps/server/sandbox/agentic-pi.pin`. Own semver line + its own `image-v*` VM-image release stream (`agentic-pi-image.yml`). No `exports` map on purpose (evals deep-imports `dist/`). |
+| `agentic-pi` | `packages/agentic-pi` | 0.2.x | the coding-agent harness; consumed by core/evals/dashboard via `workspace:*`, and **vendored** into the sandbox image from the workspace (a `pnpm deploy` bundle built in `sandbox*.Dockerfile` — no npm round-trip). Own semver line + its own `image-v*` VM-image release stream (`agentic-pi-image.yml`) + independent npm publish (`agentic-pi-npm.yml`, for external consumers). No `exports` map on purpose (evals deep-imports `dist/`). |
 | `lastlight-core` | `apps/server` | 0.16.x | the harness + server + `./evals` barrel + shipped assets |
 | `lastlight` | `packages/cli` | 0.16.x | the lean global CLI (`bin.lastlight`); ships `plugins/` + `.claude-plugin/` |
 | `lastlight-evals` | `apps/evals` | 0.7.x | eval harness; dep `lastlight-core: workspace:*` |
@@ -65,7 +65,7 @@ and every package that consumes it**, transitively:
 |---|---|
 | `lastlight-workflow-engine` | `lastlight-core`, `lastlight-shared` (if it consumes engine), `lastlight` (cli), `lastlight-evals` (via core) |
 | `lastlight-shared` | `lastlight-core`, `lastlight` (cli), `lastlight-evals` (via core) |
-| `agentic-pi` | `lastlight-core`, `lastlight-evals` (both consume it via `workspace:*`). Bump `lastlight-evals`'s `peerDependencies` range to match too. Also **regenerate the sandbox pin AFTER publishing** (see below). |
+| `agentic-pi` | `lastlight-core`, `lastlight-evals` (both consume it via `workspace:*`). Bump `lastlight-evals`'s `peerDependencies` range to match too. The sandbox picks up the change automatically on the next image build (it vendors agentic-pi from the workspace — no pin to bump). |
 | `lastlight-core` | `lastlight-evals` (its `workspace:*` dep) |
 | `lastlight` (cli) | — (nothing depends on the cli) |
 | `lastlight-evals` | — (nothing depends on evals) |
@@ -151,16 +151,17 @@ but stays a public npm package. Three things are unique to it:
   `nearform/lastlight`, workflow `publish.yml` — otherwise the `npm` job's
   `agentic-pi` publish fails. (Same setup every other package here already has.)
 
-- **Sandbox pin is published-version-driven, so regenerate it AFTER publishing.**
-  The sandbox image installs the *published* `agentic-pi` from npm, pinned by
-  `apps/server/sandbox/agentic-pi.pin` (version + npm integrity). Since consumers
-  now use `workspace:*`, the lockfile no longer carries a registry integrity —
-  the pin is derived from `packages/agentic-pi/package.json` + `npm view`. So on
-  an `agentic-pi` version bump: **publish first, then**
-  `bash apps/server/scripts/agentic-pi-pin.sh` and commit the updated pin
-  (`tests/agentic-pi-pin.test.ts` guards that the pin's version matches the
-  package). Until the pin is bumped the sandbox keeps installing the previous
-  published version — safe, just stale.
+- **The sandbox vendors agentic-pi from the workspace — there is no pin to
+  regenerate.** `sandbox*.Dockerfile` builds agentic-pi from source in a builder
+  stage (`pnpm deploy --prod`, lockfile-pinned) and COPYs the bundle in, so the
+  sandbox always runs exactly the committed agentic-pi + the tree the lockfile
+  resolved. Any change — bumping agentic-pi's version or one of its deps + `pnpm
+  install` — flows into the sandbox on the next image build with no extra step.
+  This deliberately decouples the sandbox from the npm publish (previously the
+  sandbox installed the *published* tarball via a committed pin, and a caret
+  transitive could drift to whatever npm resolved at build time). The independent
+  `agentic-pi` npm publish (`agentic-pi-npm.yml`) is now for external consumers
+  only.
 
 - **VM image is a separate `image-v*` stream.** The gondolin VM sandbox image is
   built by `.github/workflows/agentic-pi-image.yml` on `image-v*` tags, wholly
