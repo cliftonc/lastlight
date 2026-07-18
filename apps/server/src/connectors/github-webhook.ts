@@ -366,6 +366,30 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
             title = (headCommit?.message || "").split("\n")[0] || title;
             issueAuthor = headCommit?.author?.name || issueAuthor;
           }
+        } else if (
+          action === "completed" &&
+          payload.check_suite?.conclusion === "success"
+        ) {
+          // A PR's CI has gone fully green. Emit a dedicated event ONLY for
+          // dependency-update PRs (Dependabot / Renovate) so a workflow can
+          // enable auto-merge on the trivial ones — we deliberately do NOT fire
+          // on every green PR (that would flood the router with events for
+          // unrelated work). The dependency signal comes cheaply from the head
+          // commit author + the suite's head branch, with no extra PR fetch.
+          const pr = payload.check_suite?.pull_requests?.[0];
+          const headCommit = payload.check_suite?.head_commit;
+          const commitAuthor: string = headCommit?.author?.name || "";
+          const headBranch: string = payload.check_suite?.head_branch || "";
+          const isDependencyPr =
+            /^(dependabot|renovate)\[bot\]$/.test(commitAuthor) ||
+            /^(dependabot|renovate)\//.test(headBranch);
+          if (pr?.number && isDependencyPr) {
+            prNumber = pr.number;
+            issueNumber = prNumber;
+            type = "pr.checks_passed";
+            title = (headCommit?.message || "").split("\n")[0] || title;
+            issueAuthor = commitAuthor || issueAuthor;
+          }
         }
         break;
     }

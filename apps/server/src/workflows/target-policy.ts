@@ -22,7 +22,15 @@
  * *refresh* a stale checkout (that would reset onto the old feature branch);
  * it recreates the workspace from the default branch.
  */
-export const PER_TARGET_REUSE_WORKFLOWS = new Set(["pr-review", "pr-fix", "dependabot-ci-fix"]);
+export const PER_TARGET_REUSE_WORKFLOWS = new Set([
+  "pr-review",
+  "pr-fix",
+  "dependabot-ci-fix",
+  // Webhook-triggered dependabot-pr-merge keys its (checkout-free) run by
+  // (repo, PR) so a repeated `pr.checks_passed` for the same PR dedups onto one
+  // dir/run rather than stacking. Scan-mode runs (no prNumber) stay run-scoped.
+  "dependabot-pr-merge",
+]);
 
 /**
  * Workflows shaped like `pr-fix`: dispatched off a PR event, they resolve the

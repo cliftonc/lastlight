@@ -83,7 +83,9 @@ differ.
     (`560–1124`.)
 15. **Cron job registration** — `getJobs({ webhooksEnabled, db })` returns
     a different list depending on whether webhooks are active. With
-    webhooks: only scheduled crons (health, security). Without: also the
+    webhooks: only crons without a `condition.unless: webhooksEnabled` gate
+    (health, security, and the dependency auto-merge sweep, which runs
+    alongside the real-time `pr.checks_passed` webhook). Without: also the
     polling crons that scan for new issues/PRs. (`1126–1137`.)
 16. **`registry.startAll()`** — finally start every registered connector.
     Webhooks start accepting requests (including `/webhooks/slack` in Slack

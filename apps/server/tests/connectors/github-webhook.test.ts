@@ -196,6 +196,7 @@ async function postCheckSuiteCompleted(
     senderLogin?: string;
     commitMessage?: string;
     commitAuthor?: string;
+    headBranch?: string;
   },
 ): Promise<{ status: number; json: any; emitted: any | null }> {
   let emitted: any = null;
@@ -208,6 +209,7 @@ async function postCheckSuiteCompleted(
     check_suite: {
       id: 1,
       conclusion: opts.conclusion,
+      head_branch: opts.headBranch,
       pull_requests: opts.prNumber ? [{ number: opts.prNumber, head: { ref: "dependabot/npm/lodash-4.17.21" } }] : [],
       head_commit: {
         message: opts.commitMessage ?? "Bump lodash from 4.17.20 to 4.17.21",
@@ -259,10 +261,14 @@ describe("GitHubWebhookConnector — failed checks", () => {
     expect(emitted?.type).toBe("pr.checks_failed");
   });
 
-  it("ignores a successful check_suite", async () => {
+  it("ignores a successful check_suite from a non-dependency author", async () => {
+    // A green PR authored by a human is not a dependency bump — no event fires
+    // (we don't flood the router with every green PR).
     const { json, emitted } = await postCheckSuiteCompleted(connector(), {
       conclusion: "success",
       prNumber: 5,
+      commitAuthor: "Ada Lovelace",
+      commitMessage: "Add feature",
     });
     expect(json.filtered).toBe(true);
     expect(emitted).toBeNull();
@@ -271,6 +277,47 @@ describe("GitHubWebhookConnector — failed checks", () => {
   it("ignores a failing check_suite with no associated PR (e.g. a fork)", async () => {
     const { json, emitted } = await postCheckSuiteCompleted(connector(), {
       conclusion: "failure",
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+  });
+});
+
+describe("GitHubWebhookConnector — passed checks (dependency PRs)", () => {
+  beforeEach(() => {
+    setRuntimeConfig({ managedRepos: [REPO] } as unknown as LastLightConfig);
+  });
+  afterEach(() => resetRuntimeConfigForTests());
+
+  it("emits pr.checks_passed for a green Dependabot PR (detected by commit author)", async () => {
+    const { status, emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "success",
+      prNumber: 681,
+      commitAuthor: "dependabot[bot]",
+    });
+    expect(status).toBe(202);
+    expect(emitted).not.toBeNull();
+    expect(emitted.type).toBe("pr.checks_passed");
+    expect(emitted.prNumber).toBe(681);
+    expect(emitted.title).toBe("Bump lodash from 4.17.20 to 4.17.21");
+    expect(emitted.issueAuthor).toBe("dependabot[bot]");
+  });
+
+  it("emits pr.checks_passed for a green Renovate PR (detected by head branch)", async () => {
+    const { emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "success",
+      prNumber: 42,
+      commitAuthor: "Ada Lovelace", // author isn't the bot; branch is the signal
+      headBranch: "renovate/lodash-4.x",
+    });
+    expect(emitted?.type).toBe("pr.checks_passed");
+    expect(emitted.prNumber).toBe(42);
+  });
+
+  it("ignores a green dependency check_suite with no associated PR", async () => {
+    const { json, emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "success",
+      commitAuthor: "dependabot[bot]",
     });
     expect(json.filtered).toBe(true);
     expect(emitted).toBeNull();

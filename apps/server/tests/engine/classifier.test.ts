@@ -125,7 +125,7 @@ describe("buildClassifierPrompt — composition", () => {
   it("includes every shipped workflow category + control intents", () => {
     const prompt = buildClassifierPrompt();
     // Workflow-owned categories (from each workflow's classification block).
-    for (const token of ["BUILD", "EXPLORE", "QUESTION", "TRIAGE", "REVIEW", "SECURITY", "VERIFY", "QATEST", "DEMO", "DEPENDABOTCIFIX"]) {
+    for (const token of ["BUILD", "EXPLORE", "QUESTION", "TRIAGE", "REVIEW", "SECURITY", "VERIFY", "QATEST", "DEMO", "DEPENDABOTCIFIX", "DEPENDABOTPRMERGE"]) {
       expect(prompt).toContain(`${token} —`);
     }
     // Control categories stay in the base template.
@@ -134,9 +134,9 @@ describe("buildClassifierPrompt — composition", () => {
     }
     // The format line is composed from the full token set: the well-known
     // workflow order first, then novel workflow intents alphabetically
-    // (DEPENDABOTCIFIX), then the control intents.
+    // (DEPENDABOTCIFIX before DEPENDABOTPRMERGE), then the control intents.
     expect(prompt).toContain(
-      "INTENT: BUILD|EXPLORE|QUESTION|TRIAGE|REVIEW|SECURITY|VERIFY|QATEST|DEMO|DEPENDABOTCIFIX|APPROVE|REJECT|STATUS|RESET|CHAT",
+      "INTENT: BUILD|EXPLORE|QUESTION|TRIAGE|REVIEW|SECURITY|VERIFY|QATEST|DEMO|DEPENDABOTCIFIX|DEPENDABOTPRMERGE|APPROVE|REJECT|STATUS|RESET|CHAT",
     );
     // No unfilled slots remain.
     expect(prompt).not.toContain("{{");

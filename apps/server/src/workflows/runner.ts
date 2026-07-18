@@ -73,6 +73,9 @@ export function gitAccessProfileForWorkflow(workflowName: string): GitAccessProf
     case "build":
     case "pr-fix":
     case "dependabot-ci-fix":
+    // dependabot-pr-merge never pushes code, but it needs `github_enable_auto_merge`,
+    // which lives in the repo-write github-tool profile.
+    case "dependabot-pr-merge":
       return "repo-write";
     case "pr-review":
       return "review-write";

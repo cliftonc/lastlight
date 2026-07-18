@@ -64,6 +64,7 @@ export type EventType =
   | "pr.closed"
   | "pr.merged"
   | "pr.checks_failed"    // a check_suite completed with a failure conclusion
+  | "pr.checks_passed"    // a check_suite completed green on a dependency-update PR
   | "comment.created"
   | "pr_review.submitted"
   | "pr_review_comment.created"

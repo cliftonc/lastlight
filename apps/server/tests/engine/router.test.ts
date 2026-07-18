@@ -182,6 +182,39 @@ describe('routeEvent — pr.checks_failed', () => {
   });
 });
 
+describe('routeEvent — pr.checks_passed', () => {
+  it('routes to the workflow claiming the dependabot-pr-merge intent (no classifier call)', async () => {
+    mockClassifyComment.mockClear();
+    mockGetWorkflowByIntent.mockReturnValue({ name: 'dependabot-pr-merge' } as any);
+    const result = await routeEvent(
+      makeEnvelope({
+        type: 'pr.checks_passed',
+        prNumber: 681,
+        title: 'Bump lodash from 4.17.20 to 4.17.21',
+        issueAuthor: 'dependabot[bot]',
+      }),
+    );
+    // Deterministic route: the connector already filtered to a dependency PR,
+    // so the router looks the intent up directly rather than classifying.
+    expect(mockClassifyComment).not.toHaveBeenCalled();
+    expect(mockGetWorkflowByIntent).toHaveBeenCalledWith('dependabot-pr-merge');
+    expect(result.action).toBe('handler');
+    if (result.action === 'handler') {
+      expect(result.handler).toBe('dependabot-pr-merge');
+      expect(result.context.prNumber).toBe(681);
+      expect(result.context.author).toBe('dependabot[bot]');
+    }
+  });
+
+  it('ignores the event when no workflow claims the intent', async () => {
+    mockGetWorkflowByIntent.mockReturnValue(undefined);
+    const result = await routeEvent(
+      makeEnvelope({ type: 'pr.checks_passed', prNumber: 5, title: 'Some PR' }),
+    );
+    expect(result.action).toBe('ignore');
+  });
+});
+
 describe('routeEvent — comment.created', () => {
   beforeEach(() => {
     mockClassifyComment.mockResolvedValue({ intent: 'chat' });

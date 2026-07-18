@@ -1,0 +1,90 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro';
+---
+<DocsLayout
+	slug="workflows/dependabot-pr-merge"
+	description="The Dependabot PR merge workflow — find already-green dependency-update PRs, assess triviality, and enable auto-merge on the safe ones."
+>
+	<p>
+		Dependabot PR merge is the proactive companion to
+		<a href="/docs/workflows/dependabot-ci-fix">Dependabot CI fix</a>. That one
+		repairs a dependency-update PR whose CI went <em>red</em>; this one handles
+		the PRs that are already <em>green</em> and need no fix — it reads the diff,
+		decides whether the bump is trivial, and enables GitHub auto-merge (squash)
+		so the safe ones land without a human in the loop.
+	</p>
+
+	<div class="docs-callout tip">
+		<div class="docs-callout-body">
+			<strong>Permission profile:</strong> <code>repo-write</code> — needed only
+			for the <code>github_enable_auto_merge</code> tool. It never pushes code
+			and never merges directly: enabling auto-merge lets GitHub merge the PR
+			once its required checks pass, and GitHub refuses on a red or still-running
+			PR — that is the green gate.
+		</div>
+	</div>
+
+	<h2>Pipeline</h2>
+
+	<div class="workflow-diagram">
+		<svg viewBox="0 0 320 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+			<rect x="95" y="12" width="130" height="56" rx="8" fill="var(--bg-card)" stroke="var(--diag-line)" stroke-width="1.5"/>
+			<text x="160" y="37" text-anchor="middle" fill="var(--text)" font-size="11" font-family="Inter">Assess</text>
+			<text x="160" y="52" text-anchor="middle" fill="var(--diag-grey)" font-size="8" font-family="JetBrains Mono">trivial? → auto-merge</text>
+		</svg>
+	</div>
+
+	<h2>What it does</h2>
+
+	<ul>
+		<li>Reads each PR's diff through the <code>github_get_pull_request_diff</code> tool — no repository checkout is needed</li>
+		<li>Classifies the change conservatively: only lockfile / manifest bumps, GitHub Actions tag/SHA bumps, type-only or mechanical edits count as <strong>trivial</strong>; anything touching runtime logic, anything security-sensitive, and major-version bumps are <strong>functional</strong></li>
+		<li>If trivial, enables GitHub auto-merge (squash) so the PR merges once its checks pass; otherwise it comments and leaves the PR for a human</li>
+		<li>When in doubt, it does not auto-merge</li>
+	</ul>
+
+	<div class="docs-callout note">
+		<div class="docs-callout-body">
+			Auto-merge needs "Allow auto-merge" enabled on the repository and at least
+			one required status check. If it isn't available, the workflow comments
+			that the update looks trivial and asks a maintainer to merge.
+		</div>
+	</div>
+
+	<h2>Triggers</h2>
+
+	<ul>
+		<li><strong>GitHub webhook:</strong> a <code>check_suite.completed</code> event with a <code>success</code> conclusion on a dependency-update PR (surfaced internally as <code>pr.checks_passed</code>). The connector pre-filters to Dependabot / Renovate — by the head commit author or the <code>dependabot/</code> / <code>renovate/</code> branch prefix — so ordinary green PRs fire nothing. The router routes it deterministically to this workflow. Requires the GitHub App to subscribe to <strong>Check suite</strong> events (Checks: read).</li>
+		<li><strong>Cron sweep:</strong> a scheduled scan (<code>mode: scan</code>) sweeps every managed repo for open Dependabot / Renovate PRs and assesses each. Unlike the review scan, it runs <em>alongside</em> webhooks — a safety net that catches PRs which went green before boot or during a missed delivery. Enabling auto-merge is idempotent, so the overlap is harmless.</li>
+	</ul>
+
+	<div class="docs-next">
+		<a href="/docs/workflows/dependabot-ci-fix" class="prev">
+			<span class="label">&larr; Prev</span>
+			<span class="title">Dependabot CI fix</span>
+		</a>
+		<a href="/docs/workflows/repo-health" class="next">
+			<span class="label">Next &rarr;</span>
+			<span class="title">Repo health</span>
+		</a>
+	</div>
+</DocsLayout>
+
+<style is:global>
+	.workflow-diagram {
+		margin: 1.5rem 0;
+		padding: 1.25rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		overflow-x: auto;
+	}
+
+	.workflow-diagram svg {
+		width: 100%;
+		max-width: 320px;
+		height: auto;
+		display: block;
+		margin: 0 auto;
+	}
+</style>

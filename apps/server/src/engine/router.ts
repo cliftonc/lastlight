@@ -204,6 +204,38 @@ export async function routeEvent(
       };
     }
 
+    case "pr.checks_passed": {
+      // A dependency-update PR (Dependabot / Renovate) has gone green — the
+      // connector already filtered to that case. Route deterministically to
+      // whichever workflow claims the `dependabot-pr-merge` intent (no
+      // classifier LLM call: the connector's dependency-PR pre-filter is the
+      // gate). Ignore when no workflow claims it (e.g. the workflow is disabled
+      // or removed in an overlay), so a green suite never triggers stray work.
+      const handler = getWorkflowByIntent("dependabot-pr-merge")?.name;
+      if (!handler) {
+        return {
+          action: "ignore",
+          reason: "no workflow claims the dependabot-pr-merge intent",
+        };
+      }
+      console.log(
+        `[router] Green checks on ${envelope.repo}#${envelope.prNumber} → ${handler}`,
+      );
+      return {
+        action: "handler",
+        handler,
+        context: {
+          repo: envelope.repo,
+          prNumber: envelope.prNumber,
+          title: envelope.title,
+          body: envelope.body,
+          sender: envelope.sender,
+          author: envelope.issueAuthor,
+          labels: envelope.labels,
+        },
+      };
+    }
+
     case "comment.created": {
       // Reply-gate short-circuit: if a paused socratic explore run is
       // waiting for any free-form message on this issue, feed the comment

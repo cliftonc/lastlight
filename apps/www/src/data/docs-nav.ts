@@ -34,6 +34,7 @@ export const docsNav: DocsNavSection[] = [
 			{ slug: 'workflows/pr-review', label: 'PR review' },
 			{ slug: 'workflows/pr-fix', label: 'PR fix' },
 			{ slug: 'workflows/dependabot-ci-fix', label: 'Dependabot CI fix' },
+			{ slug: 'workflows/dependabot-pr-merge', label: 'Dependabot PR merge' },
 			{ slug: 'workflows/repo-health', label: 'Repo health' },
 			{ slug: 'workflows/security-review', label: 'Security review' },
 			{ slug: 'workflows/security-feedback', label: 'Security feedback' },

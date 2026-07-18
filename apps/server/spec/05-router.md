@@ -57,6 +57,7 @@ instead. Only the configured handle matches — there is no legacy fallback (see
 | `issue.opened` / `issue.reopened` | `skill: issue-triage` | `reopened=true` for the latter |
 | `pr.opened` / `pr.synchronize` / `pr.reopened` | `skill: pr-review` | |
 | `pr.checks_failed` | classifier → the workflow claiming the intent (else `ignore`) | A failing `check_suite`; the classifier routes a recognised dependency-update PR to `dependabot-ci-fix`. Unlike other structured events, routing goes through the intent classifier so workflows self-register via `classification` |
+| `pr.checks_passed` | the workflow claiming the `dependabot-pr-merge` intent (else `ignore`) | A green `check_suite` on a dependency-update PR (the connector already pre-filtered to Dependabot / Renovate). Routed **deterministically** via `getWorkflowByIntent("dependabot-pr-merge")` — no classifier call, since the dependency-PR gate is the connector's job |
 | `comment.created` with pending reply gate | `skill: explore-reply` | Reply-gate short-circuit — see below |
 | `comment.created` on a pre-build issue, plain (no `@last-light`) | `skill: issue-triage` (`mode: retriage`) | Reporter-driven re-triage — see below |
 | `comment.created` without `@last-light` | `ignore` | reason: "no bot mention" |

@@ -1,0 +1,12 @@
+kind: cron
+name: merge-green-dependency-prs
+schedule: "*/30 * * * *"
+workflow: dependabot-pr-merge
+context:
+  mode: scan
+# NOTE: unlike cron-review, this scan intentionally has NO
+# `condition.unless: webhooksEnabled`. The pr.checks_passed webhook merges
+# newly-green PRs in real time; this cron is an additive *sweep* that also runs
+# with webhooks on, catching dependency PRs that went green before boot or
+# during a missed delivery. Enabling auto-merge is idempotent, so overlap with
+# the webhook path is harmless.
