@@ -32,6 +32,15 @@ AFTER FIXING:
 
 If you cannot make CI pass with a small, safe change, STOP without pushing a
 speculative fix and say so in your summary — a human will take it from here.
+Before you stop, flag the PR for a human so the nightly red-dependency sweep
+won't keep re-attempting it: ensure the `requires-human` label exists with one
+idempotent `github_ensure_labels` call (`{ owner: "{{owner}}", repo: "{{repo}}",
+labels: [{ name: "requires-human", color: "b60205", description: "Last Light
+can't proceed automatically; a maintainer must handle it." }] }`), then add it
+with `github_add_labels` (`{ owner: "{{owner}}", repo: "{{repo}}", issue_number:
+{{prNumber}}, labels: ["requires-human"] }`). If label writes are denied, just
+say so in your summary. (A later fix on a new push clears this: the assess phase
+removes `requires-human` once a fix lands and is trivial.)
 
 OUTPUT: A brief summary of the root cause, exactly what you changed, and the
 local test/lint/typecheck results.

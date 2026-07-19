@@ -19,10 +19,14 @@ classification:
     Renovate, e.g. "Bump <pkg> from X to Y", "chore(deps): update <pkg>") whose
     CI checks have FAILED and needs its build / lockfile / call sites repaired so
     the update can land. Choose this over REVIEW or BUILD when the subject is a
-    red dependency-bump PR.
+    red dependency-bump PR. Also choose it when a maintainer's comment asks the
+    bot to handle/look at/fix such a PR and `PR CHECKS` is `failing` (with a
+    `PR AUTHOR` of dependabot[bot]/renovate[bot]) — but keep REVIEW when they
+    explicitly ask for a review.
   examples:
     - 'PR "Bump lodash from 4.17.20 to 4.17.21" by dependabot[bot] — its CI checks have failed. → INTENT: DEPENDABOTCIFIX, REPO: NONE, ISSUE: NONE, REASON: NONE'
     - 'PR "chore(deps): bump actions/checkout from 3 to 4" by dependabot[bot] — its CI checks have failed. → INTENT: DEPENDABOTCIFIX, REPO: NONE, ISSUE: NONE, REASON: NONE'
+    - 'PR AUTHOR: dependabot[bot], PR CHECKS: failing, COMMENT: "@bot can you take a look at this?" → INTENT: DEPENDABOTCIFIX, REPO: NONE, ISSUE: NONE, REASON: NONE'
 
 phases:
   - name: fix

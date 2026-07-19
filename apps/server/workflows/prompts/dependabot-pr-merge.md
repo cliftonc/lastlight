@@ -66,6 +66,23 @@ Call it **TRIVIAL** only if ALL of these hold:
 If you are unsure, or the change touches application logic, treat it as
 **FUNCTIONAL**. When in doubt, do NOT auto-merge.
 
+STEP 2b — Record the verdict as a label (state machine).
+First ensure the label vocabulary exists in ONE idempotent `github_ensure_labels`
+call (`{ owner: "{{owner}}", repo: "{{repo}}", labels: [...] }`) — it lists once
+and creates only the missing ones, so it never errors on labels that exist:
+- `dependency-trivial` — color `0e8a16` — "Trivial & safe dependency update (auto-merge path)."
+- `dependency-functional` — color `fbca04` — "Dependency update has functional impact — needs human review."
+- `requires-human` — color `b60205` — "Last Light can't proceed automatically; a maintainer must handle it."
+If `github_ensure_labels` is denied (the token lacks the permission), fall back to
+using only labels that already exist and skip the rest.
+Then apply exactly the labels for your verdict via `github_add_labels`, and clear
+the superseded ones with `github_remove_label` (only ever touch the three labels
+above — never remove a label outside this vocabulary, e.g. Renovate's `rebase`):
+- **TRIVIAL** → add `dependency-trivial`; remove `dependency-functional` and
+  `requires-human` if present (it's landing, so any stale human-needed flag is cleared).
+- **FUNCTIONAL** → add `dependency-functional` and `requires-human`; remove
+  `dependency-trivial` if present.
+
 STEP 3 — Act on the classification.
 - If **FUNCTIONAL**: do NOT merge, and do NOT request a rebase. Post a short
   comment (via `github_add_issue_comment`) summarising what changed and why it

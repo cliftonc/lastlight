@@ -16,7 +16,12 @@ import { StateDb } from "./state/db.js";
 import { CronScheduler } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { dispatchCronWorkflow, fanOutContexts } from "./cron/fanout.js";
-import { discoverGreenDependencyPrs } from "./cron/dependabot-discovery.js";
+import {
+  discoverGreenDependencyPrs,
+  discoverRedDependencyPrs,
+  type DependencyPr,
+  type PrDiscoveryClient,
+} from "./cron/dependabot-discovery.js";
 import { mountAdmin } from "./admin/index.js";
 import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { writeEgressFirewallConfigs, writeOtelCollectorConfig } from "./sandbox/egress-firewall-config.js";
@@ -686,6 +691,22 @@ async function main() {
     }
   }
 
+  // Dependency-PR discoverers keyed by a cron context's `discover` value. Each
+  // returns the eligible PRs (in code, no LLM); the runner fans out one run per
+  // PR. Add a discoverer + a `cron-*.yaml` with the matching `discover:` key to
+  // introduce a new backstop sweep.
+  const DEP_PR_DISCOVERERS: Record<
+    string,
+    (
+      repos: string[],
+      gh: PrDiscoveryClient,
+      opts: { log?: (msg: string) => void },
+    ) => Promise<DependencyPr[]>
+  > = {
+    "green-dependency-prs": discoverGreenDependencyPrs,
+    "red-dependency-prs": discoverRedDependencyPrs,
+  };
+
   // Construct the cron scheduler before mounting admin so the dashboard can
   // list/toggle/edit registered cron jobs. Jobs are registered further down
   // (after we know whether webhooks are enabled). The runner closes over
@@ -693,26 +714,32 @@ async function main() {
   const cron = new CronScheduler(db, async (workflowName, context) => {
     let dispatched: number;
     let failures: number;
-    if (context.discover === "green-dependency-prs") {
-      // Deterministic per-PR fan-out (replaces the old `mode: scan` agent sweep,
-      // which buried the model in every open PR's lockfile churn until its
-      // context overflowed). Find the green dependency PRs in code, then dispatch
-      // one bounded single-PR run each — the same shape the `pr.checks_passed`
-      // webhook produces. Runs queue against the global concurrency cap.
+    // A cron whose context sets `discover: <key>` fans out one bounded single-PR
+    // run per discovered PR (replaces the old `mode: scan` agent sweep, which
+    // buried the model in every open PR's lockfile churn until its context
+    // overflowed). Each discoverer finds the eligible dependency PRs in code, and
+    // we dispatch one run each — the same shape the pr.checks_passed /
+    // pr.checks_failed webhooks produce. Runs queue against the global cap.
+    const discoverKey = typeof context.discover === "string" ? context.discover : undefined;
+    const discoverer = discoverKey ? DEP_PR_DISCOVERERS[discoverKey] : undefined;
+    if (discoverer) {
       const repos = Array.isArray(context.repos)
         ? (context.repos as unknown[]).filter((r): r is string => typeof r === "string")
         : [];
       const prs = github
-        ? await discoverGreenDependencyPrs(repos, github, { log: (m) => console.log(m) })
+        ? await discoverer(repos, github, { log: (m) => console.log(m) })
         : [];
       console.log(
-        `[cron] ${workflowName}: ${prs.length} green dependency PR(s) across ${repos.length} repo(s)`,
+        `[cron] ${workflowName}: ${prs.length} ${discoverKey} across ${repos.length} repo(s)`,
       );
       const contexts = prs.map((pr) => ({
         _triggerType: "cron",
         repo: pr.repo,
         prNumber: pr.prNumber,
         title: pr.title,
+        // Present only for the red sweep — `dispatchWorkflow` pre-clones this
+        // head ref for dependabot-ci-fix's checkout (a PR_FIX_SHAPED_WORKFLOWS).
+        ...(pr.branch ? { branch: pr.branch } : {}),
       }));
       ({ dispatched, failures } = await fanOutContexts(workflowName, contexts, dispatchWorkflow));
     } else {

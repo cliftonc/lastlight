@@ -28,10 +28,14 @@ classification:
     <pkg>") whose CI checks have PASSED and which may be safe to auto-merge with
     no code change. Choose this ONLY for a passing dependency-bump PR that needs
     no fix; prefer DEPENDABOTCIFIX when a dependency PR's checks have FAILED, and
-    REVIEW for a normal (non-dependency) PR.
+    REVIEW for a normal (non-dependency) PR. Also choose it when a maintainer's
+    comment asks the bot to handle/look at/land such a PR and `PR CHECKS` is
+    `passing` (with a `PR AUTHOR` of dependabot[bot]/renovate[bot]) — but keep
+    REVIEW when they explicitly ask for a review.
   examples:
     - 'PR "Bump lodash from 4.17.20 to 4.17.21" by dependabot[bot] — its CI checks have passed. → INTENT: DEPENDABOTPRMERGE, REPO: NONE, ISSUE: NONE, REASON: NONE'
     - 'PR "chore(deps): bump actions/checkout from 3 to 4" by renovate[bot] — its CI checks have passed. → INTENT: DEPENDABOTPRMERGE, REPO: NONE, ISSUE: NONE, REASON: NONE'
+    - 'PR AUTHOR: renovate[bot], PR CHECKS: passing, COMMENT: "@bot can you look at this?" → INTENT: DEPENDABOTPRMERGE, REPO: NONE, ISSUE: NONE, REASON: NONE'
 
 phases:
   # Single phase. Runs under this workflow's repo-write profile, so agentic-pi's

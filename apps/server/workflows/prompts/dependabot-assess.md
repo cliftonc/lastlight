@@ -22,6 +22,23 @@ Call it **TRIVIAL** only if ALL of these hold:
 If you are unsure, or the change touches application logic, treat it as
 **FUNCTIONAL**. When in doubt, do NOT auto-merge.
 
+STEP 2b — Record the verdict as a label (state machine).
+First ensure the label vocabulary exists in ONE idempotent `github_ensure_labels`
+call (`{ owner: "{{owner}}", repo: "{{repo}}", labels: [...] }`) — it lists once
+and creates only the missing ones, so it never errors on labels that exist:
+- `dependency-trivial` — color `0e8a16` — "Trivial & safe dependency update (auto-merge path)."
+- `dependency-functional` — color `fbca04` — "Dependency update has functional impact — needs human review."
+- `requires-human` — color `b60205` — "Last Light can't proceed automatically; a maintainer must handle it."
+If `github_ensure_labels` is denied, fall back to using only labels that already
+exist and skip the rest. Then apply exactly the labels for your verdict via
+`github_add_labels` and clear the superseded ones with `github_remove_label` (only
+ever touch these three labels — never remove one outside this vocabulary):
+- **TRIVIAL** → add `dependency-trivial`; remove `dependency-functional` and
+  `requires-human` if present. (Your fix succeeded and is trivial, so this clears
+  any `requires-human` a prior failed fix left on the PR.)
+- **FUNCTIONAL** → add `dependency-functional` and `requires-human`; remove
+  `dependency-trivial` if present.
+
 STEP 3 — Act on the classification.
 - If **TRIVIAL**: enable auto-merge by calling the `github_enable_auto_merge`
   tool with `{ owner: "{{owner}}", repo: "{{repo}}", pull_number: {{prNumber}},
