@@ -35,14 +35,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # most runs never touch. Instead a repo pinning another version triggers
 # `fnm install` + `fnm use` via the bashrc hook below, fetching from nodejs.org
 # (on the sandbox egress allowlist, so it works under strict mode).
+#
+# CRITICAL: FNM_DIR is root-owned but the agent runs NON-ROOT (uid 10001), and
+# `fnm install` writes the fetched Node into `$FNM_DIR/node-versions/`. `chmod
+# -R a+rX` alone (read/execute, no write) means that on-demand install EACCESes
+# and the hook silently falls back to system Node 24 — so a repo's .nvmrc pin is
+# ignored. Both mutable dirs (`multishells` per-shell symlinks, `node-versions`
+# on-demand installs) must be world-writable; sticky (1777) like /tmp.
 ENV FNM_DIR=/usr/local/share/fnm
 ENV PATH=$FNM_DIR/aliases/default/bin:$PATH
 RUN curl -fsSL https://fnm.vercel.app/install \
       | bash -s -- --install-dir "$FNM_DIR" --skip-shell \
  && ln -s "$FNM_DIR/fnm" /usr/local/bin/fnm \
  && chmod -R a+rX "$FNM_DIR" \
- && mkdir -p "$FNM_DIR/multishells" \
- && chmod 1777 "$FNM_DIR/multishells"
+ && mkdir -p "$FNM_DIR/multishells" "$FNM_DIR/node-versions" \
+ && chmod 1777 "$FNM_DIR/multishells" "$FNM_DIR/node-versions"
 
 # Source fnm in every bash invocation (interactive or not). BASH_ENV makes
 # non-interactive `bash -c` read this file — that's how opencode's bash tool
@@ -70,6 +77,19 @@ RUN printf '%s\n' \
 # at it would skip our setup for `bash -c` invocations (which is the path
 # the agent's bash tool uses).
 ENV BASH_ENV=/etc/bash.bashrc.fnm
+
+# pnpm / yarn via corepack. The base ships only npm, but repos pinning pnpm
+# (pnpm-lock.yaml + a `packageManager` field) need a `pnpm` on PATH. `corepack
+# enable` — run HERE as root — drops root-owned pnpm/yarn shims into
+# /usr/local/bin; the non-root agent user can't do this itself at runtime (both
+# `npm i -g pnpm` and `corepack enable` EACCES on the root-owned /usr/local, the
+# exact failure seen when a build hit `pnpm: command not found`). The shims
+# resolve each repo's pinned version at run time into the agent's writable
+# corepack cache (~/.cache/node), and are Node-version-agnostic so they keep
+# working after fnm switches Node. COREPACK_ENABLE_DOWNLOAD_PROMPT=0 keeps that
+# first-run fetch non-interactive (a y/N prompt would hang the bash tool).
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip pipx \
