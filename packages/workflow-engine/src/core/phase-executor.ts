@@ -331,6 +331,17 @@ async function runPhaseLedger(
         return { result, executionId, skipped: false };
       } catch (err) {
         observability.recordError("phase", err, attrs);
+        // `run(...)` threw before it could `recordFinish` — e.g. provisioning
+        // (prePopulateWorkspace) failed before the agent even started. Without
+        // this the `executions` row stays `started` forever (renders `…` in the
+        // CLI/dashboard instead of `✗`). The success path already finished the
+        // row and returned, so this only fires on a genuine throw — no
+        // double-finish.
+        db.executions.recordFinish(executionId, {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+          stopReason: "error_fatal",
+        });
         throw err;
       }
     }

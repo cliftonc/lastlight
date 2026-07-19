@@ -294,7 +294,16 @@ Per phase:
    token downscoped to the profile's permissions. Optionally scoped to
    a specific repository allowlist.
 2. The token (not the PEM) is forwarded into the sandbox via
-   `GIT_TOKEN` and `GITHUB_TOKEN` env vars.
+   `GIT_TOKEN` and `GITHUB_TOKEN` env vars. Git operations authenticate
+   with it through a **github.com-scoped `http.extraheader`** (Basic
+   `x-access-token:<token>`) injected via `GIT_CONFIG_*` env in
+   `agentGitIdentityEnv` (`sandbox/sandbox.ts`) — never a token in a clone
+   URL, never a credentials file on disk. The header resolves via
+   `git config --get-urlmatch` and is scoped to github.com only, so the
+   token is never sent to package registries or other egress. The token can
+   carry any character GitHub returns (`.`/`/`/`+`/`=`); it rides base64
+   inside the header, so no charset guard is needed. See
+   `sandbox/git-http-auth.ts`.
 3. The PEM only reaches the sandbox if the profile sets
    `allowMcpAppAuth: true` — currently only `repo-write` does. The
    container entrypoint then copies `/data/secrets/app.pem` into the
@@ -362,20 +371,27 @@ Per-phase model and variant overrides resolve through
    `/data/secrets/app.pem` to `$AGENT_HOME/.config/app.pem` only when
    `ALLOW_APP_PEM=1`. Otherwise `GITHUB_APP_PRIVATE_KEY_PATH=""`.
 3. **Write AGENTS.md** — `cat /app/agent-context/*.md > "$WORKSPACE/AGENTS.md"`.
-4. **Configure git identity + credentials** — system-scoped, using
-   `GIT_TOKEN` via `git credential.helper store`. No shell
-   interpolation of the token value.
-5. **Signal readiness** — `touch "$WORKSPACE/.ready"`. The harness
+4. **Signal readiness** — `touch "$WORKSPACE/.ready"`. The harness
    waits up to 15 s for this file before sending the first command.
-6. **Drop privileges** — `exec gosu agent "$@"`.
+5. **Drop privileges** — `exec gosu agent "$@"`.
+
+The entrypoint no longer configures git identity or credentials: the bot
+identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`) and the github.com-scoped
+`http.extraheader` auth both arrive as `GIT_CONFIG_*` env from
+`agentGitIdentityEnv`, which reaches every `docker exec` — so there is no
+`credential.helper store`, no on-disk credentials file, and no
+`--system` git config. (`LASTLIGHT_GIT_CREDENTIALS` is now inert.)
 
 ## Lifecycle
 
 1. **Pre-population** — if `prePopulateBranch` is set, the harness
    clones the repo into the worktree *before* starting the sandbox.
    The agent enters a workspace already checked out to the right
-   branch, saving a `clone_repo` MCP call. Pre-clone errors are
-   token-scrubbed before logging (`sandbox/index.ts:213–214`).
+   branch, saving a `clone_repo` MCP call. The host clone uses a plain
+   URL authenticated by a one-shot `-c http.extraheader` flag (nothing
+   persisted), and `origin` is normalized to the credential-free URL on
+   every path. Pre-clone errors are scrubbed (token **and** its base64)
+   before logging (`sandbox/index.ts`).
 2. **Spawn** — `docker run -d` or VM start. Container/VM mapped to the
    `taskId` in `activeContainers`.
 3. **Run** — `docker exec -i -w <cwd> {container} sh -c "agentic-pi run ..."`
