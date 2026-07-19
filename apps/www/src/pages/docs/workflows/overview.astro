@@ -131,7 +131,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 				</span>
 				<span class="workflow-card-name">Dependabot CI fix</span>
 			</div>
-			<p>Fixes a dependency-update PR whose checks failed, then auto-merges the trivial ones once CI is green — via webhook and a daily per-PR cron backstop.</p>
+			<p>Fixes a dependency-update PR whose checks failed — brings the branch up to date, pushes the smallest fix, and hands the merge decision to dependabot-pr-merge once CI is green. Via webhook and a daily per-PR cron backstop.</p>
 			<span class="workflow-card-meta">2 phases &middot; webhook + cron</span>
 		</a>
 
@@ -288,7 +288,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 			<tr>
 				<td><strong>repo-write</strong></td>
 				<td>build, pr-fix, dependabot-ci-fix, dependabot-pr-merge</td>
-				<td>Full read/write — can push commits, create branches, open PRs (dependabot-ci-fix and dependabot-pr-merge also enable auto-merge; dependabot-pr-merge only enables auto-merge and never pushes)</td>
+				<td>Full read/write — can push commits, create branches, open PRs (dependabot-ci-fix pushes fixes but never merges; dependabot-pr-merge enables auto-merge / merges and never pushes)</td>
 			</tr>
 			<tr>
 				<td><strong>repo-write</strong></td>

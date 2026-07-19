@@ -27,13 +27,6 @@ describe("dependency-PR label vocabulary is in sync with the prompts", () => {
     expect(md).toContain(REQUIRES_HUMAN_LABEL);
   });
 
-  it("dependabot-assess.md applies all three lifecycle labels", () => {
-    const md = read("dependabot-assess.md");
-    expect(md).toContain(DEP_TRIVIAL_LABEL);
-    expect(md).toContain(DEP_FUNCTIONAL_LABEL);
-    expect(md).toContain(REQUIRES_HUMAN_LABEL);
-  });
-
   it("dependabot-ci-fix.md flags the give-up path with requires-human", () => {
     const md = read("dependabot-ci-fix.md");
     expect(md).toContain(REQUIRES_HUMAN_LABEL);

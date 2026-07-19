@@ -8,10 +8,12 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 	<p>
 		Dependabot PR merge is the proactive companion to
 		<a href="/docs/workflows/dependabot-ci-fix">Dependabot CI fix</a>. That one
-		repairs a dependency-update PR whose CI went <em>red</em>; this one handles
-		the PRs that are already <em>green</em> and need no fix — it reads the diff,
-		decides whether the bump is trivial, and enables GitHub auto-merge (squash)
-		so the safe ones land without a human in the loop.
+		repairs a dependency-update PR whose CI went <em>red</em> and then hands off to
+		this one; this workflow handles every <em>green</em> dependency PR — both the
+		naturally-green ones and the ones ci-fix just fixed — and is the single owner
+		of the merge decision: it reads the diff, decides whether the bump is trivial,
+		and enables GitHub auto-merge (squash) so the safe ones land without a human in
+		the loop.
 	</p>
 
 	<div class="docs-callout tip">

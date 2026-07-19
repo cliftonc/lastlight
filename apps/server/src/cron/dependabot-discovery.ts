@@ -36,9 +36,9 @@
  * Last Light dependency-PR lifecycle labels. THE single source of truth for
  * these strings. The discovery exclusion below imports `REQUIRES_HUMAN_LABEL`;
  * the dependabot PROMPTS hardcode the same strings (markdown can't import) —
- * `workflows/prompts/dependabot-pr-merge.md`, `dependabot-assess.md`,
- * `dependabot-ci-fix.md`. `tests/cron/label-vocab.test.ts` asserts those prompt
- * files contain these exact strings so the code and the prompts never drift.
+ * `workflows/prompts/dependabot-pr-merge.md` and `dependabot-ci-fix.md`.
+ * `tests/cron/label-vocab.test.ts` asserts those prompt files contain these
+ * exact strings so the code and the prompts never drift.
  */
 export const DEP_TRIVIAL_LABEL = "dependency-trivial";
 export const DEP_FUNCTIONAL_LABEL = "dependency-functional";

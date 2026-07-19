@@ -7,11 +7,13 @@ import { getWorkflow, getCronWorkflows, getWorkflowByIntent } from "#src/workflo
  * schema break or an accidental rewiring of the intent / cron is caught.
  */
 describe("dependabot-ci-fix — built-in workflow + cron", () => {
-  it("loads with fix → assess phases and the dependabot-ci-fix intent", () => {
+  it("loads with a single fix phase and the dependabot-ci-fix intent", () => {
     const def = getWorkflow("dependabot-ci-fix");
     expect(def.name).toBe("dependabot-ci-fix");
     expect(def.classification?.intent).toBe("dependabot-ci-fix");
-    expect(def.phases.map((p) => p.name)).toEqual(["fix", "assess"]);
+    // Fix-only: it never classifies/labels/merges — once its push turns checks
+    // green, `dependabot-pr-merge` owns that decision (see router pr.checks_passed).
+    expect(def.phases.map((p) => p.name)).toEqual(["fix"]);
   });
 
   it("is resolvable by intent (the router's pr.checks_failed fallback route)", () => {
