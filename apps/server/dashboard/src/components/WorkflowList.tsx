@@ -18,7 +18,7 @@ import {
   nullableStringSerializer,
 } from "../hooks/useUrlState";
 import { timeRangeToSince } from "../lib/timeRange";
-import { repoUrl, issueUrl } from "../lib/githubLinks";
+import { repoUrl, issueUrl, runRepoPath } from "../lib/githubLinks";
 import { GhLink } from "./GhLink";
 
 function timeAgo(iso: string): string {
@@ -365,7 +365,7 @@ function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, o
         <StatusBadge status={run.status} />
         {run.repo &&
           (() => {
-            const href = repoUrl(run.repo);
+            const href = repoUrl(runRepoPath(run));
             const cls = "text-xs text-base-content/50 font-mono";
             return href ? (
               <GhLink href={href} className={cls} title={`Open ${run.repo} on GitHub`}>
@@ -377,7 +377,7 @@ function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, o
           })()}
         {run.issueNumber &&
           (() => {
-            const href = issueUrl(run.repo, run.issueNumber, run.workflowName);
+            const href = issueUrl(runRepoPath(run), run.issueNumber, run.workflowName);
             const cls = "text-xs text-base-content/50 font-mono";
             return href ? (
               <GhLink href={href} className={cls} title={`Open #${run.issueNumber} on GitHub`}>
@@ -694,7 +694,7 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                     <div className="flex gap-2 text-2xs text-base-content/40 w-full font-mono">
                       {run.repo &&
                         (() => {
-                          const href = repoUrl(run.repo);
+                          const href = repoUrl(runRepoPath(run));
                           return href ? (
                             <GhLink href={href} className="truncate" title={`Open ${run.repo} on GitHub`}>
                               {run.repo}
@@ -705,7 +705,7 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                         })()}
                       {run.issueNumber &&
                         (() => {
-                          const href = issueUrl(run.repo, run.issueNumber, run.workflowName);
+                          const href = issueUrl(runRepoPath(run), run.issueNumber, run.workflowName);
                           return href ? (
                             <GhLink href={href} title={`Open #${run.issueNumber} on GitHub`}>
                               #{run.issueNumber}

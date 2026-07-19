@@ -13,7 +13,7 @@ import {
 import { api, type WorkflowRun, type ContainerStats } from "../api";
 import { useStatsSeries } from "../hooks/useDailyStats";
 import { useTheme } from "../hooks/useTheme";
-import { repoUrl, issueUrl } from "../lib/githubLinks";
+import { repoUrl, issueUrl, runRepoPath } from "../lib/githubLinks";
 import { GhLink } from "./GhLink";
 import clsx from "clsx";
 
@@ -229,8 +229,10 @@ function useRecentWorkflows() {
  */
 function RunTarget({ run }: { run: WorkflowRun }) {
   if (!run.repo && !run.issueNumber) return <span className="flex-1" />;
-  const rHref = repoUrl(run.repo);
-  const iHref = issueUrl(run.repo, run.issueNumber, run.workflowName);
+  // `run.repo` is a BARE name; resolve the qualified `owner/repo` for the URL.
+  const repoPath = runRepoPath(run);
+  const rHref = repoUrl(repoPath);
+  const iHref = issueUrl(repoPath, run.issueNumber, run.workflowName);
   return (
     <span className="font-mono text-base-content/50 truncate flex-1">
       {run.repo &&
