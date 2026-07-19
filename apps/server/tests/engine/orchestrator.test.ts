@@ -241,9 +241,27 @@ describe("Sandbox orchestrator (FakeSandbox)", () => {
       { sandboxFactory: fake.asFactory() },
     );
 
-    // sandboxEnv is undefined (no upstream env, no base-url override) — so the
-    // script falls back to api.github.com with its minted token in prod.
+    // No base-url override — so the script falls back to api.github.com with its
+    // minted token in prod. (sandboxEnv still carries the git identity, below.)
     expect(fake.receivedCommandOpts?.sandboxEnv?.GITHUB_API_URL).toBeUndefined();
+  });
+
+  it("threads git identity into command/script phases (so their commits are attributed)", async () => {
+    const fake = new FakeSandbox({
+      commandResult: { exitCode: 0, stdout: "", stderr: "", timedOut: false },
+    });
+
+    await executeCommand(
+      { kind: "bash", command: "git commit -am x" },
+      { sandbox: "none", stateDir, sessionsDir },
+      { sandboxFactory: fake.asFactory() },
+    );
+
+    // Same agentGitIdentityEnv the agent path gets — a deterministic-phase commit
+    // must not be left identity-less. Resolves to the botLogin default in tests.
+    const env = fake.receivedCommandOpts?.sandboxEnv;
+    expect(env?.GIT_AUTHOR_NAME).toBe("last-light[bot]");
+    expect(env?.GIT_COMMITTER_NAME).toBe("last-light[bot]");
   });
 
   it("skips the session jsonl when writeSession is false", async () => {
