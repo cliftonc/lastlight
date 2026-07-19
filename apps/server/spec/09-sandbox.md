@@ -284,7 +284,7 @@ export const GITHUB_PERMISSION_PROFILES = {
   read:           { contents: "read",  issues: "read",  pull_requests: "read",  metadata: "read" },
   "issues-write": { contents: "read",  issues: "write", pull_requests: "read",  metadata: "read" },
   "review-write": { contents: "read",  issues: "write", pull_requests: "write", metadata: "read" },
-  "repo-write":   { contents: "write", issues: "write", pull_requests: "write", metadata: "read" },
+  "repo-write":   { contents: "write", issues: "write", pull_requests: "write", workflows: "write", metadata: "read" },
 };
 ```
 

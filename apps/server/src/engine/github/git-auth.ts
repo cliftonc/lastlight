@@ -8,12 +8,13 @@ export type GitHubPermissionLevel = "read" | "write";
 
 /**
  * Subset of GitHub App installation-token permissions supported by Last Light.
- * Any omitted permission inherits the app's installation defaults.
+ * A profile's `permissions` object scopes the minted token to exactly its keys.
  */
 export type GitHubTokenPermissions = Partial<{
   contents: GitHubPermissionLevel;
   issues: GitHubPermissionLevel;
   pull_requests: GitHubPermissionLevel;
+  workflows: GitHubPermissionLevel;
   metadata: GitHubPermissionLevel;
 }>;
 

@@ -18,12 +18,16 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 		<div class="docs-callout-body">
 			<strong>Permission profile:</strong> <code>repo-write</code> — needed for
 			the <code>github_enable_auto_merge</code> and <code>github_merge_pull_request</code>
-			tools. It never pushes code. It prefers to enable auto-merge, which lets
-			GitHub merge the PR once its required checks pass and refuses on a red or
-			still-running PR — that is the green gate. It merges directly only in the
-			one case where GitHub has no checks to wait on, and only after confirming
-			the PR's <code>mergeable_state</code> is <code>clean</code> so a repo with
-			no <em>required</em> checks can't slip a red PR through.
+			tools. It never pushes code or rebases branches itself. It prefers to
+			enable auto-merge, which lets GitHub merge the PR once its required checks
+			pass and refuses on a red or still-running PR — that is the green gate. It
+			merges directly only in the one case where GitHub has no checks to wait on,
+			and only after confirming the PR's <code>mergeable_state</code> is
+			<code>clean</code> so a repo with no <em>required</em> checks can't slip a
+			red PR through. When a trivial PR is merely <em>behind</em> the base branch
+			or has a lockfile conflict, it asks the bot that opened the PR to rebase or
+			recreate its own branch (via <code>github_add_issue_comment</code> /
+			<code>github_add_labels</code>) rather than pushing a merge itself.
 		</div>
 	</div>
 
@@ -43,6 +47,7 @@ import DocsLayout from '../../../layouts/DocsLayout.astro';
 		<li>Runs against a <strong>single PR</strong> at a time — its context is bounded, so it can't overflow. Inspects through the <code>github_list_pull_request_files</code> tool (changed files + line counts) — no repository checkout needed — deliberately skips lockfile diffs, and pulls <code>github_get_pull_request_diff</code> only for a small non-lockfile source change</li>
 		<li>Classifies the change conservatively: only lockfile / manifest bumps, GitHub Actions tag/SHA bumps, type-only or mechanical edits count as <strong>trivial</strong>; anything touching runtime logic, anything security-sensitive, and major-version bumps are <strong>functional</strong></li>
 		<li>If trivial, enables GitHub auto-merge (squash) so the PR merges once its checks pass. If GitHub refuses auto-merge because the PR is already mergeable with no required checks ("clean status"), it direct-squash-merges instead — but only after confirming <code>mergeable_state</code> is <code>clean</code>, so it won't land a PR whose non-required checks are failing; if the repository disallows auto-merge outright, it comments for a maintainer. Functional PRs are left for a human with a comment</li>
+		<li>If a trivial PR is <strong>behind</strong> the base branch or <strong>dirty</strong> (a lockfile conflict), it doesn't give up: it asks the bot that opened the PR to update its own branch — <code>@dependabot rebase</code> / <code>@dependabot recreate</code> for Dependabot, or Renovate's <code>rebase</code> label — because the bot regenerates lockfiles correctly. It enables auto-merge at the same time, so GitHub lands the PR once the rebase re-runs the checks green. A non-Dependabot/Renovate PR that's behind is left for a human to rebase</li>
 		<li>When in doubt, it does not auto-merge</li>
 		<li>Every run must sign off with a machine-readable completion marker; a run that inspects files but reaches no verdict and takes no action is recorded as <strong>failed</strong>, not a silent green</li>
 	</ul>
