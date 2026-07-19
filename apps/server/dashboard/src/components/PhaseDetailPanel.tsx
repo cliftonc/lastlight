@@ -143,7 +143,11 @@ export function PhaseDetailPanel({
     ? execution.success === true
       ? "succeeded"
       : execution.success === false
-        ? "failed"
+        ? // Cascade-skipped phases are stored success=0 with stopReason="skipped";
+          // they never ran, so label them "skipped" rather than "failed".
+          execution.stopReason === "skipped"
+          ? "skipped"
+          : "failed"
         : "running"
     : historyEntry
       ? historyEntry.success
@@ -160,7 +164,7 @@ export function PhaseDetailPanel({
     "badge-error": statusLabel === "failed",
     "badge-info": statusLabel === "active" || statusLabel === "running",
     "badge-warning": statusLabel === "paused",
-    "badge-ghost": statusLabel === "pending",
+    "badge-ghost": statusLabel === "pending" || statusLabel === "skipped",
   });
 
   // Second tab groups "what got loaded" for this run — agentic-pi extensions
