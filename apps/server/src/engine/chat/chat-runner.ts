@@ -12,26 +12,24 @@
  */
 import { randomUUID } from "node:crypto";
 import { Octokit } from "octokit";
-import {
-  completeSimple,
-  getModel,
-  type AssistantMessage,
-  type Context,
-  type Message,
-  type Model,
-  type Api,
-  type SimpleStreamOptions,
-  type ThinkingLevel,
-  type Tool,
-  type ToolCall,
-  type ToolResultMessage,
-  type UserMessage,
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
+import type {
+  AssistantMessage,
+  Context,
+  Message,
+  Model,
+  Api,
+  SimpleStreamOptions,
+  ThinkingLevel,
+  Tool,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage,
 } from "@earendil-works/pi-ai";
 import type { SessionManager } from "../../connectors/messaging/session-manager.js";
 import { buildChatGitHubTools, type ChatGitHubAuth, type ChatGitHubToolset } from "../github/github-tools.js";
 import {
   OAUTH_ONLY_PROVIDERS,
-  getOAuthProvider,
   oauthProviderIdForModel,
   resolveOAuthApiKey,
 } from "../oauth.js";
@@ -309,11 +307,8 @@ export class ChatRunner {
         const res = await resolveOAuthApiKey(this.oauthProviderId);
         if (res) {
           apiKey = res.apiKey;
-          // Some providers rewrite the model (e.g. base URL) from credentials.
-          const prov = getOAuthProvider(this.oauthProviderId);
-          if (prov?.modifyModels) {
-            effectiveModel = prov.modifyModels([model], res.credentials)[0] ?? model;
-          }
+          // (Model base-URL adjustment from credentials is handled inside
+          // pi-ai's OAuthAuth.toAuth() in the new API; no per-call override needed.)
         } else if (OAUTH_ONLY_PROVIDERS.has(this.oauthProviderId)) {
           // OAuth-only provider with no stored credentials — cannot fall back
           // to an API key, so fail this turn with an actionable message.
