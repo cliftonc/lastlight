@@ -115,6 +115,9 @@ export interface WorkflowRun {
   id: string;
   workflowName: string;
   triggerId: string;
+  /** GitHub org/user owning {@link repo}; composes the qualified `owner/repo`. */
+  owner?: string;
+  /** BARE repo name (no owner) — see {@link runRepoPath} to qualify it. */
   repo?: string;
   issueNumber?: number;
   currentPhase: string;

@@ -22,28 +22,29 @@ export function repoUrl(repo: string | null | undefined): string | null {
 /**
  * Resolve a run's qualified `owner/repo` for linking, else `null`.
  *
- * Workflow runs store `repo` as a BARE name (`drizzle-cube-help`) — the owner
- * isn't on that field — so `repoUrl(run.repo)` alone never links a run. The
- * qualified path lives elsewhere: `triggerId` is `owner/repo#N` (present in the
- * list payload) and `context.owner` carries the owner (detail payload only).
- * Prefer whichever already yields a full `owner/repo`.
+ * Runs store `repo` as a BARE name (`drizzle-cube-help`) and the owner in a
+ * separate `owner` column (both in the list + detail payloads), so
+ * `repoUrl(run.repo)` alone never links a run — compose owner + repo. Older
+ * rows may carry the owner only in `context.owner` (detail) or embedded in the
+ * `owner/repo#N` / `owner/repo::workflow` `triggerId`; both are fallbacks.
  */
 export function runRepoPath(run: {
   repo?: string | null;
+  owner?: string | null;
   triggerId?: string | null;
   context?: Record<string, unknown> | null;
 }): string | null {
   const bare = run.repo?.trim();
   if (bare && OWNER_REPO.test(bare)) return bare;
-  // `triggerId` is built as `owner/repo#N` (issue/PR-scoped) or
-  // `owner/repo::workflowName` (repo-scoped) — pull the LEADING `owner/repo`,
-  // stopping at the `#` or `:` suffix so `owner/repo::repo-health` doesn't
-  // slip through as a bogus repo. Slack/cron trigger ids won't match → no link.
+  // Explicit `owner` column (+ `context.owner` for pre-migration rows).
+  const owner =
+    run.owner?.trim() ||
+    (typeof run.context?.owner === "string" ? run.context.owner.trim() : "");
+  if (bare && owner && !bare.includes("/")) return `${owner}/${bare}`;
+  // Legacy fallback: pull the LEADING `owner/repo` from the trigger id, stopping
+  // at the `#` or `:` suffix so `owner/repo::repo-health` can't slip through.
   const fromTrigger = run.triggerId?.match(/^([^/\s#:]+\/[^/\s#:]+)(?:$|[#:])/)?.[1];
   if (fromTrigger) return fromTrigger;
-  // Bare repo + owner from the detail payload's context (list rows omit it).
-  const owner = typeof run.context?.owner === "string" ? run.context.owner.trim() : "";
-  if (bare && owner && !bare.includes("/")) return `${owner}/${bare}`;
   return null;
 }
 
