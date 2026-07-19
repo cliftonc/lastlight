@@ -8,6 +8,8 @@ import {
   type WorkflowRun,
   type WorkflowRunExecution,
 } from "../api";
+import { GhLink } from "./GhLink";
+import { repoUrl, issueUrl } from "../lib/githubLinks";
 
 /**
  * In-SPA navigation to the artifact editor for a specific doc — the Repos tab's
@@ -454,8 +456,32 @@ function ApprovalDetail({
       )}
 
       <div className="text-2xs text-base-content/30 font-mono break-all">
-        {fullRepo}
-        {run.issueNumber ? `#${run.issueNumber}` : ""}
+        {(() => {
+          const rHref = repoUrl(fullRepo);
+          const iHref = issueUrl(fullRepo, run.issueNumber, run.workflowName);
+          return (
+            <>
+              {rHref ? (
+                <GhLink href={rHref} title={`Open ${fullRepo} on GitHub`}>
+                  {fullRepo}
+                </GhLink>
+              ) : (
+                fullRepo
+              )}
+              {run.issueNumber ? (
+                iHref ? (
+                  <GhLink href={iHref} title={`Open #${run.issueNumber} on GitHub`}>
+                    #{run.issueNumber}
+                  </GhLink>
+                ) : (
+                  `#${run.issueNumber}`
+                )
+              ) : (
+                ""
+              )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );

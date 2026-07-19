@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 import { api, type RepoEntry } from "../api";
 import { WorkflowList } from "./WorkflowList";
 import { ArtifactsPage } from "./ArtifactsPage";
+import { GhLink } from "./GhLink";
+import { repoUrl } from "../lib/githubLinks";
 import {
   useUrlState,
   stringParser,
@@ -102,12 +105,23 @@ export function ReposPage({ timeRange, query }: ReposPageProps) {
             <ul className="py-1">
               {visibleRepos.map((r) => {
                 const active = r.repo === repo;
+                const href = repoUrl(r.repo);
                 return (
                   <li key={r.repo}>
-                    <button
+                    {/* role="button" (not <button>) so the GitHub link below can
+                        be a real <a> without nesting interactive elements. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setRepo(r.repo)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setRepo(r.repo);
+                        }
+                      }}
                       className={clsx(
-                        "flex w-full flex-col gap-0.5 px-3 py-1.5 text-left text-xs",
+                        "flex w-full cursor-pointer flex-col gap-0.5 px-3 py-1.5 text-left text-xs",
                         active
                           ? "bg-primary/10 text-primary"
                           : "text-base-content/80 hover:bg-base-300/50",
@@ -115,6 +129,15 @@ export function ReposPage({ timeRange, query }: ReposPageProps) {
                     >
                       <div className="flex items-center gap-2">
                         <span className="flex-1 truncate font-medium">{r.repo}</span>
+                        {href && (
+                          <GhLink
+                            href={href}
+                            className="shrink-0 text-base-content/40 hover:text-primary"
+                            title={`Open ${r.repo} on GitHub`}
+                          >
+                            <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                          </GhLink>
+                        )}
                         {r.lastRunAt && (
                           <span className="shrink-0 text-[10px] text-base-content/40">
                             {timeAgo(r.lastRunAt)}
@@ -130,7 +153,7 @@ export function ReposPage({ timeRange, query }: ReposPageProps) {
                           </span>
                         )}
                       </div>
-                    </button>
+                    </div>
                   </li>
                 );
               })}
@@ -144,7 +167,17 @@ export function ReposPage({ timeRange, query }: ReposPageProps) {
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Sub-tab strip */}
           <div className="flex items-center gap-2 border-b border-base-300 bg-base-200/40 px-4 py-2 shrink-0">
-            <span className="text-sm font-semibold text-base-content font-mono">{repo}</span>
+            {(() => {
+              const href = repoUrl(repo);
+              const cls = "text-sm font-semibold text-base-content font-mono";
+              return href ? (
+                <GhLink href={href} className={cls} title={`Open ${repo} on GitHub`}>
+                  {repo}
+                </GhLink>
+              ) : (
+                <span className={cls}>{repo}</span>
+              );
+            })()}
             <div className="ml-4 flex gap-1">
               {REPO_TABS.map((t) => (
                 <button

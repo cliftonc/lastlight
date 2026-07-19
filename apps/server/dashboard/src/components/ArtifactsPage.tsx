@@ -6,9 +6,12 @@ import {
   type ArtifactRepoEntry,
   type ArtifactKeyEntry,
 } from "../api";
+import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 import { ArtifactEditor } from "./ArtifactEditor";
 import { ArtifactImageViewer } from "./ArtifactImageViewer";
 import { ArtifactVideoViewer } from "./ArtifactVideoViewer";
+import { GhLink } from "./GhLink";
+import { repoUrl } from "../lib/githubLinks";
 import {
   useUrlState,
   stringParser,
@@ -198,22 +201,44 @@ export function ArtifactsPage({ timeRange, query, lockedRepo }: ArtifactsPagePro
             ) : (
               <>
                 <ul className="py-1">
-                  {repos.map((r) => (
-                    <li key={r.slug}>
-                      <button
-                        onClick={() => openRepo(r.slug)}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-base-content/80 hover:bg-base-300/50"
-                      >
-                        <span className="flex-1 truncate font-medium">{r.slug}</span>
-                        <span className="shrink-0 rounded bg-base-200 px-1 text-[10px] text-base-content/60">
-                          {r.keyCount}
-                        </span>
-                        <span className="shrink-0 text-[10px] text-base-content/40">
-                          {timeAgo(r.updatedAt)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                  {repos.map((r) => {
+                    const href = repoUrl(`${r.owner}/${r.repo}`);
+                    return (
+                      <li key={r.slug}>
+                        {/* role="button" (not <button>) so the GitHub link can
+                            be a real <a> without nesting interactive elements. */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openRepo(r.slug)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openRepo(r.slug);
+                            }
+                          }}
+                          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-base-content/80 hover:bg-base-300/50"
+                        >
+                          <span className="flex-1 truncate font-medium">{r.slug}</span>
+                          {href && (
+                            <GhLink
+                              href={href}
+                              className="shrink-0 text-base-content/40 hover:text-primary"
+                              title={`Open ${r.owner}/${r.repo} on GitHub`}
+                            >
+                              <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                            </GhLink>
+                          )}
+                          <span className="shrink-0 rounded bg-base-200 px-1 text-[10px] text-base-content/60">
+                            {r.keyCount}
+                          </span>
+                          <span className="shrink-0 text-[10px] text-base-content/40">
+                            {timeAgo(r.updatedAt)}
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
                 <ListFooter shown={repos.length} total={repoTotal} onLoadMore={() => setRepoLimit((l) => l + PAGE_SIZE)} />
               </>
