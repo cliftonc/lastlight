@@ -485,7 +485,12 @@ lastlight logs search "<text>" [--scope errors|messages|all]
 lastlight server list                  # the lastlight-* docker containers
 lastlight server logs [svc|container] [--tail n] [--since 10m] [--follow]
 lastlight approvals list|approve <id>|reject <id> [--reason "..."]
+lastlight cron list                    # scheduled jobs: schedule, next/last run, status
+lastlight cron trigger <name>          # run a cron now (fire-and-forget; useful for testing)
+lastlight cron enable|disable <name>   # toggle a cron on/off (idempotent)
 lastlight stats [--daily n | --hourly n]
+# Per-command help: lastlight <cmd> help  (e.g. lastlight cron help) — the top-level
+# `lastlight` / `--help` is a compact index; detail lives under each command's help.
 lastlight setup                        # first-run wizard (asks: client | server)
 
 # Server lifecycle (HOST-LOCAL — run on the server, not over HTTP). Operate on a

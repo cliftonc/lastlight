@@ -16,6 +16,19 @@ vi.mock("#src/admin/docker.js", () => ({
   getContainerStats: vi.fn(async () => []),
 }));
 
+// Pin the cron definitions the /crons routes resolve against, so the trigger
+// tests don't depend on the bundled workflows/cron-*.yaml fixture set. Other
+// loader exports (getWorkflow, listAgentWorkflows, …) pass through unchanged.
+vi.mock("#src/workflows/loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#src/workflows/loader.js")>();
+  return {
+    ...actual,
+    getCronWorkflows: vi.fn(() => [
+      { name: "test-cron", workflow: "repo-health", schedule: "0 9 * * 1", context: { foo: "bar" } },
+    ]),
+  };
+});
+
 // Mock arctic so we control OAuth flow without hitting Slack or GitHub
 vi.mock("arctic", () => {
   class Slack {
@@ -1348,5 +1361,46 @@ describe("GET /workflow-runs ?repo=", () => {
     expect(res.status).toBe(200);
     const lastCall = vi.mocked(mockDb.runs.list).mock.calls.at(-1)![0];
     expect(lastCall).toMatchObject({ repo: "acme/api" });
+  });
+});
+
+describe("POST /crons/:name/trigger", () => {
+  it("fires the runner with the cron's workflow + context and returns triggered", async () => {
+    const triggerCron = vi.fn(async () => {});
+    const app = createAdminRoutes(
+      mockDb, mockSessions, mockSessions,
+      makeConfig({ adminPassword: "", triggerCron }),
+    );
+    const res = await request(app, "/crons/test-cron/trigger", { method: "POST" });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      name: "test-cron", workflow: "repo-health", triggered: true,
+    });
+    expect(triggerCron).toHaveBeenCalledTimes(1);
+    const [workflow, context] = triggerCron.mock.calls[0];
+    expect(workflow).toBe("repo-health");
+    // Context merges the managed-repo list with the cron def's own context.
+    expect(context).toMatchObject({ foo: "bar" });
+    expect(context).toHaveProperty("repos");
+  });
+
+  it("returns 404 for an unknown cron", async () => {
+    const triggerCron = vi.fn(async () => {});
+    const app = createAdminRoutes(
+      mockDb, mockSessions, mockSessions,
+      makeConfig({ adminPassword: "", triggerCron }),
+    );
+    const res = await request(app, "/crons/nope/trigger", { method: "POST" });
+    expect(res.status).toBe(404);
+    expect(triggerCron).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when triggerCron is not wired", async () => {
+    const app = createAdminRoutes(
+      mockDb, mockSessions, mockSessions,
+      makeConfig({ adminPassword: "" }),
+    );
+    const res = await request(app, "/crons/test-cron/trigger", { method: "POST" });
+    expect(res.status).toBe(503);
   });
 });

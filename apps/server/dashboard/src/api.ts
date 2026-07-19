@@ -721,6 +721,11 @@ export const api = {
     req<{ name: string; enabled: boolean }>(`/crons/${encodeURIComponent(name)}/toggle`, {
       method: "POST",
     }),
+  triggerCron: (name: string) =>
+    req<{ name: string; workflow: string; triggered: boolean }>(
+      `/crons/${encodeURIComponent(name)}/trigger`,
+      { method: "POST" },
+    ),
   setCronSchedule: (name: string, schedule: string) =>
     req<{ name: string; schedule: string }>(`/crons/${encodeURIComponent(name)}/schedule`, {
       method: "POST",

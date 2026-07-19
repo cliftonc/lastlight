@@ -13,7 +13,7 @@ import { ChatRunner } from "./engine/chat/chat-runner.js";
 import { buildReadSkillTool, loadChatSkillCatalogue } from "./engine/chat/chat-skills.js";
 import { configureGitAuth } from "./engine/github/git-auth.js";
 import { StateDb } from "./state/db.js";
-import { CronScheduler } from "./cron/scheduler.js";
+import { CronScheduler, type WorkflowRunner } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { dispatchCronWorkflow, fanOutContexts } from "./cron/fanout.js";
 import {
@@ -710,8 +710,9 @@ async function main() {
   // Construct the cron scheduler before mounting admin so the dashboard can
   // list/toggle/edit registered cron jobs. Jobs are registered further down
   // (after we know whether webhooks are enabled). The runner closes over
-  // `dispatchWorkflow`, which is defined earlier in this file.
-  const cron = new CronScheduler(db, async (workflowName, context) => {
+  // `dispatchWorkflow`, which is defined earlier in this file. Named (not inline)
+  // so the admin `triggerCron` callback can reuse it to fire a cron on demand.
+  const cronRunner: WorkflowRunner = async (workflowName, context) => {
     let dispatched: number;
     let failures: number;
     // A cron whose context sets `discover: <key>` fans out one bounded single-PR
@@ -750,7 +751,8 @@ async function main() {
         `[cron] ${workflowName}: ${failures}/${dispatched} dispatches failed`,
       );
     }
-  });
+  };
+  const cron = new CronScheduler(db, cronRunner);
 
   // Options for the ledger-driven resume machinery (`resumeSimpleRun`). Shared
   // by the boot-time orphan sweep (`resumeOrphanedWorkflows`, below) AND the
@@ -794,6 +796,7 @@ async function main() {
   {
     mountAdmin(app, db, {
       cronScheduler: cron,
+      triggerCron: cronRunner,
       stateDir: config.stateDir,
       sessionsDir: config.sessionsDir,
       buildAssetsDir: config.buildAssetsDir,

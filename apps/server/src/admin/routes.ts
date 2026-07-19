@@ -175,6 +175,13 @@ export interface AdminConfig {
    * environments where the scheduler isn't running (tests, CLI).
    */
   cronScheduler?: CronScheduler;
+  /**
+   * Fire a cron's workflow now (manual trigger — the "Run now" button + `lastlight
+   * cron trigger`). Wired in `src/index.ts` to the same runner the scheduler uses,
+   * so it drives the cron's real discovery + fan-out. Absent in environments
+   * without the runner (tests, CLI-only) → the trigger endpoint reports 503.
+   */
+  triggerCron?: (workflow: string, context: Record<string, unknown>) => Promise<void>;
   /** Slack OAuth config (optional — enables "Login with Slack" on dashboard) */
   slackOAuthClientId?: string;
   slackOAuthClientSecret?: string;
@@ -1686,6 +1693,28 @@ export function createAdminRoutes(
       });
     }
     return c.json({ name, schedule: def.schedule, enabled: true });
+  });
+
+  // Fire a cron now, on demand (dashboard "Run now" / `lastlight cron trigger`).
+  // Fire-and-forget: a cron fans out one bounded workflow run per repo/PR, which
+  // can take minutes, so we return immediately and let it run in the background.
+  // Goes through the runner (not the scheduler's registered-job map), so it works
+  // even for crons that aren't registered — disabled ones, or the polling crons
+  // dropped when webhooks are live — which is exactly what manual testing needs.
+  // Bypasses the scheduler's per-job overlap guard (acceptable for a manual fire).
+  app.post("/crons/:name/trigger", (c) => {
+    const name = c.req.param("name");
+    const def = getCronWorkflows().find((d) => d.name === name);
+    if (!def) return c.json({ error: `cron not found: ${name}` }, 404);
+    if (!config.triggerCron) {
+      return c.json({ error: "cron trigger not configured" }, 503);
+    }
+    // Same context shape the scheduler + toggle handler build.
+    const context = { repos: getManagedRepos(), ...def.context };
+    config.triggerCron(def.workflow, context).catch((err) => {
+      console.error(`[admin] cron trigger ${name} failed:`, err);
+    });
+    return c.json({ name, workflow: def.workflow, triggered: true });
   });
 
   return app;
