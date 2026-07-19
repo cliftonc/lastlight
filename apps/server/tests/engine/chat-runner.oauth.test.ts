@@ -15,9 +15,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
-// ── mock pi-ai: stub getModel + capture completeSimple's options ────────────
+// ── mock pi-ai compat: stub getModel + capture completeSimple's options ─────
+// completeSimple and getModel moved to @earendil-works/pi-ai/compat in 0.80.10.
 const completeSimpleSpy = vi.fn();
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: (provider: string, id: string) => ({ provider, model: id, api: "faux", baseUrl: "x" }),
   completeSimple: (...args: unknown[]) => completeSimpleSpy(...args),
 }));

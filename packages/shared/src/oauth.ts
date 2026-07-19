@@ -24,12 +24,16 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import {
-  getOAuthApiKey,
-  getOAuthProvider,
-  getOAuthProviders,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
+import type {
+  AuthInteraction,
+  OAuthAuth,
+  OAuthCredential,
+  OAuthCredentials,
+} from "@earendil-works/pi-ai";
+import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { OAUTH_PROVIDERS, oauthProviderByModelPrefix, oauthProviderById } from "./providers.js";
 
 /** Stored form — pi-ai's CLI tags each entry with `type: "oauth"`; we match it. */
@@ -112,7 +116,7 @@ export async function resolveOAuthApiKey(
 ): Promise<OAuthKeyResult | null> {
   const map = loadAuthMap(file, stateDir);
   if (!map[id]) return null;
-  const res = await getOAuthApiKey(id, map);
+  const res = await resolveOAuthApiKeyInternal(id, map);
   if (!res) return null;
   // Persist the rotated credentials so the next refresh chains from the new
   // token rather than re-using a spent one.
@@ -121,5 +125,122 @@ export async function resolveOAuthApiKey(
   return { apiKey: res.apiKey, credentials: res.newCredentials };
 }
 
-/** Re-exported so callers depend on this module, not pi-ai's oauth entry directly. */
-export { getOAuthProvider, getOAuthProviders };
+// ---------------------------------------------------------------------------
+// Adapters for the removed pi-ai `getOAuthApiKey` / `getOAuthProvider` /
+// `getOAuthProviders` functions. pi-ai@0.80.10 replaced the old callback-based
+// OAuth surface with a new `OAuthAuth` / `AuthInteraction` interface. We
+// implement the old shape here so callers in this repo keep working unchanged.
+// ---------------------------------------------------------------------------
+
+/** Map a pi-ai provider id to its OAuthAuth implementation (lazily instantiated). */
+function resolveOAuthAuth(id: string): OAuthAuth | undefined {
+  switch (id) {
+    case "anthropic":
+      return anthropicProvider().auth.oauth;
+    case "github-copilot":
+      return githubCopilotProvider().auth.oauth;
+    case "openai-codex":
+      return openaiCodexProvider().auth.oauth;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Adapt the old `OAuthLoginCallbacks` shape to the new `AuthInteraction`
+ * interface expected by `OAuthAuth.login()`.
+ */
+function adaptToAuthInteraction(callbacks: OAuthLoginCallbacks): AuthInteraction {
+  return {
+    signal: callbacks.signal,
+    notify(event) {
+      if (event.type === "auth_url") {
+        callbacks.onAuth({ url: event.url, instructions: event.instructions });
+      } else if (event.type === "device_code") {
+        callbacks.onDeviceCode({
+          userCode: event.userCode,
+          verificationUri: event.verificationUri,
+          intervalSeconds: event.intervalSeconds,
+          expiresInSeconds: event.expiresInSeconds,
+        });
+      } else if (event.type === "progress") {
+        callbacks.onProgress?.(event.message);
+      }
+      // "info" events have no old-API equivalent — silently drop.
+    },
+    async prompt(p) {
+      if (p.type === "select") {
+        const result = await callbacks.onSelect({
+          message: p.message,
+          options: [...p.options],
+        });
+        return result ?? "";
+      }
+      if (p.type === "manual_code" && callbacks.onManualCodeInput) {
+        return await callbacks.onManualCodeInput();
+      }
+      return await callbacks.onPrompt({
+        message: p.message,
+        placeholder: p.placeholder,
+      });
+    },
+  };
+}
+
+/** Shape of the provider object the old `getOAuthProvider` API returned. */
+export interface LegacyOAuthProvider {
+  readonly id: string;
+  readonly name: string;
+  login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
+}
+
+/** Returns all OAuth providers in the old callback-surface shape. */
+export function getOAuthProviders(): LegacyOAuthProvider[] {
+  return OAUTH_PROVIDERS.map((spec) => ({
+    id: spec.id,
+    name: spec.displayName,
+    async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+      const oauthAuth = resolveOAuthAuth(spec.id);
+      if (!oauthAuth) throw new Error(`OAuth flow not available for provider: ${spec.id}`);
+      return oauthAuth.login(adaptToAuthInteraction(callbacks));
+    },
+  }));
+}
+
+/** Returns the named OAuth provider, or undefined when unknown. */
+export function getOAuthProvider(id: string): LegacyOAuthProvider | undefined {
+  const spec = OAUTH_PROVIDERS.find((p) => p.id === id);
+  if (!spec) return undefined;
+  return {
+    id: spec.id,
+    name: spec.displayName,
+    async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+      const oauthAuth = resolveOAuthAuth(spec.id);
+      if (!oauthAuth) throw new Error(`OAuth flow not available for provider: ${spec.id}`);
+      return oauthAuth.login(adaptToAuthInteraction(callbacks));
+    },
+  };
+}
+
+/** Internal: resolve + refresh an OAuth credential, return the API key. */
+async function resolveOAuthApiKeyInternal(
+  id: string,
+  map: AuthMap,
+): Promise<{ apiKey: string; newCredentials: OAuthCredentials } | null> {
+  const stored = map[id];
+  if (!stored) return null;
+  const oauthAuth = resolveOAuthAuth(id);
+  if (!oauthAuth) return null;
+
+  // Cast: stored credentials match OAuthCredential shape (type: "oauth" + refresh/access/expires).
+  let credential = stored as OAuthCredential;
+
+  // Refresh if expired (60 s buffer to pre-empt clock skew).
+  if (typeof credential.expires === "number" && credential.expires < Date.now() + 60_000) {
+    credential = await oauthAuth.refresh(credential);
+  }
+
+  const auth = await oauthAuth.toAuth(credential);
+  if (!auth.apiKey) return null;
+  return { apiKey: auth.apiKey, newCredentials: credential };
+}
