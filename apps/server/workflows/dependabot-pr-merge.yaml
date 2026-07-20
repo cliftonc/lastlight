@@ -63,7 +63,11 @@ phases:
     # report a false green (e.g. after a context-overflow retry). Fail loudly.
     on_output:
       requires_marker: "ASSESSMENT_COMPLETE"
+    # Deliberately NO on_start / on_success acks: they posted a comment on the PR
+    # on EVERY run (a green suite fires per check-reporting app, plus the daily
+    # cron), which flooded dependency PRs with "Assessing…/Assessed…" noise. The
+    # run now comments only when it has something to say — a real verdict
+    # (functional / requires-human) or a rebase nudge from the prompt, or the
+    # on_failure notice below.
     messages:
-      on_start: "Assessing dependency PR for auto-merge..."
-      on_success: "Assessed the dependency PR — auto-merge enabled if it's a trivial, green update; anything functional left for review."
       on_failure: "Couldn't assess the dependency PR — leaving for a human."

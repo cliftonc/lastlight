@@ -58,8 +58,8 @@ session management, allowlist enforcement, and message chunking.
 | **Normalize** | `GitHubWebhookConnector.normalize()` (`line 157–260`). Runs *after* signature + allowlist. Returns `null` for ignored actions (does not produce an envelope). |
 | **Event types** | `issue.opened`, `issue.reopened`, `issue.closed`, `pr.opened`, `pr.synchronize`, `pr.reopened`, `pr.closed`, `pr.merged`, `pr.checks_failed`, `pr.checks_passed`, `comment.created`, `pr_review.submitted`, `pr_review_comment.created` |
 | **Re-run checks** | `check_run.rerequested` / `check_suite.rerequested` (the GitHub "Re-run" / "Re-run all checks" buttons) normalize to `pr.synchronize` for the PR in the event's `pull_requests[]`, re-triggering pr-review against the current head. Requires the App to subscribe to the **Check run** / **Check suite** events (App permission: Checks: read). |
-| **Failed checks** | `check_suite.completed` with a `failure` / `timed_out` conclusion normalizes to `pr.checks_failed` for the PR in `pull_requests[]` (the head commit supplies the title + author signal). The router runs it through the intent classifier so a workflow that claims a check-failure intent via its `classification` block (e.g. `dependabot-ci-fix`) is picked up; unclaimed → ignored. Requires the **Check suite** subscription (Checks: read). |
-| **Passed checks** | `check_suite.completed` with a `success` conclusion normalizes to `pr.checks_passed`, but **only for dependency-update PRs** — the connector pre-filters on the head commit author (`dependabot[bot]` / `renovate[bot]`) or the suite's head branch (`dependabot/` / `renovate/`) so an ordinary green PR fires nothing. The router routes it deterministically (no classifier call) to the workflow claiming the `dependabot-pr-merge` intent; unclaimed → ignored. Same **Check suite** subscription (Checks: read). |
+| **Failed checks** | `check_suite.completed` with a `failure` / `timed_out` conclusion normalizes to `pr.checks_failed` for the PR in `pull_requests[]` (the head commit supplies the title + author signal). **Settle-aware:** the connector emits only once the head SHA's checks have *fully settled red* (`getChecksConclusion === "failing"` — nothing pending), so a repo with several check-reporting apps fires one event per SHA, not one per suite. The router runs it through the intent classifier so a workflow that claims a check-failure intent via its `classification` block (e.g. `dependabot-ci-fix`) is picked up; unclaimed → ignored. Requires the **Check suite** subscription (Checks: read). |
+| **Passed checks** | `check_suite.completed` with a `success` conclusion normalizes to `pr.checks_passed`, but **only for dependency-update PRs** — the connector pre-filters on the head commit author (`dependabot[bot]` / `renovate[bot]`) or the suite's head branch (`dependabot/` / `renovate/`) so an ordinary green PR fires nothing. **Settle-aware:** it emits only when the head SHA has *fully settled green* (`getChecksConclusion === "passing"`); an earlier suite going green while siblings are still running sees `"pending"` and is dropped, so exactly one event fires per SHA — the last suite to settle. The router routes it deterministically (no classifier call) to the workflow claiming the `dependabot-pr-merge` intent; unclaimed → ignored. Same **Check suite** subscription (Checks: read). |
 | **Filtered out** | `IGNORED_ACTIONS` (line 27): `edited`, `labeled`, `unlabeled`, `assigned`, `closed` (except for the explicit close types above), `pinned`, `transferred`, and friends. Bot self-events are dropped unless the bot opened/synchronised a PR **or** it's a `check_suite.completed` (the failing-CI signal is always bot-sent); a PR **authored** by the bot is dropped from pr-review entirely (self-review guard). |
 | **Reply** | Posts a comment via `replyFn(owner, repo, issueNumber, msg)` (line 237). Returns `Promise<void>`; no useful return value. No-op if `replyFn` or issue context is missing. |
 
@@ -130,8 +130,13 @@ Two of the scheduled crons are **dependency-PR discovery backstops** for the
 Both sweeps **skip any PR carrying the `requires-human` label** — the terminal
 flag the dependabot prompts apply when Last Light can't proceed (a functional
 merge, or a CI fix it couldn't complete) — so the nightly crons don't re-attempt
-what we already know we can't land. The webhooks stay label-blind, so a genuinely
-new bot push is always handled live and the success path clears the label.
+what we already know we can't land. The **webhook path** now honors it too: the
+dispatcher applies a pre-sandbox idempotency guard on the two dependency check
+events (one PR read) that skips a PR carrying `requires-human`, **or** one whose
+current head SHA equals the SHA of the last successful assessment (a re-fired
+suite / cron overlap). A genuinely new push (new head SHA, no `requires-human`)
+still runs once, and an explicit human `@bot` comment is an intentional override
+that the guard does **not** gate.
 
 ## 5. Admin dashboard
 

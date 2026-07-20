@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
+import { cpus } from "node:os";
 
 const exec = promisify(execFile);
 
@@ -12,12 +14,35 @@ export interface ContainerInfo {
   image: string;
 }
 
+/**
+ * `agent` (the harness) and `sandbox` (a live workflow phase) are the workload
+ * containers an operator usually cares about; everything else `lastlight-*`
+ * (caddy, coredns, nginx-egress, otel-collector, egress-init, …) is `infra`
+ * that the dashboard hides by default.
+ */
+export type ContainerKind = "agent" | "sandbox" | "infra";
+
+export function classifyContainer(name: string): ContainerKind {
+  if (name.startsWith("lastlight-sandbox-")) return "sandbox";
+  if (name.startsWith("lastlight-agent")) return "agent";
+  return "infra";
+}
+
 export interface ContainerStats {
   name: string;
+  kind: ContainerKind;
   cpuPercent: number;
   memUsageBytes: number;
   memLimitBytes: number;
   memPercent: number;
+}
+
+export interface HostStats {
+  memTotalBytes: number;
+  memUsedBytes: number;
+  memPercent: number;
+  cpuPercent: number;
+  cpuCount: number;
 }
 
 export async function killContainer(containerName: string): Promise<void> {
@@ -51,6 +76,7 @@ export async function getContainerStats(): Promise<ContainerStats[]> {
         const [usage, limit] = parseMemUsage(c.MemUsage);
         return {
           name,
+          kind: classifyContainer(name),
           cpuPercent,
           memUsageBytes: usage,
           memLimitBytes: limit,
@@ -60,6 +86,69 @@ export async function getContainerStats(): Promise<ContainerStats[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Host-level memory + CPU. Read from the container's own `/proc` — memory and
+ * CPU counters are NOT namespaced by Docker, so inside the agent container these
+ * already reflect the whole host (verified against `free`/`nproc` on the box).
+ * CPU% is sampled over a short interval from `/proc/stat`'s aggregate line.
+ * Returns null off-Linux (e.g. local macOS dev, no `/proc`) or on any read
+ * error, so the dashboard just hides the host row.
+ */
+export async function getHostStats(): Promise<HostStats | null> {
+  try {
+    const mem = await readHostMem();
+    const cpu = await readHostCpu();
+    return {
+      memTotalBytes: mem.totalBytes,
+      memUsedBytes: mem.usedBytes,
+      memPercent: mem.totalBytes > 0 ? (mem.usedBytes / mem.totalBytes) * 100 : 0,
+      cpuPercent: cpu.percent,
+      cpuCount: cpu.count,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function readHostMem(): Promise<{ totalBytes: number; usedBytes: number }> {
+  const raw = await readFile("/proc/meminfo", "utf8");
+  const fields = new Map<string, number>();
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^(\w+):\s+(\d+)\s*kB/);
+    if (m) fields.set(m[1]!, parseInt(m[2]!, 10) * 1024);
+  }
+  const total = fields.get("MemTotal") ?? 0;
+  // MemAvailable already discounts reclaimable cache/slab — the honest
+  // "really in use" figure (matches the `available` column of `free`). This is
+  // deliberately NOT `total - MemFree`, which would count reclaimable cache as used.
+  const available = fields.get("MemAvailable") ?? fields.get("MemFree") ?? 0;
+  return { totalBytes: total, usedBytes: Math.max(total - available, 0) };
+}
+
+// /proc/stat aggregate line: `cpu user nice system idle iowait irq softirq steal ...`
+// (jiffies since boot). Utilisation is the busy fraction of the delta between
+// two reads — idle counts both idle and iowait.
+function parseCpuLine(raw: string): { idle: number; total: number } {
+  const line = raw.split("\n").find((l) => l.startsWith("cpu ")) ?? "";
+  const nums = line.trim().split(/\s+/).slice(1).map(Number);
+  const idle = (nums[3] ?? 0) + (nums[4] ?? 0);
+  const total = nums.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+  return { idle, total };
+}
+
+async function readHostCpu(): Promise<{ percent: number; count: number }> {
+  const count = cpus().length;
+  const a = parseCpuLine(await readFile("/proc/stat", "utf8"));
+  await new Promise((r) => setTimeout(r, 100));
+  const b = parseCpuLine(await readFile("/proc/stat", "utf8"));
+  const idleDelta = b.idle - a.idle;
+  const totalDelta = b.total - a.total;
+  const percent = totalDelta > 0
+    ? Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100))
+    : 0;
+  return { percent, count };
 }
 
 function parsePercent(raw: string | undefined): number {

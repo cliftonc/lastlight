@@ -123,6 +123,20 @@ via a compare-and-set (`admitRun`: `UPDATE … WHERE id = ? AND status =
 safely — only the first writer wins a row. Queued rows older than
 `concurrency.maxQueueWaitMs` are transitioned to `cancelled` by the sweep.
 
+**Boot recovery of queued runs.** A run left `queued` when the harness died
+carries a stale `started_at` that the sweep would instantly TTL-reap. On boot,
+`resumeOrphanedWorkflows` re-stamps each queued orphan's enqueue clock
+(`requeue`, a CAS on `status = 'queued'`) so the admission controller promotes
+it normally instead of dropping it. (`running` orphans are re-dispatched;
+`paused` are left for the approval flow.)
+
+**Retrying a stopped run.** `restartRun` (CAS on `status IN ('failed',
+'cancelled')`) flips the row back to `running`, clears `finished_at` and the
+`context.error` annotation, and re-dispatches via the ledger-driven resume path.
+`cancelled` is retryable because it covers a queue-drop after a server death and
+a manual cancel — both recoverable, neither a permanent verdict. Reached from
+`lastlight workflow retry <id>` and the dashboard Retry button.
+
 ### `workflow_approvals`
 
 ```sql

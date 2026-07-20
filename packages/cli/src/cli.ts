@@ -10,7 +10,7 @@
  *   lastlight <github-url|ref>       Triage that issue (default — cheap)
  *   lastlight build <ref>            Run the FULL build cycle
  *   lastlight workflow list          Inspect recent workflow runs
- *   lastlight workflow retry <id>    Re-run a failed run from where it failed
+ *   lastlight workflow retry <id>    Re-run a failed or cancelled run from where it stopped
  *   lastlight session log <id> -f    Tail a sandbox session live
  *   lastlight logs search "<text>"   Search execution errors / transcripts
  *
@@ -239,7 +239,7 @@ const HELP_TOPICS: Record<string, string> = {
 ${chalk.bold("Workflow")} (inspect + retry workflow runs on the instance)
   lastlight workflow list [--status s] [--workflow name] [--limit n]
   lastlight workflow log <id> [--follow]
-  lastlight workflow retry <id>      Re-run a failed run from the phase that failed`,
+  lastlight workflow retry <id>      Re-run a failed or cancelled run from where it stopped`,
 
   session: `
 ${chalk.bold("Session")} (read agent session transcripts)

@@ -251,6 +251,7 @@ export async function routeEvent(
           sender: envelope.sender,
           author: envelope.issueAuthor,
           labels: envelope.labels,
+          headSha: envelope.headSha,
         },
       };
     }
@@ -283,6 +284,7 @@ export async function routeEvent(
           sender: envelope.sender,
           author: envelope.issueAuthor,
           labels: envelope.labels,
+          headSha: envelope.headSha,
         },
       };
     }

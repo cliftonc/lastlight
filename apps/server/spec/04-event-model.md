@@ -31,6 +31,10 @@ export interface EventEnvelope {
   issueNumber?: number;
   /** PR number, distinct from issueNumber for PR-only routing decisions. */
   prNumber?: number;
+  /** Head commit SHA for PR-shaped events (`pr.checks_passed` / `pr.checks_failed`
+   *  carry the settled check_suite's head_sha). Lets the dependency-workflow
+   *  dedup guard skip a PR already assessed at this exact SHA. */
+  headSha?: string;
   /** Login / username of the originator. */
   sender: string;
   /** Login of the issue/PR original author — distinct from `sender` (the
@@ -63,8 +67,8 @@ export type EventType =
   | "pr.reopened"
   | "pr.closed"
   | "pr.merged"
-  | "pr.checks_failed"    // a check_suite completed with a failure conclusion
-  | "pr.checks_passed"    // a check_suite completed green on a dependency-update PR
+  | "pr.checks_failed"    // a dependency PR's checks settled RED (aggregate)
+  | "pr.checks_passed"    // a dependency PR's checks settled GREEN (aggregate)
   | "comment.created"
   | "pr_review.submitted"
   | "pr_review_comment.created"
@@ -107,6 +111,7 @@ the workflow context where dispatched code may pull fields from it.
 | `repo` | always | never |
 | `issueNumber` | issues + PRs + comments + reviews | never |
 | `prNumber` | PR events + PR comments only | never |
+| `headSha` | `pr.checks_passed` / `pr.checks_failed` (the settled suite's head SHA) | never |
 | `title` | issues + PRs (+ comments via parent) | never |
 | `issueAuthor` | issues + PRs + comments (parent author) | never |
 | `labels` | issues + PRs (snapshot at event time) | never |

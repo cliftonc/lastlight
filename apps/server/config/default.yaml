@@ -57,7 +57,7 @@ buildAssets:
 # maxQueueWaitMs are cancelled with a "waited too long" notice.
 concurrency:
   maxWorkflows: 4          # env override: MAX_CONCURRENT_WORKFLOWS
-  maxQueueWaitMs: 1800000  # 30 min; env override: MAX_QUEUE_WAIT_MS
+  maxQueueWaitMs: 3600000  # 1 hr; env override: MAX_QUEUE_WAIT_MS
 
 # Pin which core version an instance runs. Set `deploy.version` to a git tag/ref
 # (e.g. v0.10.6) in your private overlay's config.yaml — `lastlight server

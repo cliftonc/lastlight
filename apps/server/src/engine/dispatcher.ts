@@ -7,7 +7,8 @@ import type { ChatResult } from "./chat/chat.js";
 import { routeEvent, type Route, type RouterDeps } from "./router.js";
 import { runDashboardUrl } from "../notify/model.js";
 import { getRuntimeConfig } from "../config/config.js";
-import { PR_FIX_SHAPED_WORKFLOWS } from "../workflows/target-policy.js";
+import { PR_FIX_SHAPED_WORKFLOWS, DEPENDENCY_WEBHOOK_WORKFLOWS } from "../workflows/target-policy.js";
+import { REQUIRES_HUMAN_LABEL } from "../cron/dependabot-discovery.js";
 
 /**
  * Hand a workflow to the runner. Matches `dispatchWorkflow` in index.ts — the
@@ -137,6 +138,24 @@ export async function dispatch(
     return { kind: "skipped", reason: `${handler} already running for ${triggerId}` };
   }
 
+  // Dependency-PR idempotency: on the AUTOMATED check_suite webhook path, skip
+  // (before any sandbox) a PR the bot has already handled — one carrying
+  // `requires-human`, or one whose current head SHA we already assessed. A
+  // multi-app repo re-fires a green/red suite and the daily cron overlaps, so
+  // without this the same PR gets re-assessed repeatedly, burning tokens and
+  // flooding the queue. A genuinely new push (new head SHA, no requires-human)
+  // still runs once; a human `@bot` request (comment.created) is NOT gated.
+  if (
+    (envelope.type === "pr.checks_passed" || envelope.type === "pr.checks_failed") &&
+    DEPENDENCY_WEBHOOK_WORKFLOWS.has(handler)
+  ) {
+    const skip = await dependencyDedupSkip(handler, context, deps);
+    if (skip) {
+      console.log(`[event] Skipping: ${skip.reason}`);
+      return skip;
+    }
+  }
+
   // PR fix: lightweight fix-and-push driven by CI failures / a comment. Also
   // covers pr-fix-shaped workflows (e.g. dependabot-ci-fix) reached via the
   // classifier — they all need the PR head branch + failed-check summary that
@@ -176,6 +195,59 @@ export async function dispatch(
 
   // Webhook-triggered workflows (the remaining default path).
   return handleWebhookDispatch(envelope, handler, routeKey, workflowContext, deps);
+}
+
+/**
+ * Pre-sandbox idempotency check for a dependency-PR webhook. One cheap PR read
+ * yields two skip signals:
+ *   • the PR carries `requires-human` → a maintainer owns it; do nothing.
+ *   • the PR's live head SHA equals the SHA of the last SUCCEEDED run of this
+ *     workflow for the PR → there's nothing new to assess (a re-fired suite,
+ *     cron/webhook overlap).
+ * Returns a `skipped` outcome to short-circuit, or null to let the run proceed.
+ * A read failure returns null (fail-open) — the workflow's own `ASSESSMENT_COMPLETE`
+ * marker + the LLM "skip if already commented" instruction remain as backstops,
+ * and we'd rather occasionally re-run than drop a genuine event.
+ */
+async function dependencyDedupSkip(
+  handler: string,
+  context: Record<string, unknown>,
+  deps: DispatchDeps,
+): Promise<{ kind: "skipped"; reason: string } | null> {
+  const github = deps.github;
+  const repoStr = typeof context.repo === "string" ? context.repo : undefined;
+  const prNumber = typeof context.prNumber === "number" ? context.prNumber : undefined;
+  if (!github || !repoStr || !prNumber) return null;
+  const [owner, name] = repoStr.split("/");
+  if (!owner || !name) return null;
+
+  let pr: Awaited<ReturnType<GitHubClient["getPullRequest"]>>;
+  try {
+    pr = await github.getPullRequest(owner, name, prNumber);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[dispatch] dependency dedup read failed for ${repoStr}#${prNumber}: ${msg}`);
+    return null;
+  }
+
+  const labels = (pr.labels ?? [])
+    .map((l) => (typeof l === "string" ? l : l?.name ?? ""))
+    .filter(Boolean);
+  if (labels.includes(REQUIRES_HUMAN_LABEL)) {
+    return { kind: "skipped", reason: `${handler}: ${repoStr}#${prNumber} is ${REQUIRES_HUMAN_LABEL}` };
+  }
+
+  const headSha = pr.head?.sha;
+  const triggerId = `${repoStr}#${prNumber}`;
+  const lastRun = deps.db.runs.latestSucceededForTrigger(handler, triggerId);
+  const lastSha = (lastRun?.context as Record<string, unknown> | undefined)?.headSha;
+  if (headSha && typeof lastSha === "string" && headSha === lastSha) {
+    return {
+      kind: "skipped",
+      reason: `${handler}: already assessed ${repoStr}#${prNumber} at ${headSha.slice(0, 7)}`,
+    };
+  }
+  return null;
 }
 
 /**

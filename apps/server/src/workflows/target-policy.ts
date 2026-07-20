@@ -45,6 +45,22 @@ export const PER_TARGET_REUSE_WORKFLOWS = new Set([
 export const PR_FIX_SHAPED_WORKFLOWS = new Set(["pr-fix", "dependabot-ci-fix"]);
 
 /**
+ * Dependency-update workflows reached from an automated check_suite webhook
+ * (`pr.checks_passed` → `dependabot-pr-merge`, `pr.checks_failed` →
+ * `dependabot-ci-fix`). The dispatcher applies a pre-sandbox idempotency guard
+ * to these — skip a PR carrying `requires-human`, or one already assessed at its
+ * current head SHA — so a re-fired suite / cron overlap doesn't burn tokens
+ * re-doing work. Scoped to the two dependency workflows because that's where the
+ * `requires-human` disposition and the "assess once per green SHA" contract
+ * live; a human `@bot` request is an intentional override and is NOT gated
+ * (the guard keys off the webhook event type, not just the handler).
+ */
+export const DEPENDENCY_WEBHOOK_WORKFLOWS = new Set([
+  "dependabot-pr-merge",
+  "dependabot-ci-fix",
+]);
+
+/**
  * Workflows whose per-target workspace is **recreated from the default branch**
  * on a fresh run rather than refreshed onto an existing feature branch. Like
  * `PER_TARGET_REUSE_WORKFLOWS`, these key the taskId by (repo, issue) only (no
