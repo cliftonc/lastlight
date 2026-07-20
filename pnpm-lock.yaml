@@ -335,8 +335,8 @@ importers:
         specifier: ^7.1.4
         version: 7.2.2
       '@octokit/rest':
-        specifier: ^21.0.2
-        version: 21.1.1
+        specifier: ^22.0.1
+        version: 22.0.1
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
@@ -1495,6 +1495,7 @@ packages:
   '@ff-labs/fff-node@0.10.0':
     resolution: {integrity: sha512-QqNcrg0sQU/iVix9QJiRfW/Unx12Eh2ZakUSbdSbCiWizs/NCvbI5yIm4tUCR1WwUIsWzuHrD8efaaeU4t8/zQ==}
     engines: {node: '>=18.0.0'}
+    cpu: [x64, arm64]
     os: [darwin, linux, win32]
 
   '@ff-labs/pi-fff@0.10.0':
@@ -1981,10 +1982,6 @@ packages:
     resolution: {integrity: sha512-qLoPPc6E6GJoz3XeDG/pnDhJpTkODTGG4kY0/Py154i/I003O9NazkrwJwRuzgCalhzyIeWQ+6MDvkUmKXjg/A==}
     engines: {node: '>= 20'}
 
-  '@octokit/auth-token@5.1.2':
-    resolution: {integrity: sha512-JcQDsBdg49Yky2w2ld20IHAlwr8d/d8N6NiOXbtuoPCqzbsiJgF633mVUw3x4mo0H5ypataQIX7SFu3yy44Mpw==}
-    engines: {node: '>= 18'}
-
   '@octokit/auth-token@6.0.0':
     resolution: {integrity: sha512-P4YJBPdPSpWTQ1NU4XYdvHvXJJDxM6YwpS0FZHRgP7YFkdVxsWcpWGy/NVqlAA7PcPCnMacXlRm1y2PFZRWL/w==}
     engines: {node: '>= 20'}
@@ -1992,10 +1989,6 @@ packages:
   '@octokit/auth-unauthenticated@7.0.3':
     resolution: {integrity: sha512-8Jb1mtUdmBHL7lGmop9mU9ArMRUTRhg8vp0T1VtZ4yd9vEm3zcLwmjQkhNEduKawOOORie61xhtYIhTDN+ZQ3g==}
     engines: {node: '>= 20'}
-
-  '@octokit/core@6.1.6':
-    resolution: {integrity: sha512-kIU8SLQkYWGp3pVKiYzA5OSaNF5EE03P/R8zEmmrG6XwOg5oBjXyQVVIauQ0dgau4zYhpZEhJrvIYt6oM+zZZA==}
-    engines: {node: '>= 18'}
 
   '@octokit/core@7.0.6':
     resolution: {integrity: sha512-DhGl4xMVFGVIyMwswXeyzdL4uXD5OGILGX5N8Y+f6W7LhC1Ze2poSNrkF/fedpVDHEEZ+PHFW0vL14I+mm8K3Q==}
@@ -2008,10 +2001,6 @@ packages:
   '@octokit/endpoint@11.0.3':
     resolution: {integrity: sha512-FWFlNxghg4HrXkD3ifYbS/IdL/mDHjh9QcsNyhQjN8dplUoZbejsdpmuqdA76nxj2xoWPs7p8uX2SNr9rYu0Ag==}
     engines: {node: '>= 20'}
-
-  '@octokit/graphql@8.2.2':
-    resolution: {integrity: sha512-Yi8hcoqsrXGdt0yObxbebHXFOiUA+2v3n53epuOg1QUgOB6c4XzvisBNVXJSl8RYA5KrDuSL2yq9Qmqe5N0ryA==}
-    engines: {node: '>= 18'}
 
   '@octokit/graphql@9.0.3':
     resolution: {integrity: sha512-grAEuupr/C1rALFnXTv6ZQhFuL1D8G5y8CN04RgrO4FIPMrtm+mcZzFG7dcBm+nq+1ppNixu+Jd78aeJOYxlGA==}
@@ -2037,9 +2026,6 @@ packages:
     resolution: {integrity: sha512-HiNOO3MqLxlt5Da5bZbLV8Zarnphi4y9XehrbaFMkcoJ+FL7sMxH/UlUsCVxpddVu4qvNDrBdaTVE2o4ITK8ng==}
     engines: {node: '>= 20'}
 
-  '@octokit/openapi-types@24.2.0':
-    resolution: {integrity: sha512-9sIH3nSUttelJSXUrmGzl7QUBFul0/mB8HRYl3fOlgHbIWG+WnYDXU3v/2zMtAvuzZ/ed00Ei6on975FhBfzrg==}
-
   '@octokit/openapi-types@25.1.0':
     resolution: {integrity: sha512-idsIggNXUKkk0+BExUn1dQ92sfysJrje03Q0bv0e+KPLrvyqZF8MnBpFz8UNfYDwB3Ie7Z0TByjWfzxt7vseaA==}
 
@@ -2055,27 +2041,15 @@ packages:
     peerDependencies:
       '@octokit/core': '>=6'
 
-  '@octokit/plugin-paginate-rest@11.6.0':
-    resolution: {integrity: sha512-n5KPteiF7pWKgBIBJSk8qzoZWcUkza2O6A0za97pMGVrGfPdltxrfmfF5GucHYvHGZD8BdaZmmHGz5cX/3gdpw==}
-    engines: {node: '>= 18'}
-    peerDependencies:
-      '@octokit/core': '>=6'
-
   '@octokit/plugin-paginate-rest@14.0.0':
     resolution: {integrity: sha512-fNVRE7ufJiAA3XUrha2omTA39M6IXIc6GIZLvlbsm8QOQCYvpq/LkMNGyFlB1d8hTDzsAXa3OKtybdMAYsV/fw==}
     engines: {node: '>= 20'}
     peerDependencies:
       '@octokit/core': '>=6'
 
-  '@octokit/plugin-request-log@5.3.1':
-    resolution: {integrity: sha512-n/lNeCtq+9ofhC15xzmJCNKP2BWTv8Ih2TTy+jatNCCq/gQP/V7rK3fjIfuz0pDWDALO/o/4QY4hyOF6TQQFUw==}
-    engines: {node: '>= 18'}
-    peerDependencies:
-      '@octokit/core': '>=6'
-
-  '@octokit/plugin-rest-endpoint-methods@13.5.0':
-    resolution: {integrity: sha512-9Pas60Iv9ejO3WlAX3maE1+38c5nqbJXV5GrncEfkndIpZrJ/WPMRd2xYDcPPEt5yzpxcjw9fWNoPhsSGzqKqw==}
-    engines: {node: '>= 18'}
+  '@octokit/plugin-request-log@6.0.0':
+    resolution: {integrity: sha512-UkOzeEN3W91/eBq9sPZNQ7sUBvYCqYbrrD8gTbBuGtHEuycE4/awMXcYvx6sVYo7LypPhmQwwpUe4Yyu4QZN5Q==}
+    engines: {node: '>= 20'}
     peerDependencies:
       '@octokit/core': '>=6'
 
@@ -2113,12 +2087,9 @@ packages:
     resolution: {integrity: sha512-q8ybdytBmxa6KogWlNa818r0k1wlqzNC+yNkcQDECHvQo8Vmstrg18JwqJHdJdUiHD2sjlwBgSm9kHkOKe2iyA==}
     engines: {node: '>= 18'}
 
-  '@octokit/rest@21.1.1':
-    resolution: {integrity: sha512-sTQV7va0IUVZcntzy1q3QqPm/r8rWtDCqpRAmb8eXXnKkjoQEtFe3Nt5GTVsHft+R6jJoHeSiVLcgcvhtue/rg==}
-    engines: {node: '>= 18'}
-
-  '@octokit/types@13.10.0':
-    resolution: {integrity: sha512-ifLaO34EbbPj0Xgro4G5lP5asESjwHracYJvVaPIyXMuiuXLlhic3S47cBdTb+jfODkTE5YtGCLt3Ay3+J97sA==}
+  '@octokit/rest@22.0.1':
+    resolution: {integrity: sha512-Jzbhzl3CEexhnivb1iQ0KJ7s5vvjMWcmRtq5aUsKmKDrRW6z3r84ngmiFKFvpZjpiU/9/S6ITPFRpn5s/3uQJw==}
+    engines: {node: '>= 20'}
 
   '@octokit/types@14.1.0':
     resolution: {integrity: sha512-1y6DgTy8Jomcpu33N+p5w58l6xyt55Ar2I91RPiIA0xCJBXyUAhXCcmZaDWSANiha7R9a6qJJ2CRomGPZ6f46g==}
@@ -3582,9 +3553,6 @@ packages:
 
   bcrypt-pbkdf@1.0.2:
     resolution: {integrity: sha512-qeFIXtP4MSoi6NLqO12WfqARWWuCKi2Rn/9hJLEmtB5yTNr9DqFWkJRCf2qShWzPeAMRnOgCrq0sg/KLv5ES9w==}
-
-  before-after-hook@3.0.2:
-    resolution: {integrity: sha512-Nik3Sc0ncrMK4UUdXQmAnRtzmNQTAAXmXIopizwZ1W1t8QmfJj+zL4OA2I7XPTPW5z5TDqv4hRo/JzouDJnX3A==}
 
   before-after-hook@4.0.0:
     resolution: {integrity: sha512-q6tR3RPqIB1pMiTRMFcZwuG5T8vwp+vUvEG0vuI6B+Rikh5BfPp2fQ82c925FOs+b0lcFQ8CFrL+KbilfZFhOQ==}
@@ -8402,24 +8370,12 @@ snapshots:
       '@octokit/types': 16.0.0
       universal-user-agent: 7.0.3
 
-  '@octokit/auth-token@5.1.2': {}
-
   '@octokit/auth-token@6.0.0': {}
 
   '@octokit/auth-unauthenticated@7.0.3':
     dependencies:
       '@octokit/request-error': 7.1.0
       '@octokit/types': 16.0.0
-
-  '@octokit/core@6.1.6':
-    dependencies:
-      '@octokit/auth-token': 5.1.2
-      '@octokit/graphql': 8.2.2
-      '@octokit/request': 9.2.4
-      '@octokit/request-error': 6.1.8
-      '@octokit/types': 14.1.0
-      before-after-hook: 3.0.2
-      universal-user-agent: 7.0.3
 
   '@octokit/core@7.0.6':
     dependencies:
@@ -8439,12 +8395,6 @@ snapshots:
   '@octokit/endpoint@11.0.3':
     dependencies:
       '@octokit/types': 16.0.0
-      universal-user-agent: 7.0.3
-
-  '@octokit/graphql@8.2.2':
-    dependencies:
-      '@octokit/request': 9.2.4
-      '@octokit/types': 14.1.0
       universal-user-agent: 7.0.3
 
   '@octokit/graphql@9.0.3':
@@ -8482,8 +8432,6 @@ snapshots:
       '@octokit/request-error': 7.1.0
       '@octokit/types': 16.0.0
 
-  '@octokit/openapi-types@24.2.0': {}
-
   '@octokit/openapi-types@25.1.0': {}
 
   '@octokit/openapi-types@27.0.0': {}
@@ -8494,24 +8442,14 @@ snapshots:
     dependencies:
       '@octokit/core': 7.0.6
 
-  '@octokit/plugin-paginate-rest@11.6.0(@octokit/core@6.1.6)':
-    dependencies:
-      '@octokit/core': 6.1.6
-      '@octokit/types': 13.10.0
-
   '@octokit/plugin-paginate-rest@14.0.0(@octokit/core@7.0.6)':
     dependencies:
       '@octokit/core': 7.0.6
       '@octokit/types': 16.0.0
 
-  '@octokit/plugin-request-log@5.3.1(@octokit/core@6.1.6)':
+  '@octokit/plugin-request-log@6.0.0(@octokit/core@7.0.6)':
     dependencies:
-      '@octokit/core': 6.1.6
-
-  '@octokit/plugin-rest-endpoint-methods@13.5.0(@octokit/core@6.1.6)':
-    dependencies:
-      '@octokit/core': 6.1.6
-      '@octokit/types': 13.10.0
+      '@octokit/core': 7.0.6
 
   '@octokit/plugin-rest-endpoint-methods@17.0.0(@octokit/core@7.0.6)':
     dependencies:
@@ -8557,16 +8495,12 @@ snapshots:
       fast-content-type-parse: 2.0.1
       universal-user-agent: 7.0.3
 
-  '@octokit/rest@21.1.1':
+  '@octokit/rest@22.0.1':
     dependencies:
-      '@octokit/core': 6.1.6
-      '@octokit/plugin-paginate-rest': 11.6.0(@octokit/core@6.1.6)
-      '@octokit/plugin-request-log': 5.3.1(@octokit/core@6.1.6)
-      '@octokit/plugin-rest-endpoint-methods': 13.5.0(@octokit/core@6.1.6)
-
-  '@octokit/types@13.10.0':
-    dependencies:
-      '@octokit/openapi-types': 24.2.0
+      '@octokit/core': 7.0.6
+      '@octokit/plugin-paginate-rest': 14.0.0(@octokit/core@7.0.6)
+      '@octokit/plugin-request-log': 6.0.0(@octokit/core@7.0.6)
+      '@octokit/plugin-rest-endpoint-methods': 17.0.0(@octokit/core@7.0.6)
 
   '@octokit/types@14.1.0':
     dependencies:
@@ -10148,8 +10082,6 @@ snapshots:
   bcrypt-pbkdf@1.0.2:
     dependencies:
       tweetnacl: 0.14.5
-
-  before-after-hook@3.0.2: {}
 
   before-after-hook@4.0.0: {}
 
