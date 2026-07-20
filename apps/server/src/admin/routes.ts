@@ -11,6 +11,7 @@ import {
   listRunningContainers,
   killContainer,
   getContainerStats,
+  getHostStats,
   listServerContainers,
   resolveServerContainer,
   getContainerLogs,
@@ -730,10 +731,10 @@ export function createAdminRoutes(
     return c.json({ containers });
   });
 
-  // CPU/memory stats for the agent and any sandbox containers
+  // Host-level CPU/memory plus per-container stats for the agent and sandboxes
   app.get("/containers/stats", async (c) => {
-    const stats = await getContainerStats();
-    return c.json({ stats });
+    const [stats, host] = await Promise.all([getContainerStats(), getHostStats()]);
+    return c.json({ stats, host });
   });
 
   // ── Server logs ───────────────────────────────────────────────────────────
@@ -1031,16 +1032,17 @@ export function createAdminRoutes(
     return c.json({ cancelled: id, killedContainers: killed });
   });
 
-  // Retry a FAILED workflow run — resume from the phase that failed with the
-  // same context. Only `failed` runs are retryable; the callback flips the row
-  // failed→running (compare-and-set) and re-dispatches via the same
-  // ledger-driven resume path the boot-recovery sweep uses. Sits under the
-  // `authMiddleware` guard above, like cancel/respond.
+  // Retry a FAILED or CANCELLED workflow run — resume from where it stopped with
+  // the same context. `cancelled` covers a queue-drop after a server death and a
+  // manual cancel, both recoverable; the callback flips the row →running
+  // (compare-and-set) and re-dispatches via the same ledger-driven resume path
+  // the boot-recovery sweep uses. Sits under the `authMiddleware` guard above,
+  // like cancel/respond.
   app.post("/workflow-runs/:id/retry", async (c) => {
     const id = c.req.param("id");
     const run = db.runs.getRun(id);
     if (!run) return c.json({ error: "workflow run not found" }, 404);
-    if (run.status !== "failed") {
+    if (run.status !== "failed" && run.status !== "cancelled") {
       return c.json({ error: `cannot retry a run with status '${run.status}'` }, 400);
     }
     if (!config.retryWorkflow) {

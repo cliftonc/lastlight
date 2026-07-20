@@ -359,7 +359,7 @@ describe("restartRun — retry a failed run", () => {
     expect(restarted.scratch).toEqual({ socratic: { qa: [{ question: "Q1", answer: "A1" }] } });
   });
 
-  it("is a compare-and-set: a non-failed run is not restarted (0 rows changed)", () => {
+  it("is a compare-and-set: a non-retryable run is not restarted (0 rows changed)", () => {
     // A running run — the concurrency guard: a second retry click after the
     // first already flipped it to running must not re-dispatch.
     const runId = makeRun({ status: "running" });
@@ -370,6 +370,74 @@ describe("restartRun — retry a failed run", () => {
     const doneId = makeRun({ status: "succeeded" });
     expect(db.runs.restartRun(doneId)).toBe(0);
     expect(db.runs.getRun(doneId)!.status).toBe("succeeded");
+  });
+
+  it("retries a queue-dropped 'cancelled' run and clears the drop reason", () => {
+    // A run TTL-expired from the queue after a server death is `cancelled` with
+    // a `context.error` drop reason. It must be retryable (the reported bug).
+    const runId = makeRun({ status: "queued" });
+    expect(db.runs.expireQueued(runId, "dropped from queue after waiting too long")).toBe(1);
+    const cancelled = db.runs.getRun(runId)!;
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.context).toEqual({ error: "dropped from queue after waiting too long" });
+
+    expect(db.runs.restartRun(runId)).toBe(1);
+    const restarted = db.runs.getRun(runId)!;
+    expect(restarted.status).toBe("running");
+    expect(restarted.finishedAt).toBeFalsy();
+    expect(restarted.context).toEqual({});
+    expect(restarted.restartCount).toBe(1);
+  });
+});
+
+describe("requeue — refresh a queued orphan's clock on boot", () => {
+  it("bumps started_at on a queued run so admission can promote it", () => {
+    const stale = new Date(Date.now() - 60_000).toISOString();
+    const runId = makeRun({ status: "queued", startedAt: stale });
+    expect(db.runs.requeue(runId)).toBe(1);
+    const r = db.runs.getRun(runId)!;
+    expect(r.status).toBe("queued");
+    expect(Date.parse(r.startedAt)).toBeGreaterThan(Date.parse(stale));
+  });
+
+  it("is a CAS on status='queued' — a running run is untouched (0 rows)", () => {
+    const runId = makeRun({ status: "running" });
+    expect(db.runs.requeue(runId)).toBe(0);
+    expect(db.runs.getRun(runId)!.status).toBe("running");
+  });
+});
+
+describe("latestSucceededForTrigger", () => {
+  it("returns the newest SUCCEEDED run for the workflow+trigger, ignoring others", () => {
+    const trigger = "acme/widgets#190";
+    // A failed run for the same trigger must not win.
+    makeRun({ workflowName: "dependabot-pr-merge", triggerId: trigger, status: "failed", context: { headSha: "shaFailed" } });
+    // An older succeeded run.
+    makeRun({
+      workflowName: "dependabot-pr-merge",
+      triggerId: trigger,
+      status: "succeeded",
+      context: { headSha: "shaOld" },
+      startedAt: new Date(Date.now() - 10_000).toISOString(),
+    });
+    // The newest succeeded run.
+    makeRun({
+      workflowName: "dependabot-pr-merge",
+      triggerId: trigger,
+      status: "succeeded",
+      context: { headSha: "shaNew" },
+      startedAt: new Date().toISOString(),
+    });
+
+    const latest = db.runs.latestSucceededForTrigger("dependabot-pr-merge", trigger);
+    expect((latest?.context as Record<string, unknown>)?.headSha).toBe("shaNew");
+  });
+
+  it("returns null for a different workflow or trigger", () => {
+    const trigger = "acme/widgets#190";
+    makeRun({ workflowName: "dependabot-pr-merge", triggerId: trigger, status: "succeeded", context: { headSha: "sha1" } });
+    expect(db.runs.latestSucceededForTrigger("dependabot-pr-merge", "acme/widgets#999")).toBeNull();
+    expect(db.runs.latestSucceededForTrigger("pr-review", trigger)).toBeNull();
   });
 });
 
@@ -565,6 +633,49 @@ describe("repo-scoped queries", () => {
     // A qualified filter matches only the right owner; a bare filter matches both.
     expect(db.runs.list({ repo: "nearform/lastlight-flue" }).total).toBe(1);
     expect(db.runs.list({ repo: "lastlight-flue" }).total).toBe(2);
+  });
+});
+
+describe("list() token/cost roll-up", () => {
+  /** Record one finished execution attributed to a workflow run. */
+  function addExecution(
+    runId: string,
+    tokens: { input?: number; output?: number; cacheRead?: number },
+    costUsd: number,
+  ) {
+    const id = randomUUID();
+    db.executions.recordStart({
+      id,
+      triggerType: "github",
+      triggerId: `slack:${runId}`,
+      skill: "explore:socratic",
+      startedAt: new Date().toISOString(),
+      workflowRunId: runId,
+    });
+    db.executions.recordFinish(id, {
+      success: true,
+      costUsd,
+      inputTokens: tokens.input,
+      outputTokens: tokens.output,
+      cacheReadInputTokens: tokens.cacheRead,
+    });
+  }
+
+  it("sums cost and input+output+cacheRead tokens per run", () => {
+    const runId = makeRun();
+    addExecution(runId, { input: 100, output: 20, cacheRead: 5 }, 0.01);
+    addExecution(runId, { input: 200, output: 30, cacheRead: 0 }, 0.02);
+
+    const run = db.runs.list().runs.find((r) => r.id === runId)!;
+    expect(run.totalTokens).toBe(355); // (100+20+5) + (200+30+0)
+    expect(run.totalCostUsd).toBeCloseTo(0.03, 6);
+  });
+
+  it("reports zero totals for a run with no executions", () => {
+    const runId = makeRun();
+    const run = db.runs.list().runs.find((r) => r.id === runId)!;
+    expect(run.totalTokens).toBe(0);
+    expect(run.totalCostUsd).toBe(0);
   });
 });
 

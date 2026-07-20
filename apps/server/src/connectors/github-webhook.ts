@@ -27,6 +27,20 @@ export interface GitHubWebhookConfig {
   app?: Hono;
   /** GitHub App MCP client for posting replies */
   replyFn?: (owner: string, repo: string, issueNumber: number, body: string) => Promise<void>;
+  /**
+   * Settle-aware aggregate check conclusion for a ref (delegates to
+   * `GitHubClient.getChecksConclusion`). Lets the connector emit a
+   * dependency-PR `pr.checks_passed` / `pr.checks_failed` event only when the
+   * head SHA's checks have FULLY settled — so a repo with several
+   * check-reporting apps fires ONE event per SHA (the last suite to settle),
+   * not one per suite. When unset (standalone unit tests), the connector keeps
+   * its legacy per-suite behaviour.
+   */
+  getChecksConclusion?: (
+    owner: string,
+    repo: string,
+    ref: string,
+  ) => Promise<"passing" | "failing" | "pending" | "none">;
 }
 
 /**
@@ -178,7 +192,7 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
       }
 
       // Normalize to EventEnvelope
-      const envelope = this.normalize(eventType!, action, payload, deliveryId);
+      const envelope = await this.normalize(eventType!, action, payload, deliveryId);
       if (!envelope) {
         return c.json({ filtered: true, reason: "unmapped event" }, 200);
       }
@@ -229,6 +243,30 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
     }
   }
 
+  /**
+   * Settle-aware aggregate check conclusion for a ref, via the injected
+   * `getChecksConclusion` client. Returns `fallback` when no client is wired
+   * (standalone unit tests) or the SHA is missing, preserving the legacy
+   * per-suite emit so those paths behave as before. Never throws — a lookup
+   * error resolves to the fallback so a transient GitHub hiccup doesn't drop a
+   * genuine event.
+   */
+  private async settledConclusion(
+    repoFullName: string | undefined,
+    sha: string | undefined,
+    fallback: "passing" | "failing",
+  ): Promise<"passing" | "failing" | "pending" | "none"> {
+    if (!this.config.getChecksConclusion || !repoFullName || !sha) return fallback;
+    const [owner, repo] = repoFullName.split("/");
+    try {
+      return await this.config.getChecksConclusion(owner, repo, sha);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[github] getChecksConclusion(${repoFullName}@${sha.slice(0, 7)}) failed: ${msg}`);
+      return fallback;
+    }
+  }
+
   private verifySignature(body: string, signature: string): boolean {
     const expected = "sha256=" + createHmac("sha256", this.config.webhookSecret)
       .update(body)
@@ -240,12 +278,12 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
     }
   }
 
-  private normalize(
+  private async normalize(
     githubEvent: string,
     action: string | undefined,
     payload: any,
     deliveryId: string
-  ): EventEnvelope | null {
+  ): Promise<EventEnvelope | null> {
     const repoFullName = payload.repository?.full_name;
     const sender = payload.sender?.login || "unknown";
 
@@ -257,6 +295,7 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
     let title = "";
     let labels: string[] = [];
     let issueAuthor: string | undefined;
+    let headSha: string | undefined;
 
     switch (githubEvent) {
       case "issues":
@@ -352,9 +391,19 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
           // to avoid a burst of duplicates. `pull_requests[]` is populated for
           // same-repo PRs (fork PRs carry an empty array and are dropped below).
           const pr = payload.check_suite?.pull_requests?.[0];
-          prNumber = pr?.number;
-          issueNumber = prNumber;
-          if (prNumber) {
+          const sha: string | undefined = payload.check_suite?.head_sha;
+          // Only fire once the PR's checks have FULLY SETTLED red — a repo with
+          // several check-reporting apps completes one suite at a time, and a
+          // failure in one while another is still running should not kick off a
+          // fix mid-flight. `getChecksConclusion` returns "failing" only when
+          // nothing is pending and ≥1 check concluded red, so exactly one event
+          // fires per SHA (the last suite to settle). Absent a wired client
+          // (standalone tests) we keep the legacy per-suite behaviour.
+          const settled = await this.settledConclusion(repoFullName, sha, "failing");
+          if (pr?.number && settled === "failing") {
+            prNumber = pr.number;
+            issueNumber = prNumber;
+            headSha = sha;
             type = "pr.checks_failed";
             // The check_suite `pull_requests[]` entry is minimal (number/refs
             // only — no title or author). The head commit carries the useful
@@ -377,18 +426,29 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
           // unrelated work). The dependency signal comes cheaply from the head
           // commit author + the suite's head branch, with no extra PR fetch.
           const pr = payload.check_suite?.pull_requests?.[0];
+          const sha: string | undefined = payload.check_suite?.head_sha;
           const headCommit = payload.check_suite?.head_commit;
           const commitAuthor: string = headCommit?.author?.name || "";
           const headBranch: string = payload.check_suite?.head_branch || "";
           const isDependencyPr =
             /^(dependabot|renovate)\[bot\]$/.test(commitAuthor) ||
             /^(dependabot|renovate)\//.test(headBranch);
+          // Fire ONLY when the head SHA's checks have fully settled green. A
+          // suite going green while sibling suites are still running reports
+          // "pending" here and is dropped; the last suite to settle flips the
+          // aggregate to "passing", so exactly one `pr.checks_passed` fires per
+          // SHA instead of one per check-reporting app. (Legacy per-suite
+          // behaviour is preserved when no client is wired — standalone tests.)
           if (pr?.number && isDependencyPr) {
-            prNumber = pr.number;
-            issueNumber = prNumber;
-            type = "pr.checks_passed";
-            title = (headCommit?.message || "").split("\n")[0] || title;
-            issueAuthor = commitAuthor || issueAuthor;
+            const settled = await this.settledConclusion(repoFullName, sha, "passing");
+            if (settled === "passing") {
+              prNumber = pr.number;
+              issueNumber = prNumber;
+              headSha = sha;
+              type = "pr.checks_passed";
+              title = (headCommit?.message || "").split("\n")[0] || title;
+              issueAuthor = commitAuthor || issueAuthor;
+            }
           }
         }
         break;
@@ -411,6 +471,7 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
       repo: repoFullName,
       issueNumber,
       prNumber,
+      headSha,
       sender,
       issueAuthor,
       senderIsBot: false, // already filtered bots above

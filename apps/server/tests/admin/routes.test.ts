@@ -14,6 +14,7 @@ vi.mock("#src/admin/docker.js", () => ({
   listRunningContainers: vi.fn(async () => []),
   killContainer: vi.fn(async () => {}),
   getContainerStats: vi.fn(async () => []),
+  getHostStats: vi.fn(async () => null),
 }));
 
 // Pin the cron definitions the /crons routes resolve against, so the trigger

@@ -39,6 +39,14 @@ export interface WorkflowRun {
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;
+  /**
+   * Rolled-up totals across the run's executions (SUM of `cost_usd` and
+   * input+output+cache-read tokens). Populated only by {@link WorkflowRunStore.list}
+   * for the dashboard's runs view via a LEFT JOIN on `executions`; absent on
+   * single-run reads (`getRun`, which selects the row without the join).
+   */
+  totalCostUsd?: number;
+  totalTokens?: number;
 }
 
 /** A non-agent phase marker folded into an atomic lifecycle op. */
@@ -179,6 +187,22 @@ export class WorkflowRunStore {
     return !!row;
   }
 
+  /**
+   * The most recent SUCCEEDED run of `workflowName` for this trigger, or null.
+   * Unlike `getByTrigger` (active rows only), this reads terminal history: the
+   * dependency-workflow dedup guard reads the winner's stored `context.headSha`
+   * to skip re-assessing a PR at a head SHA it already handled.
+   */
+  latestSucceededForTrigger(workflowName: string, triggerId: string): WorkflowRun | null {
+    const row = this.db.prepare(`
+      SELECT * FROM workflow_runs
+      WHERE trigger_id = ? AND workflow_name = ? AND status = 'succeeded'
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).get(triggerId, workflowName) as Record<string, unknown> | undefined;
+    return row ? this.deserialize(row) : null;
+  }
+
   /** List all active (queued, running, or paused) workflow runs */
   listActive(): WorkflowRun[] {
     const rows = this.db.prepare(`
@@ -259,13 +283,29 @@ export class WorkflowRunStore {
     // 20-row page into a 14MB payload. The single-row endpoint
     // (`getRun`) still uses `SELECT *` so the detail panel keeps
     // the full row when the user picks one.
+    // LEFT JOIN a per-run token/cost roll-up (indexed by
+    // `idx_executions_workflow_run`). `agg` only exposes `workflow_run_id` +
+    // the two sums, so the outer unqualified column names (and `whereClause`)
+    // still bind unambiguously to `workflow_runs`.
     const rows = this.db
       .prepare(
         `SELECT
            id, workflow_name, trigger_id, owner, repo, issue_number,
            current_phase, phase_history, status,
-           restart_count, started_at, updated_at, finished_at
+           restart_count, started_at, updated_at, finished_at,
+           COALESCE(agg.total_cost_usd, 0) AS total_cost_usd,
+           COALESCE(agg.total_tokens, 0)   AS total_tokens
          FROM workflow_runs
+         LEFT JOIN (
+           SELECT workflow_run_id,
+                  SUM(COALESCE(cost_usd, 0)) AS total_cost_usd,
+                  SUM(COALESCE(input_tokens, 0)
+                      + COALESCE(output_tokens, 0)
+                      + COALESCE(cache_read_input_tokens, 0)) AS total_tokens
+             FROM executions
+            WHERE workflow_run_id IS NOT NULL
+            GROUP BY workflow_run_id
+         ) agg ON agg.workflow_run_id = workflow_runs.id
          ${whereClause}
          ORDER BY started_at DESC
          LIMIT ? OFFSET ?`,
@@ -445,16 +485,20 @@ export class WorkflowRunStore {
   }
 
   /**
-   * Restart a FAILED run so it can be retried from the phase that failed.
-   * Unlike {@link setRunning} this also clears the terminal markers a failure
-   * left behind — `finished_at` and the `context.error` string `flipFinished`
-   * wrote — so the row reads live again rather than "failed at …". The taskId,
-   * branch, scratch and phase_history are all preserved, so the ledger-driven
-   * re-dispatch (`resumeSimpleRun`) resumes from the failed phase with the same
-   * context.
+   * Restart a FAILED or CANCELLED run so it can be retried from where it
+   * stopped. Unlike {@link setRunning} this also clears the terminal markers the
+   * stop left behind — `finished_at` and the `context.error` string
+   * (`flipFinished` / `expireQueued` wrote it) — so the row reads live again
+   * rather than "failed at …" / "dropped from queue …". The taskId, branch,
+   * scratch and phase_history are all preserved, so the ledger-driven
+   * re-dispatch (`resumeSimpleRun`) resumes from the stopped phase with the same
+   * context; a queue-dropped `cancelled` run ran no phases, so it starts clean.
    *
-   * Guarded by `WHERE status = 'failed'` and returns the changed-row count so
-   * the caller can make retry a compare-and-set: a second concurrent retry
+   * `cancelled` is retryable because it covers two recoverable cases — a run
+   * TTL-dropped from the queue after a server death, and a manual dashboard
+   * cancel — neither of which is a permanent verdict. Guarded by
+   * `WHERE status IN ('failed','cancelled')` and returns the changed-row count
+   * so the caller can make retry a compare-and-set: a second concurrent retry
    * click sees 0 rows changed and does NOT dispatch again.
    */
   restartRun(id: string): number {
@@ -466,8 +510,26 @@ export class WorkflowRunStore {
           updated_at = ?,
           restart_count = COALESCE(restart_count, 0) + 1,
           context = json_remove(COALESCE(context, '{}'), '$.error')
-      WHERE id = ? AND status = 'failed'
+      WHERE id = ? AND status IN ('failed', 'cancelled')
     `).run(now, id);
+    return info.changes;
+  }
+
+  /**
+   * Refresh a QUEUED run's enqueue clock to now. Used by boot recovery: a run
+   * that was `queued` when the harness died carries a stale `started_at`, so the
+   * admission TTL sweep would immediately expire it to `cancelled` on the next
+   * tick instead of admitting it. Re-stamping the clock gives it a fresh
+   * `maxQueueWaitMs` window so the AdmissionController admits it normally as
+   * slots free. CAS-guarded on `status = 'queued'`; returns rows changed.
+   */
+  requeue(id: string): number {
+    const now = new Date().toISOString();
+    const info = this.db.prepare(`
+      UPDATE workflow_runs
+      SET started_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'queued'
+    `).run(now, now, id);
     return info.changes;
   }
 
@@ -506,6 +568,9 @@ export class WorkflowRunStore {
       startedAt: row.started_at as string,
       updatedAt: row.updated_at as string,
       finishedAt: row.finished_at as string | undefined,
+      // Present only on `list()` rows (the executions JOIN); undefined on getRun.
+      totalCostUsd: typeof row.total_cost_usd === "number" ? row.total_cost_usd : undefined,
+      totalTokens: typeof row.total_tokens === "number" ? row.total_tokens : undefined,
     };
   }
 

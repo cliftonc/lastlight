@@ -336,6 +336,10 @@ export async function resumeSimpleRun(run: WorkflowRun, opts: ResumeOptions): Pr
  * Docker containers were already killed by cleanupOrphanedSandboxes), then
  * re-dispatch each run so the runner can pick up where it left off.
  *
+ * 'queued' runs are re-stamped with a fresh enqueue clock (not dispatched) so
+ * the AdmissionController promotes them as slots free, instead of the TTL sweep
+ * instantly reaping their stale `started_at` to a non-retryable 'cancelled'.
+ *
  * 'paused' runs are intentionally left alone — they're waiting for human
  * approval and the dashboard / GitHub comment flow will resume them.
  */
@@ -349,14 +353,30 @@ const MAX_RESTART_RESUMES = 3;
 
 export async function resumeOrphanedWorkflows(opts: ResumeOptions): Promise<void> {
   const active = opts.db.runs.listActive();
+
+  // Queued orphans: a run that was still `queued` (waiting on the concurrency
+  // cap) when the harness died carries a stale `started_at`, so the admission
+  // TTL sweep would immediately expire it to the non-retryable `cancelled`
+  // state on the next tick. Re-stamp its enqueue clock so the AdmissionController
+  // admits it normally as slots free — the work survives a server death instead
+  // of being silently dropped. No dispatch here; admission owns promotion.
+  const queued = active.filter((r) => r.status === "queued");
+  if (queued.length > 0) {
+    let requeued = 0;
+    for (const run of queued) {
+      requeued += opts.db.runs.requeue(run.id);
+    }
+    console.log(`[resume] Refreshed queue clock for ${requeued} queued orphan(s) — admission will promote them`);
+  }
+
   const orphans = active.filter((r) => r.status === "running");
 
   if (orphans.length === 0) {
-    console.log("[resume] No orphaned workflow runs to recover");
+    console.log("[resume] No orphaned running workflow runs to recover");
     return;
   }
 
-  console.log(`[resume] Found ${orphans.length} orphaned workflow run(s) — recovering`);
+  console.log(`[resume] Found ${orphans.length} orphaned running workflow run(s) — recovering`);
 
   for (const run of orphans) {
     // Clear any "still running" execution rows so dedup works on resume.

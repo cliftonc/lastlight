@@ -202,6 +202,27 @@ describe("createAdmissionController", () => {
     expect(db.runs.getRun("fresh-run")!.status).toBe("queued");
   });
 
+  it("sweep: expires a github-triggered run WITHOUT posting a PR comment", async () => {
+    // The "dropped from queue" comment used to flood dependency PRs on every
+    // TTL expiry. Expiry must still transition the row (visible in the
+    // dashboard + retryable) but post nothing to GitHub.
+    const oldTime = new Date(Date.now() - 3_600_000).toISOString();
+    makeQueuedRun(db, "gh-stale", oldTime); // triggerId acme/widgets#le
+    const postComment = vi.fn(async () => {});
+    const resumeOpts = { ...makeResumeOpts(db), github: { postComment } as any };
+
+    const ctrl = createAdmissionController({
+      db,
+      resumeOpts,
+      maxWorkflows: 4,
+      maxQueueWaitMs: 1_800_000,
+    });
+    await ctrl.sweep();
+
+    expect(db.runs.getRun("gh-stale")!.status).toBe("cancelled");
+    expect(postComment).not.toHaveBeenCalled();
+  });
+
   it("start/stop: can start the interval and stop it without throwing", () => {
     const ctrl = createAdmissionController({
       db,

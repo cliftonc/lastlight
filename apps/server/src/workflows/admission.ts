@@ -131,44 +131,31 @@ async function expireStaleRuns(
 }
 
 /**
- * Best-effort: post a "dropped from queue" notification back to the
- * originating GitHub issue or Slack thread. Never throws — the row has
- * already been transitioned, so a failed ack is a UI gap, not a data hazard.
+ * Best-effort: notify the ORIGINATING SLACK THREAD that a queued run was
+ * dropped. A Slack run is a human explicitly asking for work, so a "it didn't
+ * run" reply is useful. Never throws — the row has already been transitioned, so
+ * a failed ack is a UI gap, not a data hazard.
+ *
+ * GitHub-originated runs get NO comment: these are mostly automated
+ * dependency-PR / review webhooks, and a "dropped from queue" comment on every
+ * TTL-expired run floods the PR with noise (the symptom that surfaced this). The
+ * drop is still visible in the dashboard + `lastlight workflow list` (status
+ * `cancelled`, `context.error` = the reason), and such a run can now be retried.
  */
 async function postExpiryAck(
   run: WorkflowRun,
   reason: string,
   resumeOpts: ResumeOptions,
 ): Promise<void> {
-  const msg = `Workflow \`${run.workflowName}\` was ${reason}.`;
-  const stored = (run.context || {}) as Record<string, unknown>;
-
   // Slack-originated run: use slackPoster (channel/thread stored in context).
   if (run.triggerId.startsWith("slack:")) {
+    const msg = `Workflow \`${run.workflowName}\` was ${reason}.`;
+    const stored = (run.context || {}) as Record<string, unknown>;
     const channelId = stored.channelId as string | undefined;
     const threadId = stored.threadId as string | undefined;
     if (resumeOpts.slackPoster && channelId && threadId) {
       await resumeOpts.slackPoster(channelId, threadId, msg);
     }
-    return;
   }
-
-  // GitHub-originated run: parse owner/repo from the trigger id.
-  const coords = parseGitHubCoords(run);
-  if (!coords || !run.issueNumber || !resumeOpts.github) return;
-  await resumeOpts.github.postComment(coords.owner, coords.repo, run.issueNumber, msg);
-}
-
-/** Extract owner/repo from a GitHub trigger id. Returns null for non-GitHub ids. */
-function parseGitHubCoords(run: WorkflowRun): { owner: string; repo: string } | null {
-  const { triggerId } = run;
-  const slashIdx = triggerId.indexOf("/");
-  if (slashIdx < 0) return null;
-  const hashIdx = triggerId.indexOf("#");
-  const colonIdx = triggerId.indexOf("::");
-  const end = hashIdx >= 0 ? hashIdx : colonIdx >= 0 ? colonIdx : triggerId.length;
-  const owner = triggerId.slice(0, slashIdx);
-  const repo = triggerId.slice(slashIdx + 1, end);
-  if (!owner || !repo) return null;
-  return { owner, repo };
+  // GitHub-originated runs: intentionally no PR comment (see doc above).
 }
