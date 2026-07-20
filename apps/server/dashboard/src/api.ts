@@ -371,6 +371,14 @@ export interface ServerInfo {
   buildDate: string | null;
 }
 
+export interface ServerContainer {
+  name: string;
+  /** Short label derived from the compose name: lastlight-<service>-<n>. */
+  service: string;
+  status: string;
+  image: string;
+}
+
 export interface WorkflowApproval {
   id: string;
   workflowRunId: string;
@@ -563,6 +571,16 @@ export const api = {
     }),
   health: () => req<Health>("/health"),
   serverInfo: () => req<ServerInfo>("/server/info"),
+  serverContainers: () => req<{ containers: ServerContainer[] }>("/server/containers"),
+  /** One-shot `docker logs` snapshot for a container (time-windowed via `since`). */
+  serverLogs: (opts: { container?: string; tail?: number; since?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.container) qs.set("container", opts.container);
+    if (opts.tail) qs.set("tail", String(opts.tail));
+    if (opts.since) qs.set("since", opts.since);
+    const qss = qs.toString();
+    return req<{ container: string; lines: string[] }>(`/server/logs${qss ? `?${qss}` : ""}`);
+  },
   sessions: (opts: { limit?: number } = {}) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set("limit", String(opts.limit));
