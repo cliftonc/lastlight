@@ -30,8 +30,11 @@
  *     checks green, the `pr.checks_passed` webhook hands off to the green sweep
  *     for the merge. A `blocked` PR ci-fix can't unblock (e.g. awaiting a
  *     required human review) is flagged `requires-human` so it stops recurring.
- *     `clean` is the green sweep's job; `unstable`/`unknown` are deliberately
- *     left for the real-time webhook or the next tick.
+ *     `clean` is the green sweep's job; `unstable` is deliberately left for the
+ *     real-time webhook or the next tick. `unknown` is a cold-cache placeholder,
+ *     not a verdict — GitHub computes mergeability lazily, so a cold read returns
+ *     `unknown` and kicks off the recompute; both sweeps re-poll it with a
+ *     widening backoff (`resolveMergeableState`, issue #204) before giving up.
  *
  * Both sweeps SKIP any PR carrying the `requires-human` label — the terminal
  * flag the dependabot prompts apply when Last Light can't proceed automatically
@@ -132,16 +135,39 @@ export interface DiscoverOptions {
    *  bounds the row count; the next daily tick picks up any remainder. */
   maxPerRepo?: number;
   log?: (msg: string) => void;
+  /**
+   * Backoff (ms) between re-reads while `mergeable_state` is `unknown` — GitHub
+   * computes mergeability lazily, so a cold read returns `unknown` AND triggers
+   * the recompute; these delays give it time to settle (issue #204). One entry =
+   * one extra read; the poll stops as soon as the state settles, so a normally
+   * green PR waits just the first delay. Default `[2s, 4s, 10s]`; tests pass a
+   * short/zero array (with `sleep`) to run the loop instantly.
+   */
+  mergeablePollDelaysMs?: number[];
+  /** Injectable sleep for the re-poll backoff (default real `setTimeout`); tests
+   *  pass a no-op so the poll loop runs without real delay. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_MAX_PER_REPO = 25;
+
+/**
+ * Widening backoff between `mergeable_state` re-reads (issue #204). Only the
+ * reads taken while still `unknown` actually happen, so a PR that settles on the
+ * first retry waits just 2s; a genuinely-uncomputable PR burns 2+4+10s across
+ * three extra reads, then gives up and is left for the webhook / next tick.
+ */
+const MERGEABLE_POLL_DELAYS_MS = [2000, 4000, 10000];
+
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
  * `mergeable_state` values that keep a PR from merging but that `dependabot-ci-fix`
  * can act on: `behind` (merge the base in), `dirty` (resolve the conflict, almost
  * always the lockfile), `blocked` (a required gate is unmet — ci-fix pushes any
  * fix it can, else flags `requires-human`). `clean` is the green sweep's; `unstable`
- * is caught via the checks conclusion; `unknown` is left for a later tick.
+ * is caught via the checks conclusion; a cold `unknown` is re-polled
+ * (`resolveMergeableState`) and only a still-`unknown` PR is left for a later tick.
  */
 const MERGE_BLOCKED_STATES = new Set<RedReason>(["behind", "dirty", "blocked"]);
 
@@ -201,9 +227,47 @@ async function listDependencyCandidates(
 }
 
 /**
+ * Read a PR's `mergeable_state`, re-polling through a cold `unknown` (issue #204).
+ *
+ * GitHub computes mergeability lazily via a background test-merge: a cold `GET`
+ * on a PR whose result hasn't (re)computed returns `mergeable_state: "unknown"`
+ * AND kicks off the recompute; a follow-up read a beat later returns the settled
+ * value. On a busy repo the base branch moves every few minutes and invalidates
+ * every open PR's cached mergeability, so a single cold read almost always
+ * catches `unknown` — leaving genuinely-`clean` PRs stranded tick after tick.
+ * We re-read with a widening backoff (`MERGEABLE_POLL_DELAYS_MS`) until it
+ * settles; a PR still `unknown` after the last delay is returned as-is and left
+ * for the webhook / next tick, unchanged.
+ *
+ * SHARED by both sweeps deliberately: the green sweep enqueues on `clean`, the
+ * red sweep routes `behind`/`dirty`/`blocked` — either signal reads `unknown`
+ * cold, so the warm read belongs here, not just in the green sweep. Errors
+ * propagate to the caller's per-candidate try/catch (which isolates + skips).
+ */
+async function resolveMergeableState(
+  gh: PrDiscoveryClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  opts: DiscoverOptions,
+): Promise<string | undefined> {
+  const delays = opts.mergeablePollDelaysMs ?? MERGEABLE_POLL_DELAYS_MS;
+  const sleep = opts.sleep ?? realSleep;
+  let state = (await gh.getPullRequest(owner, repo, pullNumber)).mergeable_state;
+  for (const delay of delays) {
+    if (state !== "unknown") break; // settled — no point polling further
+    await sleep(delay);
+    state = (await gh.getPullRequest(owner, repo, pullNumber)).mergeable_state;
+  }
+  return state;
+}
+
+/**
  * Find every green (`mergeable_state: "clean"`) dependency PR across `repos`
  * (`owner/repo` full names), EXCLUDING any carrying the `requires-human` label.
- * Per-repo failures are logged and skipped, never fatal.
+ * A cold `unknown` read is re-polled (`resolveMergeableState`) before giving up,
+ * so a genuinely-mergeable-but-uncomputed PR isn't stranded for want of a second
+ * read (issue #204). Per-repo failures are logged and skipped, never fatal.
  */
 export async function discoverGreenDependencyPrs(
   repos: string[],
@@ -215,16 +279,17 @@ export async function discoverGreenDependencyPrs(
 
   for (const full of repos) {
     for (const c of await listDependencyCandidates(full, gh, maxPerRepo, opts.log)) {
-      let detail: { mergeable_state?: string };
+      let state: string | undefined;
       try {
-        detail = await gh.getPullRequest(c.owner, c.repo, c.number);
+        state = await resolveMergeableState(gh, c.owner, c.repo, c.number, opts);
       } catch (err) {
         opts.log?.(`[dependabot-discovery] ${c.full}#${c.number}: fetch failed — ${String(err)}`);
         continue;
       }
-      // Only genuinely-green PRs. `unstable`/`blocked`/`behind`/`dirty`/`unknown`
-      // are left for the real-time webhook or the next tick once they go clean.
-      if (detail.mergeable_state === "clean") {
+      // Only genuinely-green PRs. `unstable`/`blocked`/`behind`/`dirty` (and a PR
+      // still `unknown` after the re-poll) are left for the real-time webhook or
+      // the next tick once they go clean.
+      if (state === "clean") {
         out.push({ repo: c.full, prNumber: c.number, title: c.title });
       }
     }
@@ -260,7 +325,14 @@ export async function discoverRedDependencyPrs(
         // Query the exact commit we listed (headSha) so a mid-sweep push can't
         // make us read a newer commit's checks; fall back to the ref if absent.
         conclusion = await gh.getChecksConclusion(c.owner, c.repo, c.headSha || c.headRef);
-        mergeableState = (await gh.getPullRequest(c.owner, c.repo, c.number)).mergeable_state;
+        // A settled-failing build is reason enough (and makes the mergeable
+        // signal moot), so skip the potentially-slow `unknown` re-poll for it;
+        // otherwise warm the read so a cold `unknown` that's really behind/dirty/
+        // blocked isn't stranded on the red side either (issue #204).
+        mergeableState =
+          conclusion === "failing"
+            ? undefined
+            : await resolveMergeableState(gh, c.owner, c.repo, c.number, opts);
       } catch (err) {
         opts.log?.(
           `[dependabot-discovery] ${c.full}#${c.number}: fetch failed — ${String(err)}`,
@@ -269,7 +341,8 @@ export async function discoverRedDependencyPrs(
       }
       // Settled-failing CI (fix the build), OR a mergeable_state ci-fix can push
       // toward (behind/dirty/blocked). `passing`/`pending`/`none` checks with a
-      // `clean`/`unstable`/`unknown` state are left for the webhook or next tick.
+      // `clean`/`unstable` state (or one still `unknown` after the re-poll) are
+      // left for the webhook or next tick.
       const blockedByMerge =
         mergeableState !== undefined && MERGE_BLOCKED_STATES.has(mergeableState as RedReason);
       if (conclusion === "failing" || blockedByMerge) {

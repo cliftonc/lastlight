@@ -147,6 +147,58 @@ describe("discoverGreenDependencyPrs", () => {
     expect(prs).toEqual([]);
     expect(gh.listOpenPullRequests).not.toHaveBeenCalled();
   });
+
+  /**
+   * A client whose per-PR `getPullRequest` returns a SEQUENCE of mergeable_states
+   * (one per call), staying on the last once exhausted — models GitHub's lazy
+   * recompute: first read `unknown`, a later read settles. `sleep`/short delays
+   * (below) run the poll loop instantly.
+   */
+  function sequencedGh(
+    listing: Record<string, PrEntry[]>,
+    sequences: Record<string, string[]>,
+  ): PrDiscoveryClient {
+    const calls: Record<string, number> = {};
+    return {
+      listOpenPullRequests: vi.fn(async (owner, repo) => (listing[`${owner}/${repo}`] ?? []).map(normalize)),
+      getPullRequest: vi.fn(async (owner, repo, n) => {
+        const key = `${owner}/${repo}#${n}`;
+        const seq = sequences[key] ?? ["clean"];
+        const i = Math.min(calls[key] ?? 0, seq.length - 1);
+        calls[key] = (calls[key] ?? 0) + 1;
+        return { mergeable_state: seq[i] };
+      }),
+      getChecksConclusion: vi.fn(async () => "passing" as const),
+    };
+  }
+
+  // No-op sleep + zero delays: three extra reads allowed, no real wait.
+  const fastPoll = { sleep: async () => {}, mergeablePollDelaysMs: [0, 0, 0] };
+
+  it("re-polls a cold `unknown` and enqueues once it settles to clean", async () => {
+    const gh = sequencedGh(
+      { "cliftonc/a": [{ number: 2, title: "Bump a", draft: false, authorLogin: "dependabot[bot]" }] },
+      { "cliftonc/a#2": ["unknown", "unknown", "clean"] }, // settles on the 3rd read
+    );
+
+    const prs = await discoverGreenDependencyPrs(["cliftonc/a"], gh, fastPoll);
+
+    expect(prs).toEqual([{ repo: "cliftonc/a", prNumber: 2, title: "Bump a" }]);
+    expect(gh.getPullRequest).toHaveBeenCalledTimes(3); // initial + 2 retries, then settled
+  });
+
+  it("gives up on a PR that stays `unknown` through the whole backoff (not enqueued)", async () => {
+    const gh = sequencedGh(
+      { "cliftonc/a": [{ number: 2, title: "Bump a", draft: false, authorLogin: "dependabot[bot]" }] },
+      { "cliftonc/a#2": ["unknown"] }, // never settles
+    );
+
+    const prs = await discoverGreenDependencyPrs(["cliftonc/a"], gh, fastPoll);
+
+    expect(prs).toEqual([]);
+    // Bounded: initial read + one per delay (3), then gives up — no runaway loop.
+    expect(gh.getPullRequest).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe("discoverRedDependencyPrs", () => {
@@ -204,7 +256,7 @@ describe("discoverRedDependencyPrs", () => {
           { number: 4, title: "Bump b", draft: false, authorLogin: "renovate[bot]" }, // dirty
           { number: 6, title: "Bump c", draft: false, authorLogin: "renovate[bot]" }, // blocked
           { number: 8, title: "Bump d", draft: false, authorLogin: "renovate[bot]" }, // clean → green sweep's
-          { number: 9, title: "Bump e", draft: false, authorLogin: "renovate[bot]" }, // unknown → skip
+          { number: 9, title: "Bump e", draft: false, authorLogin: "renovate[bot]" }, // stays unknown → skip
         ],
       },
       // All checks green — mergeable_state is the only signal here.
@@ -214,11 +266,15 @@ describe("discoverRedDependencyPrs", () => {
         "cliftonc/a#4": "dirty",
         "cliftonc/a#6": "blocked",
         "cliftonc/a#8": "clean",
-        "cliftonc/a#9": "unknown",
+        "cliftonc/a#9": "unknown", // never settles — re-polled, then skipped
       },
     );
 
-    const prs = await discoverRedDependencyPrs(["cliftonc/a"], gh);
+    // #9 is `unknown` throughout, so it exercises the re-poll — run it instantly.
+    const prs = await discoverRedDependencyPrs(["cliftonc/a"], gh, {
+      sleep: async () => {},
+      mergeablePollDelaysMs: [0, 0, 0],
+    });
 
     expect(prs).toEqual([
       { repo: "cliftonc/a", prNumber: 2, title: "Bump a", branch: "dependabot/npm/pkg-2", reason: "behind" },
@@ -262,6 +318,49 @@ describe("discoverRedDependencyPrs", () => {
       { repo: "cliftonc/a", prNumber: 3, title: "Bump a", branch: "dependabot/npm/pkg-3", reason: "checks-failing" },
     ]);
     expect(gh.getChecksConclusion).not.toHaveBeenCalledWith("cliftonc", "a", "sha-4");
+  });
+
+  it("re-polls a cold `unknown` and routes it once it settles to dirty", async () => {
+    const calls: Record<string, number> = {};
+    const gh: PrDiscoveryClient = {
+      listOpenPullRequests: vi.fn(async () => [
+        normalize({ number: 3, title: "Bump a", draft: false, authorLogin: "dependabot[bot]" }),
+      ]),
+      // Checks are green here, so mergeable_state is the only red signal — and it
+      // reads `unknown` cold before settling to `dirty` on the second read.
+      getPullRequest: vi.fn(async (_o, _r, n) => {
+        const seq = ["unknown", "dirty"];
+        const i = Math.min(calls[n] ?? 0, seq.length - 1);
+        calls[n] = (calls[n] ?? 0) + 1;
+        return { mergeable_state: seq[i] };
+      }),
+      getChecksConclusion: vi.fn(async () => "passing" as const),
+    };
+
+    const prs = await discoverRedDependencyPrs(["cliftonc/a"], gh, {
+      sleep: async () => {},
+      mergeablePollDelaysMs: [0, 0, 0],
+    });
+
+    expect(prs).toEqual([
+      { repo: "cliftonc/a", prNumber: 3, title: "Bump a", branch: "dependabot/npm/pkg-3", reason: "dirty" },
+    ]);
+  });
+
+  it("does not re-read mergeable_state when checks are already settled-failing", async () => {
+    const gh = fakeGh(
+      { "cliftonc/a": [{ number: 3, title: "Bump a", draft: false, authorLogin: "dependabot[bot]" }] },
+      { "sha-3": "failing" },
+      { "cliftonc/a#3": "unknown" },
+    );
+
+    const prs = await discoverRedDependencyPrs(["cliftonc/a"], gh);
+
+    expect(prs).toEqual([
+      { repo: "cliftonc/a", prNumber: 3, title: "Bump a", branch: "dependabot/npm/pkg-3", reason: "checks-failing" },
+    ]);
+    // Failing CI is reason enough — the mergeable poll is skipped entirely.
+    expect(gh.getPullRequest).not.toHaveBeenCalled();
   });
 
   it("isolates a candidate whose checks fetch throws (skips it, keeps going)", async () => {
