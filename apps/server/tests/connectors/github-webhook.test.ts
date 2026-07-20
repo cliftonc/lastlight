@@ -197,6 +197,7 @@ async function postCheckSuiteCompleted(
     commitMessage?: string;
     commitAuthor?: string;
     headBranch?: string;
+    headSha?: string;
   },
 ): Promise<{ status: number; json: any; emitted: any | null }> {
   let emitted: any = null;
@@ -210,6 +211,7 @@ async function postCheckSuiteCompleted(
       id: 1,
       conclusion: opts.conclusion,
       head_branch: opts.headBranch,
+      head_sha: opts.headSha ?? "deadbeefcafe",
       pull_requests: opts.prNumber ? [{ number: opts.prNumber, head: { ref: "dependabot/npm/lodash-4.17.21" } }] : [],
       head_commit: {
         message: opts.commitMessage ?? "Bump lodash from 4.17.20 to 4.17.21",
@@ -318,6 +320,79 @@ describe("GitHubWebhookConnector — passed checks (dependency PRs)", () => {
     const { json, emitted } = await postCheckSuiteCompleted(connector(), {
       conclusion: "success",
       commitAuthor: "dependabot[bot]",
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+  });
+});
+
+describe("GitHubWebhookConnector — settle-aware emit gate", () => {
+  beforeEach(() => {
+    setRuntimeConfig({ managedRepos: [REPO] } as unknown as LastLightConfig);
+  });
+  afterEach(() => resetRuntimeConfigForTests());
+
+  /** A connector whose aggregate check-conclusion lookup is stubbed. */
+  function connectorWithChecks(
+    conclusion: "passing" | "failing" | "pending" | "none",
+  ): { conn: GitHubWebhookConnector; calls: Array<[string, string, string]> } {
+    const calls: Array<[string, string, string]> = [];
+    const conn = new GitHubWebhookConnector({
+      port: 0,
+      webhookSecret: SECRET,
+      botLogin: BOT_LOGIN,
+      getChecksConclusion: async (owner, repo, ref) => {
+        calls.push([owner, repo, ref]);
+        return conclusion;
+      },
+    });
+    return { conn, calls };
+  }
+
+  it("emits pr.checks_passed ONLY when the whole SHA has settled green", async () => {
+    const { conn, calls } = connectorWithChecks("passing");
+    const { emitted } = await postCheckSuiteCompleted(conn, {
+      conclusion: "success",
+      prNumber: 190,
+      commitAuthor: "dependabot[bot]",
+      headSha: "abc1234def",
+    });
+    expect(emitted?.type).toBe("pr.checks_passed");
+    expect(emitted.headSha).toBe("abc1234def");
+    // queried the aggregate state for the head SHA
+    expect(calls).toEqual([["acme", "widgets", "abc1234def"]]);
+  });
+
+  it("drops a green suite while sibling suites are still pending", async () => {
+    // A repo with several check-reporting apps: this suite is green but the
+    // aggregate is still 'pending' — no event, so we don't assess mid-flight.
+    // Only the LAST suite to settle flips it to 'passing' → exactly one event.
+    const { conn } = connectorWithChecks("pending");
+    const { json, emitted } = await postCheckSuiteCompleted(conn, {
+      conclusion: "success",
+      prNumber: 190,
+      commitAuthor: "dependabot[bot]",
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+  });
+
+  it("emits pr.checks_failed ONLY when the SHA has settled red", async () => {
+    const { conn } = connectorWithChecks("failing");
+    const { emitted } = await postCheckSuiteCompleted(conn, {
+      conclusion: "failure",
+      prNumber: 7,
+      headSha: "feed0000",
+    });
+    expect(emitted?.type).toBe("pr.checks_failed");
+    expect(emitted.headSha).toBe("feed0000");
+  });
+
+  it("drops a red suite while the aggregate is still pending", async () => {
+    const { conn } = connectorWithChecks("pending");
+    const { json, emitted } = await postCheckSuiteCompleted(conn, {
+      conclusion: "failure",
+      prNumber: 7,
     });
     expect(json.filtered).toBe(true);
     expect(emitted).toBeNull();

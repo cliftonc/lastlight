@@ -127,6 +127,9 @@ export interface WorkflowRun {
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;
+  /** Roll-up totals across the run's executions — present on the runs list. */
+  totalCostUsd?: number;
+  totalTokens?: number;
 }
 
 /**
@@ -308,12 +311,23 @@ export interface ContainerInfo {
   image: string;
 }
 
+export type ContainerKind = "agent" | "sandbox" | "infra";
+
 export interface ContainerStats {
   name: string;
+  kind: ContainerKind;
   cpuPercent: number;
   memUsageBytes: number;
   memLimitBytes: number;
   memPercent: number;
+}
+
+export interface HostStats {
+  memTotalBytes: number;
+  memUsedBytes: number;
+  memPercent: number;
+  cpuPercent: number;
+  cpuCount: number;
 }
 
 export interface Stats {
@@ -355,6 +369,14 @@ export interface ServerInfo {
   pinned: string | null;
   packageVersion: string | null;
   buildDate: string | null;
+}
+
+export interface ServerContainer {
+  name: string;
+  /** Short label derived from the compose name: lastlight-<service>-<n>. */
+  service: string;
+  status: string;
+  image: string;
 }
 
 export interface WorkflowApproval {
@@ -549,6 +571,16 @@ export const api = {
     }),
   health: () => req<Health>("/health"),
   serverInfo: () => req<ServerInfo>("/server/info"),
+  serverContainers: () => req<{ containers: ServerContainer[] }>("/server/containers"),
+  /** One-shot `docker logs` snapshot for a container (time-windowed via `since`). */
+  serverLogs: (opts: { container?: string; tail?: number; since?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.container) qs.set("container", opts.container);
+    if (opts.tail) qs.set("tail", String(opts.tail));
+    if (opts.since) qs.set("since", opts.since);
+    const qss = qs.toString();
+    return req<{ container: string; lines: string[] }>(`/server/logs${qss ? `?${qss}` : ""}`);
+  },
   sessions: (opts: { limit?: number } = {}) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set("limit", String(opts.limit));
@@ -572,7 +604,8 @@ export const api = {
     return req<{ executions: Execution[] }>(`/executions${qss ? `?${qss}` : ""}`);
   },
   containers: () => req<{ containers: ContainerInfo[] }>("/containers"),
-  containerStats: () => req<{ stats: ContainerStats[] }>("/containers/stats"),
+  containerStats: () =>
+    req<{ stats: ContainerStats[]; host: HostStats | null }>("/containers/stats"),
   killContainer: (name: string) =>
     req<{ killed: string }>(`/containers/${encodeURIComponent(name)}`, { method: "DELETE" }),
   workflowRuns: (

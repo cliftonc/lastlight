@@ -27,6 +27,7 @@ import { cleanupOrphanedSandboxes } from "./sandbox/index.js";
 import { writeEgressFirewallConfigs, writeOtelCollectorConfig } from "./sandbox/egress-firewall-config.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/index.js";
 import { authMiddleware, authIsEnabled } from "./admin/auth.js";
+import { readPackageVersion } from "./admin/version.js";
 import { GitHubClient } from "./engine/github/github.js";
 import { setInstallationRepos } from "./managed-repos.js";
 import { screenForInjection, flagPrefix } from "./engine/screen/screen.js";
@@ -80,7 +81,7 @@ function validateConfig(config: ReturnType<typeof loadConfig>): void {
 }
 
 async function main() {
-  console.log("Last Light v2.0 — Agent SDK Harness");
+  console.log(`Last Light v${readPackageVersion() ?? "unknown"} — Agent SDK Harness`);
   console.log("====================================");
 
   // Load and validate config + overlay assets before starting anything. These
@@ -662,6 +663,12 @@ async function main() {
       webhookSecret: config.webhookSecret,
       botLogin: config.botLogin,
       app,
+      // Settle-aware gate: emit a dependency-PR checks event only once the head
+      // SHA's checks have fully settled (green/red), so a multi-app repo fires
+      // one event per SHA — the last suite to complete — not one per suite.
+      getChecksConclusion: github
+        ? (owner, repo, ref) => github.getChecksConclusion(owner, repo, ref)
+        : undefined,
     });
     registry.register(githubConnector);
   }
@@ -741,6 +748,9 @@ async function main() {
         // Present only for the red sweep — `dispatchWorkflow` pre-clones this
         // head ref for dependabot-ci-fix's checkout (a PR_FIX_SHAPED_WORKFLOWS).
         ...(pr.branch ? { branch: pr.branch } : {}),
+        // Also red-sweep only — why it was summoned (checks-failing | behind |
+        // dirty | blocked), threaded into the ci-fix prompt as `{{reason}}`.
+        ...(pr.reason ? { reason: pr.reason } : {}),
       }));
       ({ dispatched, failures } = await fanOutContexts(workflowName, contexts, dispatchWorkflow));
     } else {
@@ -848,24 +858,26 @@ async function main() {
           _triggerType: "admin",
         }).catch((err) => console.error(`[admin] Resume failed:`, err));
       },
-      // Retry a FAILED run, resuming from the phase that failed with the same
-      // context. Unlike `resumeWorkflow` (approval-gate resume, which rebuilds a
-      // lossy owner/repo/issueNumber context and bails on non-issue runs), this
-      // re-enters via `resumeSimpleRun`, reconstructing the full context from the
-      // stored `workflow_runs.context` + `scratch` — so it also retries
-      // Slack-thread-scoped runs (e.g. an `explore` started from Slack). The
-      // failed phase's ledger row is `success=0`, so it re-runs while
-      // already-succeeded phases skip.
+      // Retry a FAILED or CANCELLED run, resuming from where it stopped with the
+      // same context. Unlike `resumeWorkflow` (approval-gate resume, which
+      // rebuilds a lossy owner/repo/issueNumber context and bails on non-issue
+      // runs), this re-enters via `resumeSimpleRun`, reconstructing the full
+      // context from the stored `workflow_runs.context` + `scratch` — so it also
+      // retries Slack-thread-scoped runs (e.g. an `explore` started from Slack).
+      // The failed phase's ledger row is `success=0`, so it re-runs while
+      // already-succeeded phases skip; a queue-dropped `cancelled` run ran no
+      // phases and starts clean.
       retryWorkflow: async (workflowRun, sender) => {
-        if (workflowRun.status !== "failed") {
-          console.warn(`[admin] Cannot retry ${workflowRun.id}: status is '${workflowRun.status}', not 'failed'`);
+        if (workflowRun.status !== "failed" && workflowRun.status !== "cancelled") {
+          console.warn(`[admin] Cannot retry ${workflowRun.id}: status is '${workflowRun.status}', not 'failed' or 'cancelled'`);
           return;
         }
-        // Compare-and-set: flip failed→running and clear the terminal markers.
-        // If a racing retry already flipped it, changes===0 and we don't dispatch.
+        // Compare-and-set: flip failed/cancelled→running and clear the terminal
+        // markers. If a racing retry already flipped it, changes===0 and we don't
+        // dispatch.
         const changed = db.runs.restartRun(workflowRun.id);
         if (changed !== 1) {
-          console.warn(`[admin] Retry ${workflowRun.id}: run is no longer 'failed' (raced) — skipping dispatch`);
+          console.warn(`[admin] Retry ${workflowRun.id}: run is no longer retryable (raced) — skipping dispatch`);
           return;
         }
         const fresh = db.runs.getRun(workflowRun.id);

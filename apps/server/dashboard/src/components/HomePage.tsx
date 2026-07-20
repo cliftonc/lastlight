@@ -10,7 +10,9 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import { api, type WorkflowRun, type ContainerStats } from "../api";
+import { Server, Bot, Box, Network } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { api, type WorkflowRun, type ContainerStats, type ContainerKind, type HostStats } from "../api";
 import { useStatsSeries } from "../hooks/useDailyStats";
 import { useTheme } from "../hooks/useTheme";
 import { repoUrl, issueUrl, runRepoPath } from "../lib/githubLinks";
@@ -85,8 +87,17 @@ function shortContainerName(name: string): string {
   return name.replace(/^lastlight-/, "");
 }
 
+// One glyph per container kind (plus the synthetic `host` row).
+const KIND_ICON: Record<ContainerKind | "host", LucideIcon> = {
+  host: Server,
+  agent: Bot,
+  sandbox: Box,
+  infra: Network,
+};
+
 function StatusBadge({ status }: { status: WorkflowRun["status"] }) {
   const cls = clsx("badge badge-xs font-mono", {
+    "badge-neutral": status === "queued",
     "badge-info": status === "running",
     "badge-warning": status === "paused",
     "badge-success": status === "succeeded",
@@ -97,7 +108,11 @@ function StatusBadge({ status }: { status: WorkflowRun["status"] }) {
 }
 
 function useLiveActivity() {
+  // "Active" is running+paused only — the runs actually executing. Queued runs
+  // (parked by the concurrency cap) are counted separately so the two don't
+  // double-count, and the live list stays to what's really in flight.
   const [workflowCount, setWorkflowCount] = useState(0);
+  const [queuedCount, setQueuedCount] = useState(0);
   const [liveWorkflows, setLiveWorkflows] = useState<WorkflowRun[]>([]);
   const [containerCount, setContainerCount] = useState(0);
 
@@ -105,13 +120,15 @@ function useLiveActivity() {
     let cancelled = false;
     const load = async () => {
       try {
-        const [wf, ct] = await Promise.all([
-          api.workflowRuns({ status: "active", limit: 5 }),
+        const [wf, queued, ct] = await Promise.all([
+          api.workflowRuns({ status: "running,paused", limit: 5 }),
+          api.workflowRuns({ status: "queued", limit: 1 }),
           api.containers(),
         ]);
         if (!cancelled) {
           setWorkflowCount(wf.total);
           setLiveWorkflows(wf.workflowRuns);
+          setQueuedCount(queued.total);
           setContainerCount(ct.containers.length);
         }
       } catch {
@@ -123,20 +140,29 @@ function useLiveActivity() {
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
-  return { workflowCount, liveWorkflows, containerCount };
+  return { workflowCount, queuedCount, liveWorkflows, containerCount };
 }
 
 function useContainerStats() {
   const [stats, setStats] = useState<ContainerStats[]>([]);
+  const [host, setHost] = useState<HostStats | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const res = await api.containerStats();
-        if (!cancelled) setStats(res.stats);
+        if (!cancelled) {
+          setStats(res.stats);
+          setHost(res.host);
+        }
       } catch {
         /* ignore */
+      } finally {
+        // Mark loaded after the first attempt (success OR failure) so the panel
+        // stops showing its spinner instead of hanging on it forever.
+        if (!cancelled) setLoaded(true);
       }
     };
     load();
@@ -145,57 +171,135 @@ function useContainerStats() {
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
-  return stats;
+  return { stats, host, loaded };
 }
 
-function ResourceUsageSection({ stats }: { stats: ContainerStats[] }) {
+/**
+ * One CPU/MEM row — shared by the host summary and every container. `emphasis`
+ * gives the host row a subtle border so it reads as the aggregate above the
+ * per-container list.
+ */
+function UsageRow({
+  icon: Icon,
+  label,
+  detail,
+  cpuPercent,
+  memPercent,
+  emphasis = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  detail: string;
+  cpuPercent: number;
+  memPercent: number;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className={clsx("bg-base-100 rounded p-2", emphasis && "border border-base-300/70")}>
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="flex items-center gap-1.5 min-w-0">
+          <Icon className="w-3.5 h-3.5 shrink-0 text-base-content/50" />
+          <span className="font-mono text-base-content/80 truncate">{label}</span>
+        </span>
+        <span className="text-base-content/40 font-mono shrink-0 ml-2">{detail}</span>
+      </div>
+      <div className="flex gap-2 items-center">
+        <div className="flex-1">
+          <div className="flex justify-between text-2xs text-base-content/50 mb-0.5">
+            <span>CPU</span>
+            <span className="font-mono">{cpuPercent.toFixed(1)}%</span>
+          </div>
+          <progress
+            className="progress progress-primary h-1.5 w-full"
+            value={Math.min(cpuPercent, 100)}
+            max={100}
+          />
+        </div>
+        <div className="flex-1">
+          <div className="flex justify-between text-2xs text-base-content/50 mb-0.5">
+            <span>MEM</span>
+            <span className="font-mono">{memPercent.toFixed(1)}%</span>
+          </div>
+          <progress
+            className="progress progress-secondary h-1.5 w-full"
+            value={Math.min(memPercent, 100)}
+            max={100}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResourceUsageSection({
+  stats,
+  host,
+  loaded,
+}: {
+  stats: ContainerStats[];
+  host: HostStats | null;
+  loaded: boolean;
+}) {
+  const [showInfra, setShowInfra] = useState(false);
+  const infraCount = stats.filter((s) => s.kind === "infra").length;
+  const visible = showInfra ? stats : stats.filter((s) => s.kind !== "infra");
+
   return (
     <div className="card bg-base-200 shadow-sm">
       <div className="card-body p-4">
-        <h2 className="card-title text-sm font-semibold text-base-content/70 uppercase tracking-wide mb-3">
-          Resource Usage
-        </h2>
-        {stats.length === 0 ? (
-          <p className="text-xs text-base-content/40 text-center py-4">No container stats</p>
-        ) : (
-          <div className="space-y-2">
-            {stats.map((s) => (
-              <div key={s.name} className="bg-base-100 rounded p-2">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-mono text-base-content/80 truncate">
-                    {shortContainerName(s.name)}
-                  </span>
-                  <span className="text-base-content/40 font-mono shrink-0 ml-2">
-                    {formatBytes(s.memUsageBytes)} / {formatBytes(s.memLimitBytes)}
-                  </span>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <div className="flex-1">
-                    <div className="flex justify-between text-2xs text-base-content/50 mb-0.5">
-                      <span>CPU</span>
-                      <span className="font-mono">{s.cpuPercent.toFixed(1)}%</span>
-                    </div>
-                    <progress
-                      className="progress progress-primary h-1.5 w-full"
-                      value={Math.min(s.cpuPercent, 100)}
-                      max={100}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between text-2xs text-base-content/50 mb-0.5">
-                      <span>MEM</span>
-                      <span className="font-mono">{s.memPercent.toFixed(1)}%</span>
-                    </div>
-                    <progress
-                      className="progress progress-secondary h-1.5 w-full"
-                      value={Math.min(s.memPercent, 100)}
-                      max={100}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="card-title text-sm font-semibold text-base-content/70 uppercase tracking-wide">
+            Resource Usage
+          </h2>
+          {infraCount > 0 && (
+            <label className="label cursor-pointer gap-1.5 py-0">
+              <span className="label-text text-2xs text-base-content/50">
+                infra ({infraCount})
+              </span>
+              <input
+                type="checkbox"
+                className="toggle toggle-xs"
+                checked={showInfra}
+                onChange={(e) => setShowInfra(e.target.checked)}
+              />
+            </label>
+          )}
+        </div>
+        {!loaded ? (
+          <div className="flex items-center justify-center py-8">
+            <span className="loading loading-spinner loading-sm text-base-content/30" />
           </div>
+        ) : (
+          <>
+            {host && (
+              <div className="mb-2">
+                <UsageRow
+                  icon={KIND_ICON.host}
+                  label="host"
+                  detail={`${formatBytes(host.memUsedBytes)} / ${formatBytes(host.memTotalBytes)} · ${host.cpuCount} cores`}
+                  cpuPercent={host.cpuPercent}
+                  memPercent={host.memPercent}
+                  emphasis
+                />
+              </div>
+            )}
+            {visible.length === 0 ? (
+              <p className="text-xs text-base-content/40 text-center py-4">No container stats</p>
+            ) : (
+              <div className="space-y-2">
+                {visible.map((s) => (
+                  <UsageRow
+                    key={s.name}
+                    icon={KIND_ICON[s.kind]}
+                    label={shortContainerName(s.name)}
+                    detail={`${formatBytes(s.memUsageBytes)} / ${formatBytes(s.memLimitBytes)}`}
+                    cpuPercent={s.cpuPercent}
+                    memPercent={s.memPercent}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -209,7 +313,9 @@ function useRecentWorkflows() {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await api.workflowRuns({ limit: 3 });
+        // Only finished runs — queued/running/paused live in Live Activity,
+        // not "Recent". Terminal statuses = succeeded, failed, cancelled.
+        const res = await api.workflowRuns({ status: "succeeded,failed,cancelled", limit: 3 });
         if (!cancelled) setRuns(res.workflowRuns);
       } catch {
         /* ignore */
@@ -258,11 +364,13 @@ function RunTarget({ run }: { run: WorkflowRun }) {
 
 function LiveActivitySection({
   workflowCount,
+  queuedCount,
   liveWorkflows,
   containerCount,
   onSelect,
 }: {
   workflowCount: number;
+  queuedCount: number;
   liveWorkflows: WorkflowRun[];
   containerCount: number;
   onSelect: (id: string) => void;
@@ -277,6 +385,17 @@ function LiveActivitySection({
           <div className="stat bg-base-100 rounded-box p-3 flex-1">
             <div className="stat-title text-xs">Active Workflows</div>
             <div className="stat-value text-2xl text-primary">{workflowCount}</div>
+          </div>
+          <div className="stat bg-base-100 rounded-box p-3 flex-1">
+            <div className="stat-title text-xs">Queued Workflows</div>
+            <div
+              className={clsx(
+                "stat-value text-2xl",
+                queuedCount > 0 ? "text-warning" : "text-base-content/40",
+              )}
+            >
+              {queuedCount}
+            </div>
           </div>
           <div className="stat bg-base-100 rounded-box p-3 flex-1">
             <div className="stat-title text-xs">Running Containers</div>
@@ -362,6 +481,16 @@ function RecentWorkflowsSection({
                     {run.workflowName}
                   </span>
                   <RunTarget run={run} />
+                  {run.totalTokens ? (
+                    <span className="text-base-content/40 font-mono shrink-0 tabular-nums" title="tokens">
+                      {formatTokens(run.totalTokens)} tok
+                    </span>
+                  ) : null}
+                  {run.totalCostUsd ? (
+                    <span className="text-success/80 font-mono shrink-0 tabular-nums" title="cost">
+                      {formatCost(run.totalCostUsd)}
+                    </span>
+                  ) : null}
                   {duration && (
                     <span className="text-base-content/50 shrink-0">{duration}</span>
                   )}
@@ -543,9 +672,9 @@ function StatsChartsSection() {
 }
 
 export function HomePage({ onSelectWorkflow }: { onSelectWorkflow: (id: string) => void }) {
-  const { workflowCount, liveWorkflows, containerCount } = useLiveActivity();
+  const { workflowCount, queuedCount, liveWorkflows, containerCount } = useLiveActivity();
   const recentRuns = useRecentWorkflows();
-  const containerStats = useContainerStats();
+  const { stats, host, loaded } = useContainerStats();
 
   return (
     <div className="flex-1 overflow-auto p-4">
@@ -553,15 +682,16 @@ export function HomePage({ onSelectWorkflow }: { onSelectWorkflow: (id: string) 
         <div className="lg:col-span-2 space-y-4">
           <LiveActivitySection
             workflowCount={workflowCount}
+            queuedCount={queuedCount}
             liveWorkflows={liveWorkflows}
             containerCount={containerCount}
             onSelect={onSelectWorkflow}
           />
-          <ResourceUsageSection stats={containerStats} />
-          <RecentWorkflowsSection runs={recentRuns} onSelect={onSelectWorkflow} />
+          <ResourceUsageSection stats={stats} host={host} loaded={loaded} />
         </div>
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-3 space-y-4">
           <StatsChartsSection />
+          <RecentWorkflowsSection runs={recentRuns} onSelect={onSelectWorkflow} />
         </div>
       </div>
     </div>

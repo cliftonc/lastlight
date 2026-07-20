@@ -18,6 +18,12 @@ export interface EventEnvelope {
   issueNumber?: number;
   /** PR number (distinct from issue for PR-specific events) */
   prNumber?: number;
+  /**
+   * Head commit SHA for PR-shaped events (`pr.checks_passed` / `pr.checks_failed`
+   * carry the settled check_suite's head_sha). Used by the dependency-workflow
+   * dedup guard to skip a PR already assessed at this exact SHA.
+   */
+  headSha?: string;
   /** Login/username of the sender */
   sender: string;
   /** Login of the issue/PR original author (distinct from `sender`, the commenter) */

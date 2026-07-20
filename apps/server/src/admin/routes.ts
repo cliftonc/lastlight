@@ -11,6 +11,7 @@ import {
   listRunningContainers,
   killContainer,
   getContainerStats,
+  getHostStats,
   listServerContainers,
   resolveServerContainer,
   getContainerLogs,
@@ -389,6 +390,69 @@ function mountSessionRoutes(app: Hono, sessions: SessionSource, prefix: string):
   });
 }
 
+/** Token endpoints for the confidential-client OAuth2 code exchange. */
+export const GITHUB_TOKEN_ENDPOINT = "https://github.com/login/oauth/access_token";
+export const SLACK_TOKEN_ENDPOINT = "https://slack.com/api/openid.connect.token";
+
+/**
+ * Exchange an OAuth2 authorization code for an access token — our own tiny
+ * confidential-client (Basic-auth) exchange, used instead of arctic's
+ * `validateAuthorizationCode` for the dashboard's GitHub + Slack logins.
+ *
+ * Why not arctic: arctic's `createOAuth2Request` **pre-sets a `Content-Length`
+ * header** on the token POST. That's fine on Node's built-in fetch, but an
+ * in-process agent run (agentic-pi / pi-ai) replaces Node's global undici
+ * dispatcher with a non-default undici build ("poisons" the global fetch — see
+ * `sandbox.ts` + `chat-skills.ts`), and that dispatcher **rejects a manually-set
+ * Content-Length** with `UND_ERR_INVALID_ARG: invalid content-length header`.
+ * Result: once any in-process run has happened, every GitHub/Slack OAuth login
+ * throws `ArcticFetchError` and users can't sign in. The follow-up userInfo GETs
+ * work because they carry no body / no Content-Length.
+ *
+ * The fix is simply to not set Content-Length ourselves — undici computes it
+ * internally, which never trips the header validation. Semantics match arctic's
+ * confidential-client path exactly (grant_type=authorization_code, Basic auth,
+ * form body), so GitHub and Slack differ only by `tokenEndpoint`.
+ */
+export async function exchangeOAuth2Code(opts: {
+  tokenEndpoint: string;
+  code: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  fetchImpl?: typeof fetch;
+}): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code: opts.code,
+  });
+  if (opts.redirectUri) body.set("redirect_uri", opts.redirectUri);
+  const credentials = Buffer.from(`${opts.clientId}:${opts.clientSecret}`).toString("base64");
+
+  const doFetch = opts.fetchImpl ?? fetch;
+  const res = await doFetch(opts.tokenEndpoint, {
+    method: "POST",
+    // Deliberately NO Content-Length header — see the doc comment above.
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      Authorization: `Basic ${credentials}`,
+      "User-Agent": "lastlight-admin",
+    },
+    body: body.toString(),
+  });
+
+  const data = (await res.json().catch(() => null)) as
+    | { access_token?: string; error?: string; error_description?: string; ok?: boolean }
+    | null;
+  const accessToken = data?.access_token;
+  if (res.status !== 200 || !accessToken) {
+    const detail = data?.error_description ?? data?.error ?? `status ${res.status}`;
+    throw new Error(`OAuth token exchange failed: ${detail}`);
+  }
+  return accessToken;
+}
+
 export function createAdminRoutes(
   db: StateDb,
   sessions: SessionSource,
@@ -534,17 +598,17 @@ export function createAdminRoutes(
     }
 
     try {
-      const slack = new Slack(
-        config.slackOAuthClientId!,
-        config.slackOAuthClientSecret!,
-        config.slackOAuthRedirectUri ?? "",
-      );
       // "Sign in with Slack" issues OIDC-scoped tokens (openid + profile),
       // which Slack's classic auth.test endpoint rejects with invalid_auth.
       // Use the OIDC userInfo endpoint instead — it returns a JWT-style
       // payload with claims under namespaced URLs.
-      const tokens = await slack.validateAuthorizationCode(code);
-      const accessToken = tokens.accessToken();
+      const accessToken = await exchangeOAuth2Code({
+        tokenEndpoint: SLACK_TOKEN_ENDPOINT,
+        code,
+        clientId: config.slackOAuthClientId!,
+        clientSecret: config.slackOAuthClientSecret!,
+        redirectUri: config.slackOAuthRedirectUri ?? "",
+      });
       const res = await fetch("https://slack.com/api/openid.connect.userInfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
@@ -634,13 +698,13 @@ export function createAdminRoutes(
     }
 
     try {
-      const github = new GitHub(
-        config.githubOAuthClientId!,
-        config.githubOAuthClientSecret!,
-        config.githubOAuthRedirectUri ?? "",
-      );
-      const tokens = await github.validateAuthorizationCode(code);
-      const accessToken = tokens.accessToken();
+      const accessToken = await exchangeOAuth2Code({
+        tokenEndpoint: GITHUB_TOKEN_ENDPOINT,
+        code,
+        clientId: config.githubOAuthClientId!,
+        clientSecret: config.githubOAuthClientSecret!,
+        redirectUri: config.githubOAuthRedirectUri ?? "",
+      });
       const res = await fetch("https://api.github.com/user", {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -730,10 +794,10 @@ export function createAdminRoutes(
     return c.json({ containers });
   });
 
-  // CPU/memory stats for the agent and any sandbox containers
+  // Host-level CPU/memory plus per-container stats for the agent and sandboxes
   app.get("/containers/stats", async (c) => {
-    const stats = await getContainerStats();
-    return c.json({ stats });
+    const [stats, host] = await Promise.all([getContainerStats(), getHostStats()]);
+    return c.json({ stats, host });
   });
 
   // ── Server logs ───────────────────────────────────────────────────────────
@@ -1031,16 +1095,17 @@ export function createAdminRoutes(
     return c.json({ cancelled: id, killedContainers: killed });
   });
 
-  // Retry a FAILED workflow run — resume from the phase that failed with the
-  // same context. Only `failed` runs are retryable; the callback flips the row
-  // failed→running (compare-and-set) and re-dispatches via the same
-  // ledger-driven resume path the boot-recovery sweep uses. Sits under the
-  // `authMiddleware` guard above, like cancel/respond.
+  // Retry a FAILED or CANCELLED workflow run — resume from where it stopped with
+  // the same context. `cancelled` covers a queue-drop after a server death and a
+  // manual cancel, both recoverable; the callback flips the row →running
+  // (compare-and-set) and re-dispatches via the same ledger-driven resume path
+  // the boot-recovery sweep uses. Sits under the `authMiddleware` guard above,
+  // like cancel/respond.
   app.post("/workflow-runs/:id/retry", async (c) => {
     const id = c.req.param("id");
     const run = db.runs.getRun(id);
     if (!run) return c.json({ error: "workflow run not found" }, 404);
-    if (run.status !== "failed") {
+    if (run.status !== "failed" && run.status !== "cancelled") {
       return c.json({ error: `cannot retry a run with status '${run.status}'` }, 400);
     }
     if (!config.retryWorkflow) {

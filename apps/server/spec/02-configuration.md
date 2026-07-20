@@ -52,7 +52,7 @@ interface LastLightConfig {
   reviewPostsCheck: boolean;
   concurrency: {                          // global sandbox-run concurrency cap
     maxWorkflows: number;                 //   max runs executing at once (default 4)
-    maxQueueWaitMs: number;               //   TTL before a queued run is dropped (default 30 min)
+    maxQueueWaitMs: number;               //   TTL before a queued run is dropped (default 1 hr)
   };
 }
 
@@ -267,7 +267,7 @@ OpenRouter) are forwarded unconditionally.
 | `EXPLORE_DEFAULT_REPO` | `owner/name` — destination for Slack-initiated explore publish | unset (must be set or run fails at publish phase) |
 | `REVIEW_POSTS_CHECK` | post a Check Run on PR head SHA after pr-review | `false` |
 | `MAX_CONCURRENT_WORKFLOWS` | global cap on sandboxed workflow runs executing at once; excess triggers are persisted as `queued` and admitted FIFO as slots free (overlay `concurrency.maxWorkflows`) | `4` |
-| `MAX_QUEUE_WAIT_MS` | how long a `queued` run may wait before it's dropped (cancelled with a "waited too long" notice) by the admission sweeper (overlay `concurrency.maxQueueWaitMs`) | `1800000` (30 min) |
+| `MAX_QUEUE_WAIT_MS` | how long a `queued` run may wait before it's dropped (cancelled with a "waited too long" notice) by the admission sweeper (overlay `concurrency.maxQueueWaitMs`) | `3600000` (1 hr) |
 | `LASTLIGHT_GIT_CREDENTIALS` | **inert** — legacy credentials-file path; git auth now flows via a github.com-scoped `http.extraheader` (`GIT_CONFIG_*` env), not a credentials file | unset |
 | `LASTLIGHT_WRITE_GLOBAL_GIT` | when `"1"`, also write the bot identity + `http.extraheader` auth to the harness user's global `~/.gitconfig` (non-sandboxed direct-exec path only) | `0` |
 | `LASTLIGHT_GIT_SHA` | core git SHA baked into the image (Dockerfile `ARG`); surfaced by `GET /admin/api/server/info` for the dashboard drift banner | empty → "unknown" |

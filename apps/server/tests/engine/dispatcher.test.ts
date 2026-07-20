@@ -36,6 +36,7 @@ function mockDb(over: Record<string, any> = {}) {
     getExecutionOutput: vi.fn(),
     // workflow-run-store
     getRun: vi.fn(),
+    latestSucceededForTrigger: vi.fn().mockReturnValue(null),
     resolveGateAndResume: vi.fn(),
     resolveGateAndFail: vi.fn(),
     resolveReplyGateAndResume: vi.fn(),
@@ -55,6 +56,7 @@ function mockDb(over: Record<string, any> = {}) {
     },
     runs: {
       getRun: m.getRun,
+      latestSucceededForTrigger: m.latestSucceededForTrigger,
       resolveGateAndResume: m.resolveGateAndResume,
       resolveGateAndFail: m.resolveGateAndFail,
       resolveReplyGateAndResume: m.resolveReplyGateAndResume,
@@ -771,5 +773,78 @@ describe('dispatch — passthrough decisions', () => {
 
     expect(outcome).toEqual({ kind: 'replied', message: 'only maintainers can do that' });
     expect(envelope.reply).toHaveBeenCalledWith('only maintainers can do that');
+  });
+});
+
+describe('dispatch — dependency-PR dedup guard', () => {
+  const checksRoute = (ctx: Record<string, unknown> = {}): Route => ({
+    action: 'handler',
+    handler: 'dependabot-pr-merge',
+    context: { repo: 'cliftonc/lastlight', prNumber: 190, ...ctx },
+  });
+
+  /** A GitHub stub whose getPullRequest returns the given labels + head SHA. */
+  function githubStub(pr: { labels?: string[]; headSha?: string }) {
+    return {
+      getPullRequest: vi.fn().mockResolvedValue({
+        labels: (pr.labels ?? []).map((name) => ({ name })),
+        head: { sha: pr.headSha ?? 'sha-current' },
+      }),
+    } as any;
+  }
+
+  it('skips (no sandbox) when the PR carries requires-human', async () => {
+    const envelope = makeEnvelope({ type: 'pr.checks_passed', prNumber: 190 });
+    const github = githubStub({ labels: ['requires-human'], headSha: 'sha-current' });
+    const deps = makeDeps(checksRoute(), { github });
+
+    const outcome = await dispatch(envelope, deps);
+
+    expect(outcome.kind).toBe('skipped');
+    expect((outcome as any).reason).toContain('requires-human');
+    expect(deps.dispatchWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('skips when the current head SHA was already assessed', async () => {
+    const envelope = makeEnvelope({ type: 'pr.checks_passed', prNumber: 190 });
+    const github = githubStub({ headSha: 'sha-current' });
+    const db = mockDb({
+      latestSucceededForTrigger: vi.fn().mockReturnValue({ context: { headSha: 'sha-current' } }),
+    });
+    const deps = makeDeps(checksRoute(), { github, db: db as any });
+
+    const outcome = await dispatch(envelope, deps);
+
+    expect(outcome.kind).toBe('skipped');
+    expect((outcome as any).reason).toContain('already assessed');
+    expect(deps.dispatchWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('runs once for a genuinely new head SHA (no requires-human)', async () => {
+    const envelope = makeEnvelope({ type: 'pr.checks_passed', prNumber: 190 });
+    const github = githubStub({ headSha: 'sha-new' });
+    const db = mockDb({
+      // last assessed a DIFFERENT (older) SHA → a new push should run
+      latestSucceededForTrigger: vi.fn().mockReturnValue({ context: { headSha: 'sha-old' } }),
+    });
+    const deps = makeDeps(checksRoute(), { github, db: db as any });
+
+    const outcome = await dispatch(envelope, deps);
+
+    expect(outcome.kind).toBe('dispatched');
+    expect(deps.dispatchWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT gate a human @bot comment request (only the automated webhook path)', async () => {
+    // Same handler, but a comment.created trigger is an explicit human override.
+    const envelope = makeEnvelope({ type: 'comment.created', prNumber: 190 });
+    const github = githubStub({ labels: ['requires-human'], headSha: 'sha-current' });
+    const deps = makeDeps(checksRoute(), { github });
+
+    const outcome = await dispatch(envelope, deps);
+
+    expect(outcome.kind).toBe('dispatched');
+    expect(github.getPullRequest).not.toHaveBeenCalled();
+    expect(deps.dispatchWorkflow).toHaveBeenCalledTimes(1);
   });
 });

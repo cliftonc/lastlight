@@ -477,7 +477,7 @@ function normalizeFileConfig(raw: Record<string, unknown>): {
   const maxQueueWaitMs =
     typeof concurrencyRaw.maxQueueWaitMs === "number" && concurrencyRaw.maxQueueWaitMs > 0
       ? concurrencyRaw.maxQueueWaitMs
-      : 1_800_000;
+      : 3_600_000;
 
   return {
     managedRepos,

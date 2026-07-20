@@ -1,51 +1,49 @@
 # Last Light — Development Guide
 
-> **Monorepo move (Phase 2):** this package now lives at `apps/server/` in the
-> monorepo; paths in this file predate the move (the full docs-sync pass is
-> Phase 7 — see `docs/plans/monorepo-migration/`).
+> **This package is `lastlight-core`, at `apps/server/` in the monorepo.** For
+> workspace-level orientation (packages, dependency graph, root commands) see the
+> [root `CLAUDE.md`](../../CLAUDE.md); for the `lastlight` CLI see
+> [`packages/cli/CLAUDE.md`](../../packages/cli/CLAUDE.md).
 
 > **Architectural reference:** `spec/README.md` is the rebuild-grade
 > specification — twelve pages covering every layer with schemas,
 > invariants, and rebuild notes. Use this CLAUDE.md for day-to-day
 > orientation; use `spec/` when you need the contract.
->
-> **OpenCode → agentic-pi:** parts of this file still reference OpenCode
-> (the original runtime). The current runtime is `agentic-pi` for
-> sandboxed phases and `pi-ai` for in-process chat. The spec reflects
-> the current state; this guide will be updated in a follow-up pass.
 
 A GitHub repository maintenance agent. It listens for events (GitHub webhooks
 and Slack messages), classifies them, and runs an AI agent against a target
-repo via the **OpenCode** runtime (`sst/opencode`). Everything non-trivial —
-triage, PR review, the full Architect→Executor→Reviewer build cycle, health
-reports — is expressed as a **YAML workflow** the harness executes
-phase-by-phase.
+repo via **agentic-pi** (the coding-agent harness in `packages/agentic-pi`;
+in-process chat drives `pi-ai` directly). Everything non-trivial — triage, PR
+review, the full Architect→Executor→Reviewer build cycle, health reports — is
+expressed as a **YAML workflow** the harness executes phase-by-phase.
 
 ## Runtime
 
-OpenCode is provider-agnostic. The harness defaults to
-`openai/gpt-5.5` and accepts any `provider/model` string OpenCode
-supports (`anthropic/…`, `openai/…`, `openrouter/<vendor>/<model>`, etc.).
+agentic-pi (and pi-ai underneath) is provider-agnostic. The harness defaults to
+`anthropic/claude-sonnet-4-6` (`config/default.yaml`) and accepts any
+`provider/model` string pi-ai supports (`anthropic/…`, `openai/…`,
+`openrouter/<vendor>/<model>`, etc.).
 API credentials are read from the provider env vars in the registry at
-`src/providers.ts` — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`packages/shared/src/providers.ts` — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`,
 `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `HF_TOKEN`,
 `MOONSHOT_API_KEY`, `NVIDIA_API_KEY`, `FIREWORKS_API_KEY`,
 `TOGETHER_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
 `KIMI_API_KEY`, `MINIMAX_API_KEY`. Set whichever provider(s)
-match your `OPENCODE_MODEL` / `OPENCODE_MODELS`. No `claude` CLI, no
+match your `LASTLIGHT_MODEL` / `LASTLIGHT_MODELS` (the legacy `OPENCODE_MODEL` /
+`OPENCODE_MODELS` names are still accepted as aliases). No `claude` CLI, no
 Anthropic SDK in the runtime path.
 
 **Subscription logins (OAuth).** Besides the API-key providers above, three
 providers authenticate by subscription login instead of a static key —
 `openai-codex` (ChatGPT Plus/Pro), `anthropic` (Claude Pro/Max), and
-`github-copilot`. They're registered in `OAUTH_PROVIDERS` in `src/providers.ts`
-(separate from the API-key `PROVIDERS`). `src/engine/oauth.ts` is the shared
+`github-copilot`. They're registered in `OAUTH_PROVIDERS` in
+`packages/shared/src/providers.ts` (separate from the API-key `PROVIDERS`). `src/engine/oauth.ts` is the shared
 layer: one on-disk store (`$STATE_DIR/auth.json`, override `LASTLIGHT_AUTH_FILE`
 — same JSON shape pi-ai's own CLI writes), `resolveOAuthApiKey()`
 (refresh-if-expired + persist), and the model-prefix→provider-id map.
 `lastlight oauth login|list|status|test|logout` (host-local,
-`src/cli/oauth-cli.ts`) drives the browser flow. **Two seams, different reach:**
+`packages/cli/src/oauth-cli.ts`) drives the browser flow. **Two seams, different reach:**
 the in-process **chat** path (`chat-runner.ts`) passes the token as a per-call
 `apiKey`, so all three work; the **sandbox** path (`agent-executor.ts`) resolves
 creds from env only and injects `ANTHROPIC_OAUTH_TOKEN` / `COPILOT_GITHUB_TOKEN`
@@ -53,59 +51,51 @@ creds from env only and injects `ANTHROPIC_OAUTH_TOKEN` / `COPILOT_GITHUB_TOKEN`
 Codex model is used for a sandbox phase).
 
 The cheap-helper path (`src/engine/llm.ts`, used by screener + classifier)
-bypasses OpenCode and dispatches directly to the same three providers.
+bypasses agentic-pi and dispatches directly to the same three providers.
 `defaultFastModel(taskType)` resolves the model in order: the config `models:`
 map for the task key (`models.classifier` / `models.screener` in `config.yaml`,
-which env `OPENCODE_MODELS` is layered into) → the env `OPENCODE_MODELS` map
+which env `LASTLIGHT_MODELS` is layered into) → the env `LASTLIGHT_MODELS` map
 directly → the first configured provider's fast model (Anthropic > OpenAI >
 OpenRouter — direct routes avoid OpenRouter's per-token markup). Only an
 explicit per-task entry counts, never `models.default`, so the helpers stay
 cheap unless deliberately pinned.
 
 Two execution surfaces:
-- **Sandbox** — `opencode run --format json` invoked per workflow phase
+- **Sandbox** — `agentic-pi run --format json` invoked per workflow phase
   inside a Docker container (`src/sandbox/docker.ts`). Stream parsed to
   capture session id, tokens, cost, stop reason. Used by every YAML
   workflow.
-- **`opencode serve` (chat)** — one long-lived HTTP server on harness
-  boot. Each messaging thread maps to one OpenCode session; `POST
-  /session/{id}/message` per turn. Replaces the in-process Agent SDK
-  query() the chat path used pre-fork.
+- **Chat (in-process pi-ai)** — the chat path drives a `pi-ai` conversation
+  directly in the harness process (`src/engine/chat/chat-runner.ts`), one
+  session per messaging thread, resumed across turns. (This replaced the
+  earlier long-lived `opencode serve` HTTP supervisor.)
 
 Both surfaces write a Claude-SDK-style envelope jsonl to
-`$STATE_DIR/opencode-home/projects/<slug>/<sessionId>.jsonl` (the
+`$STATE_DIR/agent-sessions/projects/<slug>/<sessionId>.jsonl` (the
 "shim") so the dashboard's `SessionReader` keeps working unchanged. The
-shim is `src/engine/opencode-shim.ts`.
+shim is `src/engine/event-shim.ts`.
 
 ## Repo layout
 
 ```
 src/
-  index.ts              Main entry — wires connectors, boots opencode
-                        serve, starts the cron scheduler and admin dashboard.
+  index.ts              Main entry — wires connectors, starts the cron
+                        scheduler and admin dashboard.
   evals-api.ts          Public barrel for `lastlight/evals` — workflow driving
                         + overlay bootstrap symbols for external eval harnesses.
   managed-repos.ts      getManagedRepos / isManagedRepo helpers.
   session-log.ts        SessionLog + projectSlugForCwd.
-  cli/                  CLI entry-point + host-local lifecycle commands.
-    cli.ts              Thin client that POSTs to a running server.
-    cli-config.ts       Auth + target resolution helpers.
-    cli-server.ts       `lastlight server` lifecycle (docker compose wrappers).
-    cli-format.ts       Table / age / color helpers for CLI output.
-    cli-timeline.ts     Session timeline renderer.
-    setup.ts            First-run setup wizard.
-    fork-cli.ts         `lastlight fork` — copy built-in assets into overlay.
-    skills-install.ts   `lastlight skills install` — install Claude Code skills.
-  config/               Config loading + overlay helpers.
+  (The `lastlight` CLI moved out to packages/cli/ — see packages/cli/CLAUDE.md.
+   Its shared overlay/config helpers — overlay-assets.ts, overlay-bootstrap.ts,
+   config-types.ts, providers.ts — live in packages/shared/src/.)
+  config/               Config loading (the overlay-asset + bootstrap helpers
+                        moved to packages/shared/src/).
     config.ts           Layered config load: config/default.yaml +
                         optional $LASTLIGHT_OVERLAY_DIR/config.yaml + env
                         overrides. Secrets stay env-only. Exposes
                         getRuntimeConfig / getManagedRepos / getRoutes /
                         getPublicConfig.
     config-resolve.ts   Pure config layer resolution (default / overlay / env).
-    overlay-assets.ts   Enumerate overlay vs core asset overrides/additions.
-    overlay-bootstrap.ts Shared overlay repo scaffolding (detectGh,
-                        scaffoldOverlayFiles, bootstrapOverlayRepo).
   connectors/           Platform abstraction — every event source emits an
                         EventEnvelope so the engine never sees raw payloads.
     github-webhook.ts   GitHub App webhook → EventEnvelope.
@@ -207,7 +197,7 @@ src/
                         the sandbox. Implementation detail of `sandbox/`.
   admin/                Admin dashboard API (Hono) + SessionReader /
                         ChatSessionReader / auth / Slack OAuth login.
-                        SessionReader scans opencode-home/projects/-<cwd>/
+                        SessionReader scans agent-sessions/projects/-<cwd>/
                         for sandbox runs; ChatSessionReader is DB-backed
                         and groups by Slack thread.
   state/
@@ -266,9 +256,10 @@ plugins/                Claude Code plugin (distinct from the internal
                         (lastlight-server / -client / -overlay / -evals).
                         The repo root is also a Claude Code marketplace
                         (.claude-plugin/marketplace.json). Installed via
-                        `lastlight skills install` (src/cli/skills-install.ts):
-                        prefers `claude plugin marketplace add` of the
-                        bundled path, falls back to copying the skill dirs
+                        `lastlight skills install` (packages/cli/src/skills-install.ts):
+                        prefers `claude plugin marketplace add nearform/lastlight`
+                        (remote GitHub, so skills auto-update; `--local` uses the
+                        bundled path), falls back to copying the skill dirs
                         into ~/.claude/skills. Shipped in the npm package
                         (files: .claude-plugin + plugins).
 
@@ -324,23 +315,22 @@ dashboard/              React+Vite admin SPA, served from /admin at runtime.
 - **Two execution modes**:
   - **Sandbox** — workflow phases run inside a Docker sandbox
     (`src/sandbox`) with a minted per-run GitHub token. Each phase invokes
-    `opencode run --format json` in the container and the harness parses
+    `agentic-pi run --format json` in the container and the harness parses
     the streamed events into an ExecutionResult + envelope jsonl. Every
     phase writes an `executions` row.
-  - **Chat** — the chat skill (`src/engine/chat/chat.ts`) talks to the
-    long-lived `opencode serve` process over HTTP. One OpenCode session
-    per messaging thread, resumed across turns. Each turn writes an
-    `executions` row (triggerType=`chat`, skill=`chat`,
-    triggerId=messaging session id) and the same shim drops a jsonl
-    envelope under `opencode-home/projects/-app/`.
+  - **Chat** — the chat skill (`src/engine/chat/chat.ts`) drives a `pi-ai`
+    conversation in-process. One session per messaging thread, resumed
+    across turns. Each turn writes an `executions` row (triggerType=`chat`,
+    skill=`chat`, triggerId=messaging session id) and the same shim drops a
+    jsonl envelope under `agent-sessions/projects/-app/`.
 - **Two session stores**:
   - **Sandbox sessions** — shim envelope jsonls at
-    `$STATE_DIR/opencode-home/projects/-<sanitized-sandbox-cwd>/`
+    `$STATE_DIR/agent-sessions/projects/-<sanitized-sandbox-cwd>/`
     (currently `-home-agent-workspace`). Read by `SessionReader`.
   - **Chat sessions** — DB-backed (`executions` table grouped by
     `trigger_id` / Slack thread). Read by `ChatSessionReader`; messages
     resolved to the single jsonl owned by `messaging_sessions.agent_session_id`
-    under `opencode-home/projects/-app/`.
+    under `agent-sessions/projects/-app/`.
 - **Permission profiles** (`src/engine/github/profiles.ts`) — each workflow maps to
   a `GitAccessProfile`: `read`, `issues-write`, `review-write`, `repo-write`.
   `runner.ts` picks one per workflow name and the agent-executor mints a
@@ -409,15 +399,13 @@ data/
                             workflow_approvals, messaging_sessions,
                             messaging_messages, plus daily/hourly stat
                             rollups.
-  opencode-home/            Shim destination. Its `projects/` subdir is the
-                            source of truth for dashboard session reads:
+  agent-sessions/           Shim destination (override with
+                            `LASTLIGHT_SESSIONS_DIR`). Its `projects/` subdir is
+                            the source of truth for dashboard session reads:
     projects/
       -app/                 Chat sessions (one jsonl per Slack thread,
-                            keyed by OpenCode sessionId).
+                            keyed by pi-ai sessionId).
       -home-agent-workspace/  Sandbox sessions (cwd inside the container).
-  opencode-serve/           Working dir for the long-lived `opencode serve`
-                            chat process — generated opencode.json + AGENTS.md
-                            live here.
   sandboxes/                Cloned repos per task (one dir per taskId).
   build-assets/             Server-mode build handoff docs (only when
                             buildAssets.location=server):
@@ -443,15 +431,19 @@ data/
 ## Commands
 
 ```bash
+# From the repo root these are `pnpm --filter lastlight-core <script>`; from
+# apps/server the bare `pnpm run <script>` works too. Workspace-level commands
+# (turbo typecheck/test/build) live in the root CLAUDE.md.
+
 # Dev server (webhooks + Slack socket + cron + admin dashboard)
-npm run dev              # tsx watch mode
-npm run build            # tsc for server
-npm run build:dashboard  # vite build for dashboard/
-npm start                # compiled JS
+pnpm --filter lastlight-core dev              # server + dashboard, watch mode
+pnpm --filter lastlight-core build            # tsc for server
+pnpm --filter lastlight-core build:dashboard  # vite build for dashboard/
+pnpm --filter lastlight-core start            # compiled JS
 
 # Tests
-npx vitest run           # full server suite (docker integration tests skip unless opted in)
-cd dashboard && npx tsc -b  # dashboard typecheck
+pnpm --filter lastlight-core test                       # full server suite (docker ITs skip unless opted in)
+pnpm --filter @lastlight/dashboard typecheck            # dashboard typecheck
 
 # Sandbox integration tests — actually start a docker sandbox and run a no-AI
 # workflow (type: bash / type: script phases). Opt-in + self-gating: needs
@@ -460,97 +452,13 @@ docker compose --profile build-only build sandbox-base   # shared base first
 docker compose --profile build-only build sandbox        # then the lean image
 RUN_SANDBOX_IT=1 npx vitest run tests/sandbox/command-exec.integration.test.ts
 
-# CLI — `lastlight` (bin → dist/cli.js; `npm run cli -- <args>` in dev)
-# A thin client for a running instance: it POSTs triggers and reads the
-# instance's admin API over HTTP. Target + token resolve from --url/--token →
-# LASTLIGHT_URL/LASTLIGHT_TOKEN env → ~/.lastlight/config.json (written by
-# `login`) → http://localhost:8644.
-lastlight login [url]                  # browser-handoff auth, save token (~/.lastlight)
-lastlight login <url> --password       # headless fallback (POST /admin/api/login)
-lastlight logout                       # clear ~/.lastlight/config.json
-lastlight status                       # instance URL, server health, token validity
-lastlight chat [message]               # chat with the bot (REPL if no message; POST /api/chat)
-# Triggers (POST /api/run, /api/build):
-lastlight <github-url>                 # default: triage the issue (cheap)
-lastlight owner/repo#N                 # shorthand
-lastlight build owner/repo#N           # explicit full build cycle
-lastlight triage|review owner/repo[#N] # repo-wide scan or single issue/PR
-lastlight health|security owner/repo   # repo-level report
-# Debug (read the admin API instead of SSH; all accept --json):
-lastlight workflow list [--status s] [--workflow name] [--limit n]
-lastlight workflow log <id> [--follow]
-lastlight workflow retry <id>          # re-run a failed run from the phase that failed
-lastlight session list|log <id> [--follow]
-lastlight logs search "<text>" [--scope errors|messages|all]
-lastlight server list                  # the lastlight-* docker containers
-lastlight server logs [svc|container] [--tail n] [--since 10m] [--follow]
-lastlight approvals list|approve <id>|reject <id> [--reason "..."]
-lastlight cron list                    # scheduled jobs: schedule, next/last run, status
-lastlight cron trigger <name>          # run a cron now (fire-and-forget; useful for testing)
-lastlight cron enable|disable <name>   # toggle a cron on/off (idempotent)
-lastlight stats [--daily n | --hourly n]
-# Per-command help: lastlight <cmd> help  (e.g. lastlight cron help) — the top-level
-# `lastlight` / `--help` is a compact index; detail lives under each command's help.
-lastlight setup                        # first-run wizard (asks: client | server)
+# The `lastlight` CLI (thin admin-API client + host-local `server` lifecycle,
+# fork, skills install, oauth) lives in packages/cli — see packages/cli/CLAUDE.md
+# for the full command catalogue and the deploy flow.
 
-# Server lifecycle (HOST-LOCAL — run on the server, not over HTTP). Operate on a
-# working directory (full repo checkout + instance/ overlay + override symlink)
-# resolved from --home → LASTLIGHT_HOME → ~/.lastlight serverHome → ~/lastlight.
-lastlight server setup                 # scaffold/adopt the working dir (clone core; clone OR
-                                        # create the instance/ overlay — fresh overlay offers a
-                                        # private `gh repo create` via src/config/overlay-bootstrap.ts)
-lastlight server build                 # build the docker images FROM SOURCE (agent + sandbox-base
-                                        # + sandbox + sandbox-qa) without starting anything — the
-                                        # local-build escape hatch (server update pulls prebuilt)
-lastlight server start|stop|restart [service]   # docker compose up -d / stop|down / restart
-                                        # (start pre-checks the lastlight-agent image exists; if
-                                        # not it points at `server update`)
-lastlight server update                # the canonical deploy: pull core+overlay, then PULL the
-                                        # prebuilt images from GHCR (ghcr.io/nearform/lastlight-*)
-                                        # tagged by deploy.version (else :latest) + re-tag to the
-                                        # local names, up -d --remove-orphans, restart sidecars,
-                                        # health-check, then prune superseded image versions
-                                        # (keeps the newest two per repo). --local builds from
-                                        # source instead (the old behaviour). [--no-core
-                                        # --no-overlay --no-build --no-prune --local --yes]
-lastlight server status                # compose ps + core/overlay version drift +
-                                        # forked-asset overrides (shadows default / added)
-
-# Fork built-in assets into the instance/ overlay (HOST-LOCAL; src/cli/fork-cli.ts).
-# Copies the chosen built-ins into instance/ so they shadow the defaults by
-# logical name (overlay wins at startup). Resolution: explicit --home wins;
-# else cwd if it's an overlay/checkout; else the server home.
-lastlight fork                         # list forkable workflows + agent-context (marks forked)
-lastlight fork <workflow>              # workflow YAML + every prompt + skill its phases reference
-lastlight fork agent-context [file]    # all agent-context/*.md (soul/rules/security), or one file
-lastlight fork classifier              # the base intent-classifier prompts (classifier.md +
-                                        # classify-adds-info.md); per-workflow category text
-                                        # travels with `fork <workflow>` already
-                                        # [--home dir] [--force to overwrite existing]
-
-# Install the Last Light Claude Code skills into a local Claude Code (HOST-LOCAL;
-# src/cli/skills-install.ts). Prefers `claude plugin marketplace add` of the bundled
-# plugins/ path; falls back to copying skill dirs into the scope's .claude/skills.
-lastlight skills install               # → ~/.claude/skills (user) [--scope project] [--no-marketplace]
-lastlight skills list                  # bundled skills + where they're installed
-lastlight skills uninstall             # remove them [--scope user|project]
-
-# Subscription logins (HOST-LOCAL; src/cli/oauth-cli.ts). Browser OAuth flow +
-# credential store at $STATE_DIR/auth.json (override LASTLIGHT_AUTH_FILE);
-# restart the agent to apply. Codex is chat-only (no sandbox env-token route).
-lastlight oauth login [provider]       # openai-codex | anthropic | github-copilot
-lastlight oauth list                   # providers + login status
-lastlight oauth status                 # store path + token expiry
-lastlight oauth test <provider>        # force a refresh to verify the login
-lastlight oauth logout [provider]      # remove one (or all) [--auth-file f] [--state-dir d]
-
-# Local dev with Docker sandbox isolation
-./scripts/dev-local.sh                 # builds opencode.json + secrets
-                                        # then starts harness in watch mode
-
-# Standalone smoke for the opencode-serve supervisor
-npx tsx scripts/chat-smoke.mjs         # two-turn HTTP probe against a
-                                        # locally-spawned `opencode serve`
+# Local dev with a real sandbox backend (gondolin by default; docker/none opt-in)
+./scripts/dev-local.sh                 # sets up $STATE_DIR + secrets,
+                                        # then starts the harness in watch mode
 ```
 
 ## Environment
@@ -569,26 +477,27 @@ Required:
   (`<botName>[bot]`, still overridable with `BOT_LOGIN`), and the **git commit
   author** for agent commits (`<botName>[bot]`). Must match the real App slug
   so `@`-autocomplete and notifications work.
-- One of the provider API-key env vars from `src/providers.ts`
+- One of the provider API-key env vars from `packages/shared/src/providers.ts`
   (Anthropic / OpenAI / OpenRouter / Google / Mistral / Groq / Cerebras /
   xAI / Hugging Face / Moonshot / NVIDIA / Fireworks / Together / DeepSeek /
-  Z.AI / Kimi / MiniMax) matching your `OPENCODE_MODEL` (set multiple if
-  `OPENCODE_MODELS` routes phases to different providers)
+  Z.AI / Kimi / MiniMax) matching your `LASTLIGHT_MODEL` (set multiple if
+  `LASTLIGHT_MODELS` routes phases to different providers)
 
-Models:
+Models (the legacy `OPENCODE_MODEL/MODELS/VARIANT/VARIANTS` names are still
+accepted as aliases for the `LASTLIGHT_*` forms below):
 
-- `OPENCODE_MODEL` — default model for sandbox + chat
-  (default: `openai/gpt-5.5`)
-- `OPENCODE_MODELS` — per-task overrides as JSON, e.g.
-  `{"architect":"openai/gpt-5.4","triage":"anthropic/claude-haiku-4-5-20251001"}`.
+- `LASTLIGHT_MODEL` — default model for sandbox + chat
+  (default: `anthropic/claude-sonnet-4-6`, from `config/default.yaml`)
+- `LASTLIGHT_MODELS` — per-task overrides as JSON, e.g.
+  `{"architect":"anthropic/claude-opus-4-8","triage":"anthropic/claude-haiku-4-5-20251001"}`.
   Keys match phase names or skill types.
-- `OPENCODE_VARIANT` — catch-all reasoning-effort default (passed to
-  OpenCode as `--variant`). Provider-agnostic; OpenCode translates to
-  the right per-provider knob (OpenAI `reasoning_effort`, Anthropic
-  thinking budget, etc.). Common values: `minimal`, `medium`, `high`,
-  `max`.
-- `OPENCODE_VARIANTS` — per-task variant overrides as JSON, same key
-  scheme as `OPENCODE_MODELS`. Example:
+- `LASTLIGHT_THINKING` — catch-all reasoning-effort default (passed to
+  agentic-pi as `--thinking`; `--variant` is an accepted alias).
+  Provider-agnostic; pi-ai translates to the right per-provider knob (OpenAI
+  `reasoning_effort`, Anthropic thinking budget, etc.). Common values:
+  `minimal`, `medium`, `high`, `max`.
+- `LASTLIGHT_THINKINGS` — per-task overrides as JSON, same key
+  scheme as `LASTLIGHT_MODELS`. Example:
   `{"architect":"high","reviewer":"high","review":"high","triage":"minimal"}`.
   Phases can also declare `variant: "{{variants.<phase>}}"` in YAML
   for per-phase resolution.
@@ -636,13 +545,8 @@ Runtime:
 - `BUILD_ASSETS_DIR` — server-mode build-asset store root
   (default `$STATE_DIR/build-assets`; layout
   `<owner>/<repo>/<issueKey>/*.md`, store in `src/state/build-assets.ts`)
-- `OPENCODE_HOME_DIR` — override dashboard session-jsonl root
-  (default `$STATE_DIR/opencode-home`)
-- `OPENCODE_SERVE_PORT` — port for the long-lived chat server
-  (default 4096, bound to 127.0.0.1)
-- `OPENCODE_SERVE_LOGS=1` — forward serve logs to harness stderr
-- `OPENCODE_BIN` — override the opencode binary path (CI/dev)
-- `MCP_CONFIG_PATH` — override generated MCP config path
+- `LASTLIGHT_SESSIONS_DIR` — override the dashboard session-jsonl root
+  (default `$STATE_DIR/agent-sessions`)
 
 Sandbox egress (docker backend only):
 
@@ -782,21 +686,30 @@ holds `config.yaml` + asset overrides + `secrets/.env` + `secrets/*.pem`).
 
 ### Redeploy a code change
 
-Deploys are driven by the **`lastlight` CLI**, installed globally on the host
-and run as the `lastlight` user (with `LASTLIGHT_HOME=/home/lastlight/lastlight`,
-which is also `~lastlight/lastlight`, so the default resolves):
+**The normal path is fully automated — no SSH, no `npm i -g`.** Bump the
+overlay's `deploy.version` to the release tag and push; each overlay repo's
+"Deploy overlay" Action runs on the host and deploys for you (see "So a normal
+deploy is…" below). The Action's `ci-deploy.sh` **pins the host's global CLI**
+to `deploy.version` (`npm install -g lastlight@<tag>`) *before* running the
+deploy — because the CLI is versioned separately from the agent image and new
+deploy behaviour (e.g. the GHCR image-pull path) lives in the CLI, so a stale
+CLI silently uses the old path (builds locally, ignores a pin) — then runs
+`lastlight server update`. CLI + images land together.
+
+Deploys are driven by the **`lastlight` CLI**, run as the `lastlight` user (with
+`LASTLIGHT_HOME=/home/lastlight/lastlight`, which is also `~lastlight/lastlight`,
+so the default resolves). Only for a **hand-run** deploy (or a host without the
+Action) do you update the CLI yourself first:
 
 ```bash
 ssh <production-server>
-# ALWAYS update the global CLI FIRST — it's versioned separately from the agent
-# image, and new deploy behaviour (e.g. the GHCR image-pull path) lives in the
-# CLI. A stale CLI silently uses the old path (e.g. builds locally, ignores a
-# pin). Match the version you're deploying:
+# Hand-run only. The auto-deploy Action already does this step for you.
+# Update the global CLI FIRST to match the version you're deploying:
 npm i -g lastlight@<version>          # e.g. lastlight@0.12.0 (or @latest)
 sudo -u lastlight -i lastlight server update
 ```
 
-`lastlight server update` (`src/cli/cli-server.ts`) is the single source of truth. It:
+`lastlight server update` (`packages/cli/src/cli-server.ts`) is the single source of truth. It:
 
 1. `git pull` the `instance/` overlay **first** as the `lastlight` user (its
    read-only deploy key, `git@github-instance:cliftonc/lastlight-instance.git`;
@@ -867,13 +780,14 @@ it only warns "redeploy needed" when the running image's SHA is behind the
 pinned tag (pin bumped but not yet deployed), else shows a quiet "Pinned to
 vX.Y.Z" label.
 
-So a normal deploy is: **commit + push to `main`, then run `lastlight server
-update` on the host.** Code changes (anything under `src/`, `workflows/`,
-`skills/`, `agent-context/`, `config/default.yaml`) reach prod through a
-**published image**: cut a release (whose `publish.yml` `images` job builds them)
-and bump the overlay's `deploy.version` to that tag, then `server update` pulls it. To
-deploy un-released `main` (or local edits) build on the host with `server update
---local` (or `server build`). Deployment-only config (the `instance/` overlay)
+So a normal deploy is: **cut a release, then bump the overlay's `deploy.version`
+to that tag and push** — each overlay repo's auto-deploy Action runs `lastlight
+server update` on the host for you (no SSH, no manual CLI upgrade; see "Redeploy
+a code change"). Code changes (anything under `src/`, `workflows/`, `skills/`,
+`agent-context/`, `config/default.yaml`) reach prod through a **published
+image**: `publish.yml`'s `images` job builds it, and `server update` *pulls* the
+`deploy.version` tag. To deploy un-released `main` (or local edits) build on the
+host with `server update --local` (or `server build`). Deployment-only config (the `instance/` overlay)
 can instead be
 edited + committed to the `lastlight-instance` repo and applied with just
 `lastlight server restart agent` — no image rebuild. (Caveat: *removing* an
@@ -896,63 +810,11 @@ lastlight server restart agent     # after a config.yaml or .env add/edit
 lastlight server start agent       # after REMOVING an .env var (recreate)
 ```
 
-### Cutting a release (npm + GitHub)
+### Cutting a release
 
-**Release when the CLI *or* the `lastlight/evals` barrel surface changes.**
-Pure prod-facing harness/dashboard/asset/doc changes reach prod via `lastlight
-server update`, not npm — those alone don't need a release. But the standalone
-`lastlight-evals` repo (`~/work/lastlight-evals`) consumes core as an npm
-dependency through the `lastlight/evals` barrel (`src/evals-api.ts` — workflow
-driving + overlay bootstrap symbols), so a harness change that alters how those
-symbols run workflows (e.g. the workflow runner, `phase-executor.ts`, the
-sandbox port, config resolution) must be published for evals to pick it up —
-cut a release even though the CLI is untouched. When in doubt, if the change
-affects the workflow-execution path that evals drives, release it. (See the
-npm-release-policy note in local agent memory.) A release is a version bump + a
-`vX.Y.Z` tag + a GitHub release. **Publishing is automated** — creating the
-GitHub release fires the `publish.yml` workflow, which runs as two ordered jobs.
-First `images` builds + pushes the four Docker images to
-`ghcr.io/nearform/lastlight-*` tagged `vX.Y.Z` (via `docker buildx bake` +
-`docker-bake.hcl`; moves `:latest` for non-prerelease releases). Then `npm`
-(which `needs: images`) typechecks + tests + builds + publishes to npm using a
-repo token (no 2FA). **The order is deliberate:** the CLI only goes live once the
-`:vX.Y.Z` images it tells hosts to pull already exist in GHCR — otherwise a
-`npm i -g lastlight@X.Y.Z && server update` in the gap would fail the image pull.
-Do NOT run `npm publish` or prompt for an OTP; just watch the release run and
-confirm the version went live. The image build is what lets a deploy host
-`server update` *pull* the new version instead of building it — so after cutting
-the release, bump the overlay's `deploy.version` to the tag to roll it out.
-(`workflow_dispatch` on `publish.yml` rebuilds only the images for a given tag;
-the `npm` job is gated to `release` events.)
-
-Patch for fixes/doc tweaks to the CLI surface; minor for new user-facing
-commands/features. The dance (run on a clean `main`, up to date with origin):
-
-```bash
-npm version patch --no-git-tag-version   # bump package.json + package-lock.json (minor for new features)
-# keep the Claude Code plugin manifest version in lockstep:
-#   edit plugins/lastlight/.claude-plugin/plugin.json "version" to match
-npm run build                            # refresh dist/ (shipped via package `files`; not committed)
-git add package.json package-lock.json plugins/lastlight/.claude-plugin/plugin.json
-git commit -m "chore(release): vX.Y.Z"
-git tag -a vX.Y.Z -m "vX.Y.Z"           # annotated — this repo's git config rejects lightweight tags
-git push origin main --follow-tags       # pushes the release commit AND the tag
-gh release create vX.Y.Z --title "vX.Y.Z — <summary>" --latest --notes "<changelog>"
-#   notes convention: highlights + a compare link, vPREV...vX.Y.Z
-#   → this triggers publish.yml, which publishes to npm automatically.
-
-# Confirm the automated publish landed (plain `npm view` can serve a stale cache):
-gh run watch <run-id> --exit-status
-npm view lastlight@X.Y.Z version --prefer-online   # note: no `v` prefix on npm versions
-```
-
-Notes:
-- The version lives in THREE files — `package.json`, `package-lock.json`
-  (both handled by `npm version`), and `plugins/lastlight/.claude-plugin/plugin.json`
-  (manual). Keep all three in sync.
-- For an annotated tag, `git rev-parse vX.Y.Z` returns the tag object SHA, not
-  the commit — use `git rev-parse 'vX.Y.Z^{commit}'` to confirm it points at the
-  release commit.
+See **[`docs/RELEASING.md`](../../docs/RELEASING.md)** — the canonical runbook
+(when to release, graph-aware version bumps, publish order, the automated
+`publish.yml` pipeline, and rolling out to prod).
 
 ## Sub-folder docs
 

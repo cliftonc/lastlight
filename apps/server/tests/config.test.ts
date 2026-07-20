@@ -343,9 +343,9 @@ describe('loadConfig — concurrency defaults and env overrides', () => {
     expect(config.concurrency.maxWorkflows).toBe(4);
   });
 
-  it('concurrency.maxQueueWaitMs defaults to 1800000', () => {
+  it('concurrency.maxQueueWaitMs defaults to 3600000 (1 hr)', () => {
     const config = loadConfig();
-    expect(config.concurrency.maxQueueWaitMs).toBe(1_800_000);
+    expect(config.concurrency.maxQueueWaitMs).toBe(3_600_000);
   });
 
   it('MAX_CONCURRENT_WORKFLOWS env overrides maxWorkflows', () => {
