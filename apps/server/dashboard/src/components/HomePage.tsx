@@ -313,7 +313,9 @@ function useRecentWorkflows() {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await api.workflowRuns({ limit: 3 });
+        // Only finished runs — queued/running/paused live in Live Activity,
+        // not "Recent". Terminal statuses = succeeded, failed, cancelled.
+        const res = await api.workflowRuns({ status: "succeeded,failed,cancelled", limit: 3 });
         if (!cancelled) setRuns(res.workflowRuns);
       } catch {
         /* ignore */
