@@ -45,7 +45,21 @@ done
 # agent-sessions/ is where agentic-pi's event shim writes JSONL envelopes
 # the dashboard reads (path is set by LASTLIGHT_SESSIONS_DIR).
 mkdir -p "$STATE_DIR"/{logs,sandboxes,secrets,agent-sessions}
-chown -R lastlight:lastlight "$STATE_DIR"
+# Claim ownership of the volume — but ONLY when it isn't already ours. A blind
+# `chown -R` over $STATE_DIR ran on EVERY boot and, on a busy instance, walked
+# >1.5M files (sandboxes/ holds cloned repos incl. node_modules): ~3 minutes of
+# IOPS on a GCP persistent disk, blocking the harness the whole time — the bulk
+# of deploy downtime — despite every file already being uid 10001 (the harness
+# AND the sandbox `agent` user share that uid, so nothing here is foreign-owned).
+# Gate on the top dir's owner: a fresh/first-boot volume is root-owned → do the
+# one-time recursive claim; steady state is already `lastlight` → skip instantly.
+# The newly-created subdirs above are chowned unconditionally (cheap, and they
+# may be new even on an already-claimed volume).
+chown lastlight:lastlight "$STATE_DIR"/{logs,sandboxes,secrets,agent-sessions}
+if [ "$(stat -c %U "$STATE_DIR" 2>/dev/null)" != "lastlight" ]; then
+  echo "Claiming $STATE_DIR ownership (first boot / uid change) — one-time…"
+  chown -R lastlight:lastlight "$STATE_DIR"
+fi
 
 # Copy PEM to the data volume so sandbox containers can access it via shared
 # volume (LASTLIGHT_SANDBOX=docker fallback path only — gondolin doesn't go

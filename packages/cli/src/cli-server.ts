@@ -595,8 +595,13 @@ async function buildImages(home: string): Promise<void> {
  * minutes. `sandbox-qa` is non-fatal, mirroring the build path; a missing
  * required image throws with a pointer to `--local`.
  */
-async function pullImages(home: string, tag: string): Promise<void> {
+async function pullImages(
+  home: string,
+  tag: string,
+  filter?: (img: (typeof PUBLISHED_IMAGES)[number]) => boolean,
+): Promise<void> {
   for (const img of PUBLISHED_IMAGES) {
+    if (filter && !filter(img)) continue;
     const remote = `${IMAGE_REGISTRY}/${img.repo}:${tag}`;
     try {
       await runStep(`Pull ${img.repo}:${tag}`, "docker", ["pull", remote], home);
@@ -700,16 +705,28 @@ export async function serverUpdate(opts: UpdateOpts): Promise<void> {
 
   // Images: pull prebuilt from GHCR by default (seconds); `--local` builds from
   // source (minutes). `--no-build` skips both — just recreate + restart.
-  if (doBuild) {
-    if (opts.local) {
+  //
+  // On the pull path we split the fetch so the web app's downtime is only its
+  // OWN recreate, not the whole ~9 GB fetch: pull the AGENT image, recreate,
+  // then pull the sandbox images with the agent already back online. The
+  // sandbox images are build-only compose profiles used by `docker run` at
+  // workflow time — `up -d` never starts them — so deferring their pull is safe
+  // and cuts perceived downtime on hosts where the pull otherwise saturates the
+  // box for its full duration.
+  const isAgent = (img: (typeof PUBLISHED_IMAGES)[number]) => img.localTag === "lastlight-agent";
+  if (doBuild && !opts.local) {
+    const tag = resolveImageTag(instance);
+    await pullImages(home, tag, isAgent); // agent only — the serving container
+    await composeRun(home, "Recreate services", upArgv());
+    await composeRun(home, "Restart egress sidecars", restartSidecarsArgv());
+    await pullImages(home, tag, (img) => !isAgent(img)); // sandbox images, agent already up
+  } else {
+    if (doBuild && opts.local) {
       await buildImages(home);
-    } else {
-      await pullImages(home, resolveImageTag(instance));
     }
+    await composeRun(home, "Recreate services", upArgv());
+    await composeRun(home, "Restart egress sidecars", restartSidecarsArgv());
   }
-
-  await composeRun(home, "Recreate services", upArgv());
-  await composeRun(home, "Restart egress sidecars", restartSidecarsArgv());
 
   // Reclaim disk from the versions this update superseded. After `up`, so the
   // live stack's images are safe. Skipped by `--no-prune`, and when `--no-build`
