@@ -717,6 +717,76 @@ describe("POST /login (password)", () => {
   });
 });
 
+describe("GET /workflow-runs/:id — actor enrichment (issue #205)", () => {
+  function makeDetailDb(opts: {
+    triggeredBy?: string;
+    user?: { login?: string; name?: string | null; avatarUrl?: string | null } | null;
+  }): StateDb {
+    const findByLogin = vi.fn(() => opts.user ?? null);
+    return {
+      ...((mockDb as unknown) as Record<string, unknown>),
+      runs: {
+        ...((mockDb as unknown as { runs: Record<string, unknown> }).runs),
+        getRun: vi.fn(() => ({
+          id: "r1",
+          workflowName: "pr-review",
+          triggerId: "t1",
+          currentPhase: "review",
+          phaseHistory: [],
+          status: "succeeded",
+          triggeredBy: opts.triggeredBy,
+          triggerActorType: opts.triggeredBy ? "github" : undefined,
+          startedAt: "",
+          updatedAt: "",
+        })),
+      },
+      users: {
+        ...((mockDb as unknown as { users: Record<string, unknown> }).users),
+        findByLogin,
+      },
+    } as unknown as StateDb;
+  }
+
+  it("returns triggeredByUser: null when the actor has no users row", async () => {
+    const db = makeDetailDb({ triggeredBy: "octocat", user: null });
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/r1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { workflowRun: { triggeredBy?: string }; triggeredByUser: unknown };
+    expect(body.workflowRun.triggeredBy).toBe("octocat");
+    expect(body.triggeredByUser).toBeNull();
+  });
+
+  it("returns the matched users identity (login/name/avatarUrl) when findByLogin hits", async () => {
+    const db = makeDetailDb({
+      triggeredBy: "octocat",
+      user: { login: "octocat", name: "The Octocat", avatarUrl: "https://a.png" },
+    });
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/r1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      triggeredByUser: { login: string; name: string; avatarUrl: string } | null;
+    };
+    expect(body.triggeredByUser).toEqual({
+      login: "octocat",
+      name: "The Octocat",
+      avatarUrl: "https://a.png",
+    });
+  });
+
+  it("skips the users lookup and returns null when the run has no triggeredBy", async () => {
+    const db = makeDetailDb({ triggeredBy: undefined });
+    const findByLogin = (db as unknown as { users: { findByLogin: ReturnType<typeof vi.fn> } }).users
+      .findByLogin;
+    const app = createAdminRoutes(db, mockSessions, mockSessions, makeConfig({ adminPassword: "" }));
+    const res = await request(app, "/workflow-runs/r1");
+    const body = (await res.json()) as { triggeredByUser: unknown };
+    expect(body.triggeredByUser).toBeNull();
+    expect(findByLogin).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /workflow-runs/:id/cancel", () => {
   // Helper to make a cancel-test db that returns a single run and
   // records calls to the mutating methods we care about.
