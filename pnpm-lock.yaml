@@ -1491,6 +1491,7 @@ packages:
   '@ff-labs/fff-node@0.10.0':
     resolution: {integrity: sha512-QqNcrg0sQU/iVix9QJiRfW/Unx12Eh2ZakUSbdSbCiWizs/NCvbI5yIm4tUCR1WwUIsWzuHrD8efaaeU4t8/zQ==}
     engines: {node: '>=18.0.0'}
+    cpu: [x64, arm64]
     os: [darwin, linux, win32]
 
   '@ff-labs/pi-fff@0.10.0':
