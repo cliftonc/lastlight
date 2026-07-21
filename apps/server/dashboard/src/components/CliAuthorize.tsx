@@ -15,10 +15,15 @@ export function CliAuthorize({
   callback,
   state,
   onCancel,
+  onAuthorized,
 }: {
   callback: string;
   state: string;
   onCancel: () => void;
+  /** Clear the stashed CLI-login handoff once we've handed the token back, so
+   *  returning to /admin in the same tab doesn't re-show this screen (the
+   *  sessionStorage entry survives the navigation to the loopback callback). */
+  onAuthorized: () => void;
 }) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +55,11 @@ export function CliAuthorize({
         setWorking(false);
         return;
       }
+      // Consume the one-shot handoff BEFORE navigating away: the sessionStorage
+      // stash survives the round-trip to the loopback callback and back, so
+      // without this, returning to /admin re-hydrates it and traps the tab on
+      // this authorize screen.
+      onAuthorized();
       const url = `${callback}?token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
       window.location.href = url;
     } catch (e) {

@@ -64,6 +64,18 @@ export function ActorChip({ login, actorType, user, size = "sm", className }: Ac
     <Icon className={`${dim} shrink-0 text-base-content/50`} />
   );
 
+  // When an avatar stands in for the identity, the per-type icon it replaced
+  // still carries HOW the run was triggered (CLI, cron, Slack, …). Render it as
+  // a small leading glyph ahead of the avatar so the detail panel matches the
+  // icon the list shows. GitHub needs none — the avatar already implies a
+  // GitHub user (and would just duplicate it).
+  const channelIcon =
+    avatarUrl && meta && actorType !== "github" ? (
+      <Icon
+        className={`${size === "md" ? "w-4 h-4" : "w-3 h-3"} shrink-0 text-base-content/40`}
+      />
+    ) : null;
+
   const label = display ?? meta?.label ?? "";
   const title = `Triggered by ${label}${meta ? ` (${meta.label})` : ""}`;
 
@@ -86,6 +98,7 @@ export function ActorChip({ login, actorType, user, size = "sm", className }: Ac
 
   return (
     <span className={`inline-flex items-center gap-1 min-w-0 ${className ?? ""}`} title={title}>
+      {channelIcon}
       {glyph}
       {body}
     </span>

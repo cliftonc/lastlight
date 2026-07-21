@@ -572,6 +572,10 @@ export default function App() {
           sessionStorage.removeItem(CLI_LOGIN_KEY);
           setCliLogin(null);
         }}
+        onAuthorized={() => {
+          sessionStorage.removeItem(CLI_LOGIN_KEY);
+          setCliLogin(null);
+        }}
       />
     );
   }

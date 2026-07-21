@@ -767,6 +767,11 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                       <span className="text-xs font-medium truncate text-base-content/90 min-w-0">
                         {run.workflowName}
                       </span>
+                      {run.status === "running" && run.currentPhase && (
+                        <span className="text-2xs italic text-base-content/50 shrink-0">
+                          {run.currentPhase}
+                        </span>
+                      )}
                       {hasApprovals && (
                         <span className="badge badge-warning badge-xs shrink-0">approval</span>
                       )}
@@ -775,7 +780,7 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                       </span>
                       <StatusIcon status={run.status} />
                     </div>
-                    <div className="flex items-center gap-2 text-2xs text-base-content/40 w-full font-mono">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-base-content/40 w-full font-mono">
                       {run.repo &&
                         (() => {
                           const href = repoUrl(runRepoPath(run));
@@ -805,7 +810,6 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                           className="min-w-0"
                         />
                       )}
-                      <span className="ml-auto shrink-0">{run.currentPhase}</span>
                     </div>
                   </div>
                 </li>

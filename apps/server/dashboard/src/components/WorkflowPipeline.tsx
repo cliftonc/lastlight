@@ -107,6 +107,9 @@ export function WorkflowPipeline({
 
     const historyMap = new Map<string, PhaseHistoryEntry>();
     for (const entry of run.phaseHistory) {
+      // Tolerate a malformed / legacy history row (no `phase`) rather than
+      // letting an undefined name crash the whole pipeline downstream.
+      if (!entry?.phase) continue;
       historyMap.set(entry.phase, entry);
     }
 
@@ -130,7 +133,7 @@ export function WorkflowPipeline({
         ...run.phaseHistory.map((e) => e.phase),
         ...(executions ?? []).map((e) => e.phase),
       ]),
-    ).filter((name) => !declaredSet.has(name));
+    ).filter((name): name is string => Boolean(name) && !declaredSet.has(name));
 
     // Group each dynamic phase under its declared parent, sorted by start
     // time so iteration order matches the actual run.
