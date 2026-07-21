@@ -8,6 +8,7 @@ import {
   MinusCircleIcon,
   ClockIcon,
   ArrowPathIcon,
+  QuestionMarkCircleIcon,
 } from "@heroicons/react/24/solid";
 import {
   api,
@@ -50,7 +51,8 @@ function elapsed(run: WorkflowRun): string {
 
 /** Status → solid icon + colour. Used both in the dense list rows and the
  *  detail-panel header (the text chip was too heavy). Title carries the word. */
-const STATUS_ICON: Record<WorkflowRun["status"], { Icon: typeof CheckCircleIcon; cls: string }> = {
+type StatusIconMeta = { Icon: typeof CheckCircleIcon; cls: string };
+const STATUS_ICON: Record<WorkflowRun["status"], StatusIconMeta> = {
   queued: { Icon: ClockIcon, cls: "text-base-content/50" },
   running: { Icon: ArrowPathIcon, cls: "text-info animate-spin" },
   paused: { Icon: PauseCircleIcon, cls: "text-warning" },
@@ -58,9 +60,13 @@ const STATUS_ICON: Record<WorkflowRun["status"], { Icon: typeof CheckCircleIcon;
   failed: { Icon: XCircleIcon, cls: "text-error" },
   cancelled: { Icon: MinusCircleIcon, cls: "text-base-content/40" },
 };
+// Neutral fallback so an unrecognised runtime status (e.g. a new server-side
+// status shipped before the dashboard) degrades gracefully instead of crashing
+// the list with a destructure-of-undefined TypeError.
+const STATUS_ICON_FALLBACK: StatusIconMeta = { Icon: QuestionMarkCircleIcon, cls: "text-base-content/40" };
 
 function StatusIcon({ status, className }: { status: WorkflowRun["status"]; className?: string }) {
-  const { Icon, cls } = STATUS_ICON[status];
+  const { Icon, cls } = STATUS_ICON[status] ?? STATUS_ICON_FALLBACK;
   return <Icon className={clsx("shrink-0", cls, className ?? "w-4 h-4")} title={status} />;
 }
 
