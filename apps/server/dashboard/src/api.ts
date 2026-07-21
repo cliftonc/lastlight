@@ -127,9 +127,24 @@ export interface WorkflowRun {
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;
+  /** Who ORIGINALLY triggered the run — a GitHub login / Slack handle / cli / cron (issue #205). */
+  triggeredBy?: string;
+  /** Coarse actor category for {@link triggeredBy}. */
+  triggerActorType?: "github" | "slack" | "cli" | "cron" | "admin" | "system";
   /** Roll-up totals across the run's executions — present on the runs list. */
   totalCostUsd?: number;
   totalTokens?: number;
+}
+
+/**
+ * The `users`-table identity for a run's actor (issue #205), returned alongside
+ * the single-run detail endpoint. Null for cron/system/password actors or a
+ * login with no matching row — the UI then falls back to the raw login string.
+ */
+export interface TriggeredByUser {
+  login?: string;
+  name?: string | null;
+  avatarUrl?: string | null;
 }
 
 /**
@@ -633,7 +648,10 @@ export const api = {
     );
   },
   workflowNames: () => req<{ names: string[] }>("/workflow-names"),
-  workflowRun: (id: string) => req<{ workflowRun: WorkflowRun }>(`/workflow-runs/${id}`),
+  workflowRun: (id: string) =>
+    req<{ workflowRun: WorkflowRun; triggeredByUser: TriggeredByUser | null }>(
+      `/workflow-runs/${id}`,
+    ),
   workflowRunExecutions: (id: string) =>
     req<{ executions: WorkflowRunExecution[] }>(`/workflow-runs/${id}/executions`),
   // All approvals (pending + resolved) for one run — powers the pipeline's

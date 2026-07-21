@@ -2,12 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { DocumentMagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import {
+  CheckCircleIcon,
+  XCircleIcon,
+  PauseCircleIcon,
+  MinusCircleIcon,
+  ClockIcon,
+  ArrowPathIcon,
+  QuestionMarkCircleIcon,
+} from "@heroicons/react/24/solid";
+import {
   api,
   type WorkflowRun,
   type WorkflowApproval,
   type WorkflowDefinition,
   type WorkflowRunExecution,
+  type TriggeredByUser,
 } from "../api";
+import { ActorChip } from "./ActorChip";
 import { WorkflowPipeline } from "./WorkflowPipeline";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { PhaseDetailPanel } from "./PhaseDetailPanel";
@@ -38,20 +49,31 @@ function elapsed(run: WorkflowRun): string {
   return `${m}m${s}s`;
 }
 
-function StatusBadge({ status }: { status: WorkflowRun["status"] }) {
-  const cls = clsx("badge badge-xs font-mono", {
-    "badge-neutral": status === "queued",
-    "badge-info": status === "running",
-    "badge-warning": status === "paused",
-    "badge-success": status === "succeeded",
-    "badge-error": status === "failed",
-    "badge-ghost": status === "cancelled",
-  });
-  return <span className={cls}>{status}</span>;
+/** Status → solid icon + colour. Used both in the dense list rows and the
+ *  detail-panel header (the text chip was too heavy). Title carries the word. */
+type StatusIconMeta = { Icon: typeof CheckCircleIcon; cls: string };
+const STATUS_ICON: Record<WorkflowRun["status"], StatusIconMeta> = {
+  queued: { Icon: ClockIcon, cls: "text-base-content/50" },
+  running: { Icon: ArrowPathIcon, cls: "text-info animate-spin" },
+  paused: { Icon: PauseCircleIcon, cls: "text-warning" },
+  succeeded: { Icon: CheckCircleIcon, cls: "text-success" },
+  failed: { Icon: XCircleIcon, cls: "text-error" },
+  cancelled: { Icon: MinusCircleIcon, cls: "text-base-content/40" },
+};
+// Neutral fallback so an unrecognised runtime status (e.g. a new server-side
+// status shipped before the dashboard) degrades gracefully instead of crashing
+// the list with a destructure-of-undefined TypeError.
+const STATUS_ICON_FALLBACK: StatusIconMeta = { Icon: QuestionMarkCircleIcon, cls: "text-base-content/40" };
+
+function StatusIcon({ status, className }: { status: WorkflowRun["status"]; className?: string }) {
+  const { Icon, cls } = STATUS_ICON[status] ?? STATUS_ICON_FALLBACK;
+  return <Icon className={clsx("shrink-0", cls, className ?? "w-4 h-4")} title={status} />;
 }
 
 interface DetailPanelProps {
   run: WorkflowRun;
+  /** Resolved `users`-table identity for the run's actor (avatar/name), issue #205. */
+  triggeredByUser?: TriggeredByUser | null;
   approvals: WorkflowApproval[];
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
@@ -203,7 +225,7 @@ function ResizablePipeline({
 
 // ── Detail panel ────────────────────────────────────────────────────────
 
-function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, onOpenDefinition }: DetailPanelProps) {
+function DetailPanel({ run, triggeredByUser, approvals, onCancel, onRetry, onApprovalResponded, onOpenDefinition }: DetailPanelProps) {
   const canCancel = run.status === "running" || run.status === "paused";
   const canRetry = run.status === "failed";
 
@@ -362,7 +384,7 @@ function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, o
             <DocumentMagnifyingGlassIcon className="w-4 h-4" />
           </button>
         )}
-        <StatusBadge status={run.status} />
+        <StatusIcon status={run.status} className="w-5 h-5" />
         {run.repo &&
           (() => {
             const href = repoUrl(runRepoPath(run));
@@ -387,6 +409,22 @@ function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, o
               <span className={cls}>#{run.issueNumber}</span>
             );
           })()}
+        {run.triggeredBy && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-base-content/50">
+            <span className="opacity-70">by</span>
+            <ActorChip
+              login={run.triggeredBy}
+              actorType={run.triggerActorType}
+              user={triggeredByUser}
+              size="md"
+            />
+          </span>
+        )}
+        <span className="text-2xs text-base-content/40 font-mono flex gap-3 items-center">
+          <span>started {timeAgo(run.startedAt)} ago</span>
+          <span>elapsed {elapsed(run)}</span>
+          {run.finishedAt && <span>finished {timeAgo(run.finishedAt)} ago</span>}
+        </span>
         {canCancel && (
           <button
             className="btn btn-xs btn-error btn-outline ml-auto"
@@ -404,12 +442,6 @@ function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, o
             Retry
           </button>
         )}
-      </div>
-
-      <div className="text-2xs text-base-content/40 font-mono flex gap-4 shrink-0">
-        <span>started {timeAgo(run.startedAt)} ago</span>
-        <span>elapsed {elapsed(run)}</span>
-        {run.finishedAt && <span>finished {timeAgo(run.finishedAt)} ago</span>}
       </div>
 
       <ApprovalBanner approvals={pendingApprovals} onResponded={handleApprovalResponded} />
@@ -589,19 +621,29 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
   // wins for the live-updating fields (status / phaseHistory refresh on poll);
   // we only splice the immutable `context` in from the detail fetch below.
   const [detailRun, setDetailRun] = useState<WorkflowRun | null>(null);
+  // The run actor's `users`-table identity (avatar + real name), issue #205.
+  // Comes only from the detail fetch (the list payload has just the login).
+  const [triggeredByUser, setTriggeredByUser] = useState<TriggeredByUser | null>(null);
   useEffect(() => {
     if (!selectedId) {
       setDetailRun(null);
+      setTriggeredByUser(null);
       return;
     }
     let cancelled = false;
     api
       .workflowRun(selectedId)
       .then((res) => {
-        if (!cancelled) setDetailRun(res.workflowRun);
+        if (!cancelled) {
+          setDetailRun(res.workflowRun);
+          setTriggeredByUser(res.triggeredByUser);
+        }
       })
       .catch(() => {
-        if (!cancelled) setDetailRun(null);
+        if (!cancelled) {
+          setDetailRun(null);
+          setTriggeredByUser(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -693,8 +735,6 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
           <ul className="flex-1">
             {visibleRuns.map((run) => {
               const active = run.id === selectedId;
-              const canCancel = run.status === "running" || run.status === "paused";
-              const canRetry = run.status === "failed";
               const hasApprovals = approvals.some((a) => a.workflowRunId === run.id);
               return (
                 <li key={run.id} className="border-b border-base-300/40">
@@ -712,72 +752,61 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                       }
                     }}
                     className={clsx(
-                      "w-full flex flex-col items-start gap-0.5 py-2 px-3 text-left transition-colors cursor-pointer",
+                      "w-full flex flex-col items-start gap-0.5 py-1.5 px-3 text-left transition-colors cursor-pointer border-l-2 -ml-px pl-[10px]",
                       active
-                        ? "bg-primary/15 border-l-2 border-l-primary -ml-px pl-[10px]"
-                        : "hover:bg-base-300/40 border-l-2 border-l-transparent -ml-px pl-[10px]",
+                        ? "bg-primary/15 border-l-primary"
+                        : clsx("border-l-transparent", {
+                            // Faint red tint on unselected FAILED rows so they
+                            // stand out at a glance; everything else is neutral.
+                            "bg-error/10 hover:bg-error/20": run.status === "failed",
+                            "hover:bg-base-300/40": run.status !== "failed",
+                          }),
                     )}
                   >
                     <div className="flex items-center gap-2 w-full text-2xs">
-                      <StatusBadge status={run.status} />
+                      <span className="text-xs font-medium truncate text-base-content/90 min-w-0">
+                        {run.workflowName}
+                      </span>
                       {hasApprovals && (
-                        <span className="badge badge-warning badge-xs">approval</span>
+                        <span className="badge badge-warning badge-xs shrink-0">approval</span>
                       )}
-                      <span className="ml-auto text-base-content/40 font-mono">
+                      <span className="ml-auto text-base-content/40 font-mono shrink-0">
                         {timeAgo(run.startedAt)} ago
                       </span>
+                      <StatusIcon status={run.status} />
                     </div>
-                    <div className="text-sm truncate w-full text-base-content/90">
-                      {run.workflowName}
-                    </div>
-                    <div className="flex gap-2 text-2xs text-base-content/40 w-full font-mono">
+                    <div className="flex items-center gap-2 text-2xs text-base-content/40 w-full font-mono">
                       {run.repo &&
                         (() => {
                           const href = repoUrl(runRepoPath(run));
                           return href ? (
-                            <GhLink href={href} className="truncate" title={`Open ${run.repo} on GitHub`}>
+                            <GhLink href={href} className="truncate shrink-0" title={`Open ${run.repo} on GitHub`}>
                               {run.repo}
                             </GhLink>
                           ) : (
-                            <span className="truncate">{run.repo}</span>
+                            <span className="truncate shrink-0">{run.repo}</span>
                           );
                         })()}
                       {run.issueNumber &&
                         (() => {
                           const href = issueUrl(runRepoPath(run), run.issueNumber, run.workflowName);
                           return href ? (
-                            <GhLink href={href} title={`Open #${run.issueNumber} on GitHub`}>
+                            <GhLink href={href} className="shrink-0" title={`Open #${run.issueNumber} on GitHub`}>
                               #{run.issueNumber}
                             </GhLink>
                           ) : (
-                            <span>#{run.issueNumber}</span>
+                            <span className="shrink-0">#{run.issueNumber}</span>
                           );
                         })()}
-                      <span className="ml-auto">{run.currentPhase}</span>
+                      {run.triggeredBy && (
+                        <ActorChip
+                          login={run.triggeredBy}
+                          actorType={run.triggerActorType}
+                          className="min-w-0"
+                        />
+                      )}
+                      <span className="ml-auto shrink-0">{run.currentPhase}</span>
                     </div>
-                    {canCancel && (
-                      <button
-                        className="btn btn-2xs btn-error btn-outline mt-1 h-5 min-h-0 text-2xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancel(run.id);
-                        }}
-                      >
-                        cancel
-                      </button>
-                    )}
-                    {canRetry && (
-                      <button
-                        className="btn btn-2xs btn-warning btn-outline mt-1 h-5 min-h-0 text-2xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRetry(run.id);
-                        }}
-                        title="Re-run from the phase that failed, keeping the same context"
-                      >
-                        retry
-                      </button>
-                    )}
                   </div>
                 </li>
               );
@@ -804,6 +833,7 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
         {selectedRun ? (
           <DetailPanel
             run={selectedRun}
+            triggeredByUser={detailForSelected ? triggeredByUser : null}
             approvals={approvals}
             onCancel={handleCancel}
             onRetry={handleRetry}
