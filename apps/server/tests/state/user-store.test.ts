@@ -1,5 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { StateDb } from "#src/state/db.js";
+import { StateDb, isTriggerActorType, TRIGGER_ACTOR_TYPES } from "#src/state/db.js";
+
+describe("isTriggerActorType", () => {
+  it("accepts every member of the union", () => {
+    for (const t of TRIGGER_ACTOR_TYPES) expect(isTriggerActorType(t)).toBe(true);
+  });
+
+  it("rejects an unrecognised string, so untrusted context falls through", () => {
+    expect(isTriggerActorType("hacker")).toBe(false);
+    expect(isTriggerActorType("GITHUB")).toBe(false); // case-sensitive
+  });
+
+  it("rejects non-string values", () => {
+    expect(isTriggerActorType(undefined)).toBe(false);
+    expect(isTriggerActorType(null)).toBe(false);
+    expect(isTriggerActorType(42)).toBe(false);
+    expect(isTriggerActorType({})).toBe(false);
+  });
+});
 
 let db: StateDb;
 

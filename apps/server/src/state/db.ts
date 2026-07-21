@@ -18,7 +18,7 @@ export type { User, TriggerActorType } from "./user-store.js";
 export { ExecutionStore } from "./execution-store.js";
 export { ApprovalStore } from "./approval-store.js";
 export { WorkflowRunStore } from "./workflow-run-store.js";
-export { UserStore } from "./user-store.js";
+export { UserStore, TRIGGER_ACTOR_TYPES, isTriggerActorType } from "./user-store.js";
 
 const DEFAULT_DB_PATH = "lastlight.db";
 

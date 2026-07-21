@@ -12,7 +12,7 @@ import { configureWorkflowAssets, validateAssets, getWorkflow } from "./workflow
 import { ChatRunner } from "./engine/chat/chat-runner.js";
 import { buildReadSkillTool, loadChatSkillCatalogue } from "./engine/chat/chat-skills.js";
 import { configureGitAuth } from "./engine/github/git-auth.js";
-import { StateDb, type TriggerActorType } from "./state/db.js";
+import { StateDb, isTriggerActorType, type TriggerActorType } from "./state/db.js";
 import { CronScheduler, type WorkflowRunner } from "./cron/scheduler.js";
 import { getJobs } from "./cron/jobs.js";
 import { dispatchCronWorkflow, fanOutContexts } from "./cron/fanout.js";
@@ -330,7 +330,10 @@ async function main() {
       (typeof ctxTriggeredBy === "string" && ctxTriggeredBy) ||
       (typeof sender === "string" ? sender : undefined);
     const triggerActorType: TriggerActorType =
-      (typeof ctxTriggerActorType === "string" ? (ctxTriggerActorType as TriggerActorType) : undefined) ??
+      // Membership-checked, not a bare cast: `ctxTriggerActorType` is untrusted
+      // `unknown` from the spread context, so an unrecognised value falls
+      // through to the derived default rather than being persisted verbatim.
+      (isTriggerActorType(ctxTriggerActorType) ? ctxTriggerActorType : undefined) ??
       (slackTriggerId || ctxSource === "slack"
         ? "slack"
         : _triggerType === "cron"

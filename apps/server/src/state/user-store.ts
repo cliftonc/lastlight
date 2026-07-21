@@ -8,6 +8,20 @@ import { randomUUID } from "crypto";
  */
 export type TriggerActorType = "github" | "slack" | "cli" | "cron" | "admin" | "system";
 
+/** The runtime membership set for {@link TriggerActorType} (guards untrusted input). */
+export const TRIGGER_ACTOR_TYPES = ["github", "slack", "cli", "cron", "admin", "system"] as const;
+
+/**
+ * Narrow an arbitrary value to a {@link TriggerActorType}. The dispatch context
+ * is a `Record<string, unknown>` that a cron definition or external API caller
+ * can spread arbitrary keys into, so a bare `as` cast would persist an
+ * unrecognised `trigger_actor_type`. Callers use this to fall through to their
+ * derived default instead.
+ */
+export function isTriggerActorType(value: unknown): value is TriggerActorType {
+  return typeof value === "string" && (TRIGGER_ACTOR_TYPES as readonly string[]).includes(value);
+}
+
 /**
  * A first-class user identity (issue #205). Captures a GitHub identity
  * (stable numeric id + login + name + email + avatar) and a lazily-linked
