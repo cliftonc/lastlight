@@ -276,6 +276,34 @@ describe("GitHubWebhookConnector — failed checks", () => {
     expect(emitted).toBeNull();
   });
 
+  it("ignores a failing check_suite on a non-dependency (human) PR", async () => {
+    // Regression: a human's red PR must NOT reach the router — only a
+    // Dependabot/Renovate bump does. The red path is gated by the same
+    // deterministic commit-author / branch-prefix check as the green path;
+    // without it the LLM classifier misfired human PRs onto dependabot-ci-fix.
+    const { json, emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "failure",
+      prNumber: 207,
+      commitAuthor: "Ada Lovelace",
+      commitMessage: "feat(identity): user identity records + actor logging",
+      headBranch: "lastlight/205-user-identity",
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+  });
+
+  it("emits pr.checks_failed for a Renovate PR detected by head branch", async () => {
+    // The commit author isn't the bot (squashed/proxied), but the branch is.
+    const { emitted } = await postCheckSuiteCompleted(connector(), {
+      conclusion: "failure",
+      prNumber: 42,
+      commitAuthor: "Ada Lovelace",
+      headBranch: "renovate/lodash-4.x",
+    });
+    expect(emitted?.type).toBe("pr.checks_failed");
+    expect(emitted.prNumber).toBe(42);
+  });
+
   it("ignores a failing check_suite with no associated PR (e.g. a fork)", async () => {
     const { json, emitted } = await postCheckSuiteCompleted(connector(), {
       conclusion: "failure",
@@ -396,6 +424,22 @@ describe("GitHubWebhookConnector — settle-aware emit gate", () => {
     });
     expect(json.filtered).toBe(true);
     expect(emitted).toBeNull();
+  });
+
+  it("skips the settle lookup entirely for a non-dependency red PR", async () => {
+    // The dependency gate short-circuits before the network call, so a human's
+    // red PR costs no getChecksConclusion round-trip.
+    const { conn, calls } = connectorWithChecks("failing");
+    const { json, emitted } = await postCheckSuiteCompleted(conn, {
+      conclusion: "failure",
+      prNumber: 7,
+      commitAuthor: "Ada Lovelace",
+      commitMessage: "feat: something human",
+      headBranch: "feature/whatever",
+    });
+    expect(json.filtered).toBe(true);
+    expect(emitted).toBeNull();
+    expect(calls).toEqual([]);
   });
 });
 

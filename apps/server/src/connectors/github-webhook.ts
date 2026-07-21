@@ -392,28 +392,43 @@ export class GitHubWebhookConnector extends EventEmitter implements Connector {
           // same-repo PRs (fork PRs carry an empty array and are dropped below).
           const pr = payload.check_suite?.pull_requests?.[0];
           const sha: string | undefined = payload.check_suite?.head_sha;
+          // The check_suite `pull_requests[]` entry is minimal (number/refs
+          // only — no title or author). The head commit carries the useful
+          // classifier signal instead: for a Dependabot PR the commit message
+          // is the bump description ("Bump lodash from …") and the commit
+          // author name is "dependabot[bot]". The router feeds these to the
+          // classifier; the dispatcher later fetches the full PR for the fix.
+          const headCommit = payload.check_suite?.head_commit;
+          const commitAuthor: string = headCommit?.author?.name || "";
+          const headBranch: string = payload.check_suite?.head_branch || "";
+          // GATE: only a dependency-update PR (Dependabot / Renovate) may kick
+          // off the red-CI fix path — the exact deterministic check the green
+          // `pr.checks_passed` path below applies. Without it, EVERY red PR
+          // (including a human's) reached the router's LLM classifier as the
+          // sole authority, which misfired human PRs onto `dependabot-ci-fix`
+          // (a repo-write sandbox run). Commit author OR branch prefix, so a
+          // squashed/proxied bot commit still matches via its branch.
+          const isDependencyPr =
+            /^(dependabot|renovate)\[bot\]$/.test(commitAuthor) ||
+            /^(dependabot|renovate)\//.test(headBranch);
           // Only fire once the PR's checks have FULLY SETTLED red — a repo with
           // several check-reporting apps completes one suite at a time, and a
           // failure in one while another is still running should not kick off a
           // fix mid-flight. `getChecksConclusion` returns "failing" only when
           // nothing is pending and ≥1 check concluded red, so exactly one event
           // fires per SHA (the last suite to settle). Absent a wired client
-          // (standalone tests) we keep the legacy per-suite behaviour.
-          const settled = await this.settledConclusion(repoFullName, sha, "failing");
-          if (pr?.number && settled === "failing") {
-            prNumber = pr.number;
-            issueNumber = prNumber;
-            headSha = sha;
-            type = "pr.checks_failed";
-            // The check_suite `pull_requests[]` entry is minimal (number/refs
-            // only — no title or author). The head commit carries the useful
-            // classifier signal instead: for a Dependabot PR the commit message
-            // is the bump description ("Bump lodash from …") and the commit
-            // author name is "dependabot[bot]". The router feeds these to the
-            // classifier; the dispatcher later fetches the full PR for the fix.
-            const headCommit = payload.check_suite?.head_commit;
-            title = (headCommit?.message || "").split("\n")[0] || title;
-            issueAuthor = headCommit?.author?.name || issueAuthor;
+          // (standalone tests) we keep the legacy per-suite behaviour. Gated
+          // behind isDependencyPr so a human's red PR never even makes the call.
+          if (pr?.number && isDependencyPr) {
+            const settled = await this.settledConclusion(repoFullName, sha, "failing");
+            if (settled === "failing") {
+              prNumber = pr.number;
+              issueNumber = prNumber;
+              headSha = sha;
+              type = "pr.checks_failed";
+              title = (headCommit?.message || "").split("\n")[0] || title;
+              issueAuthor = commitAuthor || issueAuthor;
+            }
           }
         } else if (
           action === "completed" &&

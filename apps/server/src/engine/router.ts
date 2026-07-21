@@ -216,7 +216,11 @@ export async function routeEvent(
       };
 
     case "pr.checks_failed": {
-      // CI went red on a PR. Route through the classifier (not a fixed route
+      // CI went red on a dependency-update PR. The webhook connector only emits
+      // this event for a Dependabot/Renovate PR (deterministic commit-author /
+      // branch-prefix gate, mirroring the green `pr.checks_passed` path) — so we
+      // arrive here already knowing the PR is a dependency bump; a human's red PR
+      // never reaches this case. Route through the classifier (not a fixed route
       // key) so any workflow that claims a check-failure intent via its
       // `classification:` block can pick it up — e.g. a Dependabot
       // dependency-bump fixer. Only a NOVEL claimed intent (resolved via
