@@ -17,6 +17,7 @@ import { useStatsSeries } from "../hooks/useDailyStats";
 import { useTheme } from "../hooks/useTheme";
 import { repoUrl, issueUrl, runRepoPath } from "../lib/githubLinks";
 import { GhLink } from "./GhLink";
+import { ActorChip } from "./ActorChip";
 import clsx from "clsx";
 
 type StatRange = "today" | "7d" | "30d";
@@ -425,6 +426,13 @@ function LiveActivitySection({
                   {run.workflowName}
                 </span>
                 <RunTarget run={run} />
+                {run.triggeredBy && (
+                  <ActorChip
+                    login={run.triggeredBy}
+                    actorType={run.triggerActorType}
+                    className="shrink-0 max-w-[8rem]"
+                  />
+                )}
                 <span className="text-base-content/50 shrink-0">{run.currentPhase}</span>
                 <span className="text-base-content/40 shrink-0">{timeAgo(run.startedAt)}</span>
               </div>
@@ -481,6 +489,13 @@ function RecentWorkflowsSection({
                     {run.workflowName}
                   </span>
                   <RunTarget run={run} />
+                  {run.triggeredBy && (
+                    <ActorChip
+                      login={run.triggeredBy}
+                      actorType={run.triggerActorType}
+                      className="shrink-0 max-w-[8rem]"
+                    />
+                  )}
                   {run.totalTokens ? (
                     <span className="text-base-content/40 font-mono shrink-0 tabular-nums" title="tokens">
                       {formatTokens(run.totalTokens)} tok

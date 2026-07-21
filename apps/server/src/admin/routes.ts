@@ -1077,7 +1077,21 @@ export function createAdminRoutes(
     const id = c.req.param("id");
     const run = db.runs.getRun(id);
     if (!run) return c.json({ error: "workflow run not found" }, 404);
-    return c.json({ workflowRun: run });
+    // Enrich the actor with the `users` identity (issue #205) so the run
+    // detail panel can show a real name + avatar, not just the raw login.
+    // Best-effort: absent (password/cron/system actors, or a login with no
+    // row) → the panel falls back to the login string + actor-type badge.
+    const triggeredByUser = run.triggeredBy ? db.users.findByLogin(run.triggeredBy) : null;
+    return c.json({
+      workflowRun: run,
+      triggeredByUser: triggeredByUser
+        ? {
+            login: triggeredByUser.login,
+            name: triggeredByUser.name,
+            avatarUrl: triggeredByUser.avatarUrl,
+          }
+        : null,
+    });
   });
 
   // List the executions belonging to a workflow run, ordered by start time.

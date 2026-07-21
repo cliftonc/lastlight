@@ -70,6 +70,13 @@ const mockDb = {
     listPending: vi.fn(() => []),
     listByArtifact: vi.fn(() => []),
   },
+  users: {
+    findByLogin: vi.fn(() => null),
+    findByEmail: vi.fn(() => null),
+    findBySlackUserId: vi.fn(() => null),
+    getOrCreateUserByGithub: vi.fn(),
+    upsertSlackUser: vi.fn(),
+  },
 } as unknown as StateDb;
 
 const mockSessions = {

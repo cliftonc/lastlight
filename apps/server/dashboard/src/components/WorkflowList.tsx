@@ -7,7 +7,9 @@ import {
   type WorkflowApproval,
   type WorkflowDefinition,
   type WorkflowRunExecution,
+  type TriggeredByUser,
 } from "../api";
+import { ActorChip } from "./ActorChip";
 import { WorkflowPipeline } from "./WorkflowPipeline";
 import { ApprovalBanner } from "./ApprovalBanner";
 import { PhaseDetailPanel } from "./PhaseDetailPanel";
@@ -52,6 +54,8 @@ function StatusBadge({ status }: { status: WorkflowRun["status"] }) {
 
 interface DetailPanelProps {
   run: WorkflowRun;
+  /** Resolved `users`-table identity for the run's actor (avatar/name), issue #205. */
+  triggeredByUser?: TriggeredByUser | null;
   approvals: WorkflowApproval[];
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
@@ -203,7 +207,7 @@ function ResizablePipeline({
 
 // ── Detail panel ────────────────────────────────────────────────────────
 
-function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, onOpenDefinition }: DetailPanelProps) {
+function DetailPanel({ run, triggeredByUser, approvals, onCancel, onRetry, onApprovalResponded, onOpenDefinition }: DetailPanelProps) {
   const canCancel = run.status === "running" || run.status === "paused";
   const canRetry = run.status === "failed";
 
@@ -406,7 +410,18 @@ function DetailPanel({ run, approvals, onCancel, onRetry, onApprovalResponded, o
         )}
       </div>
 
-      <div className="text-2xs text-base-content/40 font-mono flex gap-4 shrink-0">
+      <div className="text-2xs text-base-content/40 font-mono flex gap-4 items-center flex-wrap shrink-0">
+        {run.triggeredBy && (
+          <span className="inline-flex items-center gap-1">
+            <span className="opacity-60">triggered by</span>
+            <ActorChip
+              login={run.triggeredBy}
+              actorType={run.triggerActorType}
+              user={triggeredByUser}
+              size="md"
+            />
+          </span>
+        )}
         <span>started {timeAgo(run.startedAt)} ago</span>
         <span>elapsed {elapsed(run)}</span>
         {run.finishedAt && <span>finished {timeAgo(run.finishedAt)} ago</span>}
@@ -589,19 +604,29 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
   // wins for the live-updating fields (status / phaseHistory refresh on poll);
   // we only splice the immutable `context` in from the detail fetch below.
   const [detailRun, setDetailRun] = useState<WorkflowRun | null>(null);
+  // The run actor's `users`-table identity (avatar + real name), issue #205.
+  // Comes only from the detail fetch (the list payload has just the login).
+  const [triggeredByUser, setTriggeredByUser] = useState<TriggeredByUser | null>(null);
   useEffect(() => {
     if (!selectedId) {
       setDetailRun(null);
+      setTriggeredByUser(null);
       return;
     }
     let cancelled = false;
     api
       .workflowRun(selectedId)
       .then((res) => {
-        if (!cancelled) setDetailRun(res.workflowRun);
+        if (!cancelled) {
+          setDetailRun(res.workflowRun);
+          setTriggeredByUser(res.triggeredByUser);
+        }
       })
       .catch(() => {
-        if (!cancelled) setDetailRun(null);
+        if (!cancelled) {
+          setDetailRun(null);
+          setTriggeredByUser(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -723,6 +748,13 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
                       {hasApprovals && (
                         <span className="badge badge-warning badge-xs">approval</span>
                       )}
+                      {run.triggeredBy && (
+                        <ActorChip
+                          login={run.triggeredBy}
+                          actorType={run.triggerActorType}
+                          className="max-w-[8rem]"
+                        />
+                      )}
                       <span className="ml-auto text-base-content/40 font-mono">
                         {timeAgo(run.startedAt)} ago
                       </span>
@@ -804,6 +836,7 @@ export function WorkflowList({ timeRange, query, repo, onOpenDefinition }: Workf
         {selectedRun ? (
           <DetailPanel
             run={selectedRun}
+            triggeredByUser={detailForSelected ? triggeredByUser : null}
             approvals={approvals}
             onCancel={handleCancel}
             onRetry={handleRetry}
