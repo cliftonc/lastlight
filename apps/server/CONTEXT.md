@@ -38,6 +38,27 @@ recently during the `/grilling` of issue #93). It is not exhaustive.
   iteration of one workflow invocation (`ctx.taskId`). One checkout per run;
   phases hand off through it (architect writes `plan.md`, executor reads it).
 
+- **RunIdentity** — the immutable value object that is the single authority for
+  a run's derived identity: `{ branch, taskId, issueDir, issueKey,
+  buildAssetsRelocated, prePopulateBranch }`. Computed **once** at run creation
+  (`RunIdentity.forNew(request, config)`) and persisted into the row's immutable
+  `context`; every reuse and resume `RunIdentity.load(context)`s it **verbatim**
+  — never recomputed (a missing field **throws**, it does not fall back to a
+  formula). This is what kills the `lastlight/N-slug` branch drift that used to
+  422 the PR phase on resume (the fallback recompute saw an empty title and
+  collapsed to `lastlight/N-issue-N`, a ref that was never pushed). The full
+  **TemplateContext** (the rendered variable bag — distinct concept) is then
+  assembled by one `buildTemplateContext(identity, content, config, callbacks)`
+  that both the fresh-dispatch (`simple.ts`) and resume (`resume.ts`) paths call,
+  so resume structurally cannot drop `prNumber` / `botMention` / `artifactBaseUrl`
+  / `request.extra` (`content.extra` is seeded by spreading the stored `context`,
+  preserving `failedChecks` / `headSha` / `channelId`). Lives in
+  `src/workflows/run-identity.ts`; absorbs the former `resolveRunBranch` /
+  `artifactIssueDir` / `workflowScopedTaskId` helpers as private ordering.
+  _Avoid_: recomputing identity on resume; a second copy of the branch formula;
+  conflating RunIdentity (immutable identity) with TemplateContext (rendered
+  vars, refetched content included). See [[lastlight-architecture-deepening-issues]].
+
 - **PhaseExecutor** — the deep module that owns every per-phase body (context /
   reviewer-loop / generic-loop / standard / approval-gate) behind one
   `execute(node, outputs) → PhaseOutcome`. The scheduler owns ordering and
