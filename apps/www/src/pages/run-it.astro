@@ -140,54 +140,10 @@ services:
 
 		<div class="step-block">
 			<h3><span class="step-label">Step 5</span> Running in Kubernetes <span class="step-label">optional</span></h3>
-		<p class="section-desc">The same Docker image works in K8s. Skip Caddy — use your cluster's Ingress controller for TLS instead.</p>
-		<pre><code>apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: lastlight
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: lastlight
-  template:
-    metadata:
-      labels:
-        app: lastlight
-    spec:
-      containers:
-      - name: agent
-        image: your-registry/lastlight:latest
-        ports:
-        - containerPort: 8644
-        env:
-        - name: LASTLIGHT_OVERLAY_DIR
-          value: /app/instance
-        volumeMounts:
-        - name: secrets
-          mountPath: /app/instance/secrets
-          readOnly: true
-        - name: state
-          mountPath: /app/data
-      volumes:
-      - name: secrets
-        secret:
-          secretName: lastlight-secrets
-      - name: state
-        persistentVolumeClaim:
-          claimName: lastlight-state
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: lastlight
-spec:
-  selector:
-    app: lastlight
-  ports:
-  - port: 8644
-    targetPort: 8644</code></pre>
-		<p class="section-note">Create the K8s Secret from your local files: <code>kubectl create secret generic lastlight-secrets --from-file=.env=instance/secrets/.env --from-file=app.pem=instance/secrets/app.pem</code></p>
+		<p class="section-desc">Which image you need depends on the sandbox backend. The default <strong>gondolin</strong> backend runs each phase in a QEMU micro-VM, so it needs QEMU in the image and <code>/dev/kvm</code> on the node — use the <code>lastlight-agent-qemu</code> variant. The base <code>lastlight-agent</code> image ships no QEMU: it targets the <code>docker</code> backend, which wants a Docker socket that containerd-based clusters don't expose.</p>
+		<p class="section-desc">A complete, <code>kubectl apply -k</code>-able example lives in <a href="https://github.com/nearform/lastlight/tree/main/apps/server/deploy/k8s" target="_blank" rel="noopener">apps/server/deploy/k8s/</a> — namespace, the KVM device plugin, Deployment, PVC, and Service. It exposes <code>/dev/kvm</code> to an otherwise-unprivileged pod via the <code>squat/generic-device-plugin</code> DaemonSet (resource <code>devic.es/kvm</code>), adds the one <code>SYS_RESOURCE</code> capability gondolin's QEMU needs (which requires the namespace to run at <code>privileged</code> PodSecurity), and keeps the guest-image cache on the PVC. Follow its README for the edits it needs (image tag, Secret, StorageClass, ingress, managed repos).</p>
+		<p class="section-note">Until <a href="https://github.com/nearform/lastlight/issues/210" target="_blank" rel="noopener">#210</a> Gap 2 lands, the gondolin guest image lacks <code>gitleaks</code>/<code>semgrep</code>, so <code>security-review</code> falls back to a manual pass.</p>
+		<p class="section-note">Create the K8s Secret from your local files: <code>kubectl create secret generic lastlight-secrets --namespace lastlight --from-file=.env=instance/secrets/.env --from-file=app.pem=instance/secrets/app.pem</code></p>
 		</div>
 	</section>
 
