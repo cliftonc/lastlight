@@ -782,7 +782,10 @@ sudo -u lastlight -i lastlight server update
    rather than building them on the host — a release publishes
    `ghcr.io/nearform/lastlight-{agent,sandbox-base,sandbox,sandbox-qa}` via the
    `images` job of `.github/workflows/publish.yml` (on GitHub Release +
-   `workflow_dispatch`, amd64, public). `server update` pulls the tag `resolveImageTag` returns — the
+   `workflow_dispatch`, amd64, public). (The release also publishes a fifth
+   image, `lastlight-agent-qemu` — `agent` + QEMU for the gondolin/k8s path,
+   see `deploy/k8s/` — which the compose stack doesn't use, so it isn't pulled
+   here.) `server update` pulls the tag `resolveImageTag` returns — the
    overlay's `deploy.version` pin (e.g. `v0.11.0`) when set, else `:latest` — and
    re-tags each to its **local** name (`lastlight-agent`,
    `lastlight-sandbox:latest`, …), which is what `docker-compose.yml` and the

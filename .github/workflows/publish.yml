@@ -30,8 +30,8 @@ name: Publish release
 # behind `checks`); it never publishes to npm — the `npm` job is gated to
 # `release` events.
 #
-# Build the four locally-built images (agent + sandbox-base + sandbox +
-# sandbox-qa) once and push them to GHCR, so `lastlight server update` PULLS them
+# Build the five locally-built images (agent + agent-qemu + sandbox-base +
+# sandbox + sandbox-qa) once and push them to GHCR, so `lastlight server update` PULLS them
 # on the deploy host instead of building from source (minutes → seconds).
 #
 # The stock sidecar images (coredns / nginx / otel-collector / caddy) are pulled
@@ -118,7 +118,7 @@ jobs:
         id: meta
         run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-      # Required set: agent + sandbox-base + sandbox, built in one bake graph so
+      # Required set: agent + agent-qemu + sandbox-base + sandbox, built in one bake graph so
       # `sandbox` links to `target:sandbox-base` by content (see docker-bake.hcl).
       - name: Build & push core images
         # Invoke from apps/server/ (where docker-bake.hcl lives) so its
