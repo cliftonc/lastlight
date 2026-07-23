@@ -49,8 +49,20 @@ runnable path is part of the work, not an optional extra.
 ## The gate
 
 While iterating, run **only the tests covering the files you touched** — not the
-whole suite on every edit. Then, **once before committing or claiming done, run
-the full gate and require all of it to pass:**
+whole suite on every edit. Two habits keep that inner loop fast, and a slow
+feedback loop is what burns your time budget:
+
+- **Turn coverage off** for inner-loop runs — coverage is a CI-gate concern, not
+  a feedback one, and instrumenting the whole tree can be several times slower
+  (`--coverage=false`, or your runner's equivalent).
+- **Batch touched files into one invocation**, not one run per file. A runner
+  pays a fixed startup/compile cost per invocation (often tens of seconds on a
+  cold cache — the sandbox is always cold), so N separate runs pay it N times.
+  If the whole suite finishes in time comparable to a handful of files, just run
+  it once.
+
+Then, **once before committing or claiming done, run the full gate and require
+all of it to pass:**
 
 1. Full test command — zero failures.
 2. Lint command (if present) — fix all errors.

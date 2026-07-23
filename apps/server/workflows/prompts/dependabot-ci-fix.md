@@ -20,6 +20,12 @@ CONTEXT:
 {{ciSection}}
 
 INSTRUCTIONS:
+Work efficiently and stay focused — you are on a time budget, so spend it on the
+change that lands this PR. Make the smallest fix that works, don't refactor or
+chase failures unrelated to the dependency bump, and don't sink your budget into
+one slow or unreproducible check. Run tests cheaply per the **building** skill
+(touched files only, coverage off, a single invocation over per-file runs).
+
 1. FIRST bring the branch up to date with its base, so your fix is built on the
    current base and a `behind` PR is made mergeable (so the merge step later sees
    a `clean` PR, not `behind`). Merge — do NOT rebase or force-push:
@@ -37,6 +43,12 @@ INSTRUCTIONS:
      the repo's package manager),
    - a breaking change in the new version needs call sites / types updated,
    - a peer-dependency or engines constraint needs a matching bump.
+   Triage the failing checks first: some **can't run in this sandbox at all** —
+   they need secrets, a live service, a browser, or infra you don't have (e.g.
+   Firebase credentials, a real database, an e2e suite against a deployed
+   backend). Don't burn budget trying to turn those green. Fix and verify what
+   you *can* reproduce here (build, unit tests, lint, typecheck) and note the
+   unreproducible checks for a human in your summary.
 3. Make the **smallest** change that makes CI pass. Prefer a lockfile
    regeneration or a mechanical call-site/type update over a behavioural change.
    Do NOT widen the scope beyond making this update green.
@@ -70,5 +82,6 @@ once a later fix lands and turns the checks green, the `dependabot-pr-merge`
 workflow re-assesses the PR and clears `requires-human` if the update is
 trivial.)
 
-OUTPUT: A brief summary of the root cause, exactly what you changed, and the
-local test/lint/typecheck results.
+OUTPUT: A brief summary of the root cause, exactly what you changed, the
+local test/lint/typecheck results, and any checks you couldn't reproduce in the
+sandbox (so a human knows what still needs confirming).
