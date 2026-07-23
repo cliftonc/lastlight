@@ -83,7 +83,9 @@ describe("githubAppClient — 403/404 scope diagnostic", () => {
     expect(line).toContain("GET /repos/o/private/pulls -> 404");
     expect(line).toContain("x-accepted-github-permissions=pull_requests=read");
     expect(line).toContain("repository_selection=all");
-    expect(line).toContain("issues,pull_requests");
+    // Permission LEVELS are logged, not just names — so a read grant where write
+    // is required is visible against x-accepted-github-permissions (#213/#215).
+    expect(line).toContain("issues=write,pull_requests=write");
     warn.mockRestore();
   });
 

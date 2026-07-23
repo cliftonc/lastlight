@@ -47,7 +47,11 @@ function installScopeDiagnostics(octokit: Octokit, appAuth: boolean): void {
             repositorySelection?: string;
             permissions?: Record<string, string>;
           };
-          const perms = auth.permissions ? Object.keys(auth.permissions).join(",") : "?";
+          const perms = auth.permissions
+            ? Object.entries(auth.permissions)
+                .map(([name, level]) => `${name}=${level}`)
+                .join(",")
+            : "?";
           scope = `; token repository_selection=${auth.repositorySelection ?? "?"}, permissions=${perms}`;
         } catch {
           // Introspection is best-effort — never mask the real request error.
