@@ -20,7 +20,7 @@ backend, which runs each workflow phase in a QEMU micro-VM. It uses the
   privileged. **The only privileged component here.**
 - `deployment.yaml`, `pvc.yaml`, `service.yaml`, `configmap.yaml` — the harness.
 
-## The four edits it needs
+## The edits it needs
 
 1. **Image** (`deployment.yaml`) — pin `ghcr.io/nearform/lastlight-agent-qemu`
    to a release tag.
