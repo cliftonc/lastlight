@@ -3,14 +3,14 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 const title = "Run It for Real — Last Light";
-const description = "Deploy Last Light for real — fork, configure, docker compose up. Production-ready with automatic TLS via Caddy.";
+const description = "Stand up your own software factory — fork Last Light, configure, docker compose up. Production-ready with automatic TLS via Caddy.";
 ---
 
 <BaseLayout title={title} description={description}>
 
 	<section class="page-header">
 		<h1>Run it <span class="accent">for real</span></h1>
-		<p class="subtitle">Fork the repo, drop in your secrets, <code>docker compose up</code>. Caddy handles TLS automatically.</p>
+		<p class="subtitle">Stand up your own software factory: fork the repo, drop in your secrets, <code>docker compose up</code>. Caddy handles TLS automatically.</p>
 		<p class="subtitle" style="font-size: 0.95rem; margin-top: 1rem;">
 			For the authoritative step-by-step — including every optional env var, Slack OAuth login, approval gates, and the dashboard password — read <a href="/docs/production">Production deploy</a> in the docs.
 		</p>
@@ -19,7 +19,7 @@ const description = "Deploy Last Light for real — fork, configure, docker comp
 	<section class="security-advisory">
 		<div class="advisory-card">
 			<h3>Run it outside your core infrastructure</h3>
-			<p>Last Light is a powerful autonomous agent. While it runs all code in isolated per-phase sandboxes (gondolin micro-VMs by default, Docker containers on opt-in), it is early-stage software that may have undetected security issues. Deploy it on an isolated host — a cheap VPS, a separate cloud project, or a dedicated VM — where it cannot reach sensitive internal systems, databases, or credentials beyond what it explicitly needs.</p>
+			<p>Last Light is a powerful autonomous software factory. While it runs all code in isolated per-phase sandboxes (gondolin micro-VMs by default, Docker containers on opt-in), it is early-stage software that may have undetected security issues. Deploy it on an isolated host — a cheap VPS, a separate cloud project, or a dedicated VM — where it cannot reach sensitive internal systems, databases, or credentials beyond what it explicitly needs.</p>
 		</div>
 	</section>
 

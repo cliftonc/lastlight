@@ -3,12 +3,12 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 const title = "Comparisons — Last Light";
-const description = "An honest comparison of Last Light against Factory.ai droid, the autonomous GitHub bots (Devin, Copilot coding agent, Codex cloud, Jules), and the self-hosted OSS agents (OpenHands, Goose, Archon, Aider, Cline) — with 'choose X when' guidance.";
+const description = "An honest comparison of Last Light — the self-hosted software factory — against Factory.ai droid, the autonomous GitHub bots (Devin, Copilot coding agent, Codex cloud, Jules), and the self-hosted OSS agents (OpenHands, Goose, Archon, Aider, Cline) — with 'choose X when' guidance.";
 
 // At-a-glance comparison data
 const cols = ["Tool", "Category", "Hosting", "Trigger model", "BYO model?", "Isolation", "Human gates", "Cost model", "Best for"];
 const rows = [
-  ["Last Light", "Repo-maintenance harness", "Self-hosted only", "Webhooks + Slack + cron + CLI", "Yes (Anthropic / OpenAI / OpenRouter)", "Docker / micro-VM sandbox + default-deny egress firewall", "First-class (GitHub / Slack / dashboard)", "Free / OSS + your model spend + your infra", "Self-hosted autonomous repo maintenance with approval gates", true],
+  ["Last Light", "Self-hosted software factory", "Self-hosted only", "Webhooks + Slack + cron + CLI", "Yes (Anthropic / OpenAI / OpenRouter)", "Docker / micro-VM sandbox + default-deny egress firewall", "First-class (GitHub / Slack / dashboard)", "Free / OSS + your model spend + your infra", "Self-hosted autonomous repo maintenance with approval gates", true],
   ["Factory droid", "Commercial multi-agent platform", "SaaS (on-prem at Enterprise)", "IDE + CLI + browser + Slack + Jira/Linear", "Yes (Claude / GPT / Gemini / DeepSeek / Qwen)", "Managed cloud sandboxes (“Droid Computers”)", "Tiered autonomy levels", "$20 / $100 / $200 per mo + Team/Enterprise", "Enterprises wanting a polished multi-surface droid fleet", false],
   ["Devin", "Autonomous cloud agent", "SaaS", "Task / issue assignment", "No (vendor model)", "Vendor cloud sandbox", "Review the PR", "Subscription", "Delegating well-scoped tasks to a “junior engineer”", false],
   ["Copilot coding agent", "Autonomous GitHub agent", "SaaS (GitHub)", "Assign a GitHub issue", "No (vendor model)", "Sandboxed GitHub Actions", "Review the draft PR", "Copilot subscription", "Teams already living in GitHub", false],
@@ -26,14 +26,14 @@ const rows = [
 	<!-- Header -->
 	<section class="page-header">
 		<h1>How Last Light <span class="accent">compares</span></h1>
-		<p class="subtitle">An honest, point-in-time look (June 2026) at where Last Light sits among AI coding agents — against Factory.ai droid, the vendor-hosted GitHub bots, and the self-hosted open-source agents. Pricing and benchmark numbers move fast, so figures link to sources rather than being treated as durable truth.</p>
+		<p class="subtitle">An honest, point-in-time look (June 2026) at where Last Light — a self-hosted software factory — sits among AI coding agents, against Factory.ai droid, the vendor-hosted GitHub bots, and the self-hosted open-source agents. Pricing and benchmark numbers move fast, so figures link to sources rather than being treated as durable truth.</p>
 	</section>
 
 	<!-- TL;DR -->
 	<section class="content-section">
 		<h2>The short version</h2>
 		<div class="callout-card">
-			<p>Last Light is <strong>not</strong> in the same category as most "AI coding agent" tools, and comparing it feature-for-feature is misleading. It's a <strong>self-hosted, event-driven, single-tenant repository-maintenance harness</strong> — a YAML workflow engine that reacts to GitHub webhooks, Slack messages, and cron ticks by running sandboxed agents to triage issues, review PRs, build features, and report on health and security.</p>
+			<p>Last Light is <strong>not</strong> in the same category as most "AI coding agent" tools, and comparing it feature-for-feature is misleading. It's a <strong>self-hosted, event-driven, single-tenant software factory</strong> — a YAML workflow engine that reacts to GitHub webhooks, Slack messages, and cron ticks by running sandboxed agents on a production line to triage issues, review PRs, build features, and report on health and security.</p>
 			<p>Almost everything it's compared to is either a <strong>developer-driven pair programmer</strong> you sit in front of (Cursor, Claude Code, Codex CLI, Aider, Cline), or a <strong>vendor-hosted issue&rarr;PR agent</strong> you delegate to in someone else's cloud (Devin, Copilot coding agent, Codex cloud, Jules) — or its commercial-platform sibling, Factory droid.</p>
 			<p>The important exceptions, and Last Light's truest peers, are the <strong>open-source agents that also run self-hosted <em>and</em> autonomously</strong>: OpenHands (Resolver / headless), Goose (scheduler / recipes), and Archon (an OSS workflow-harness builder). Last Light is <em>not</em> alone in that quadrant — the honest distinction from those is <strong>shape</strong>, covered below.</p>
 		</div>
@@ -64,7 +64,7 @@ const rows = [
 			</div>
 		</div>
 
-		<p class="section-note">So the meaningful question isn't "is anything else self-hosted and autonomous" (things are) but <strong>what shape that autonomy takes</strong>: the vendor bots are autonomous but hosted; OpenHands / Goose are autonomous and self-hostable but as a single pipeline or a general agent you compose; Archon is a self-hosted harness that orchestrates external CLIs; Last Light ships a purpose-built, multi-workflow repo-maintenance service. That breadth is the point — and also why it carries operational burden a per-task CLI or a SaaS bot doesn't.</p>
+		<p class="section-note">So the meaningful question isn't "is anything else self-hosted and autonomous" (things are) but <strong>what shape that autonomy takes</strong>: the vendor bots are autonomous but hosted; OpenHands / Goose are autonomous and self-hostable but as a single pipeline or a general agent you compose; Archon is a self-hosted harness that orchestrates external CLIs; Last Light ships a purpose-built, multi-workflow software factory for repo maintenance. That breadth is the point — and also why it carries operational burden a per-task CLI or a SaaS bot doesn't.</p>
 	</section>
 
 	<!-- At a glance -->
@@ -92,7 +92,7 @@ const rows = [
 	<!-- Factory head-to-head -->
 	<section class="content-section">
 		<h2>Last Light vs. Factory droid</h2>
-		<p class="section-intro">These two look superficially similar — both run AI coding agents with a planner/reviewer split, both are model-agnostic, both reach Slack — so this is the comparison worth doing carefully. The difference is <strong>commercial platform vs. self-hosted harness</strong>.</p>
+		<p class="section-intro">These two look superficially similar — both run AI coding agents with a planner/reviewer split, both are model-agnostic, both reach Slack — so this is the comparison worth doing carefully. The difference is <strong>commercial platform vs. self-hosted software factory</strong>.</p>
 
 		<div class="hh-grid">
 			<div class="hh-card">
@@ -135,7 +135,7 @@ const rows = [
 	<!-- Autonomous GitHub bots -->
 	<section class="content-section">
 		<h2>Last Light vs. the autonomous GitHub bots</h2>
-		<p class="section-intro">Devin / Copilot coding agent / Codex cloud / Jules are Last Light's closest <em>behavioural</em> peers. They share one lifecycle: <strong>ticket &rarr; cloud sandbox &rarr; autonomous edit &rarr; PR &rarr; human review</strong>. Last Light's build cycle (Guardrails &rarr; Architect &rarr; Executor &rarr; Reviewer &rarr; PR) does the same thing. The divergence is <strong>ownership and extensibility</strong>, not the basic loop.</p>
+		<p class="section-intro">Devin / Copilot coding agent / Codex cloud / Jules are Last Light's closest <em>behavioural</em> peers. They share one lifecycle: <strong>ticket &rarr; cloud sandbox &rarr; autonomous edit &rarr; PR &rarr; human review</strong>. Last Light's build line (Guardrails &rarr; Architect &rarr; Executor &rarr; Reviewer &rarr; PR) does the same thing. The divergence is <strong>ownership and extensibility</strong>, not the basic loop.</p>
 
 		<ul class="plain-list">
 			<li><strong>The bots' advantage:</strong> zero operations, best-in-class first-party models, tight platform integration (Copilot in GitHub, Jules in GCP), a polished managed sandbox. Assign an issue, a PR appears, nothing to run.</li>
@@ -151,7 +151,7 @@ const rows = [
 		<h2>Last Light vs. self-hosted autonomous OSS agents (OpenHands / Goose)</h2>
 		<p class="section-intro">Last Light's truest peer group — all self-hostable, all fully BYO-model, all able to run <strong>autonomously</strong>, not just interactively. Last Light is <strong>not</strong> uniquely "the self-hosted autonomous one." The real difference is <strong>a turnkey multi-workflow service vs. an autonomy primitive you assemble</strong>.</p>
 
-		<p><strong>OpenHands</strong> is the closest single competitor. Its <strong>Resolver</strong> (a GitHub Action backed by headless mode) does exactly the event-driven thing: label an issue and it spins up a sandboxed runtime, edits code, runs tests, and opens a PR — fully autonomous and self-hostable (or run on OpenHands Cloud / Enterprise). That's the same loop as Last Light's build cycle. OpenHands is also a larger project with a bigger ecosystem, a cloud product, and broader general-purpose use.</p>
+		<p><strong>OpenHands</strong> is the closest single competitor. Its <strong>Resolver</strong> (a GitHub Action backed by headless mode) does exactly the event-driven thing: label an issue and it spins up a sandboxed runtime, edits code, runs tests, and opens a PR — fully autonomous and self-hostable (or run on OpenHands Cloud / Enterprise). That's the same loop as Last Light's build line. OpenHands is also a larger project with a bigger ecosystem, a cloud product, and broader general-purpose use.</p>
 		<p><strong>Goose</strong> (from Block) is autonomous-capable too: a headless CLI, reusable <strong>recipes</strong>, a built-in <strong>scheduler</strong> for timetabled runs, CI/CD embedding, and configurable approval gates — a general agent you can shape into a scheduled, non-interactive worker.</p>
 
 		<p style="margin-top:1.25rem;">What Last Light adds on top of "self-hosted + autonomous," for its niche:</p>
