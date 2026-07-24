@@ -90,4 +90,25 @@ describe("discoverPrsAwaitingReview", () => {
     const out = await discoverPrsAwaitingReview(["yo61/repo"], gh, { botLogin: "nearform-lastlight[bot]" });
     expect(out.map((p) => p.prNumber)).toEqual([9]); // the bot's own PR (8) is skipped
   });
+
+  it("caps RUNS dispatched, not candidates examined — reviewed PRs don't starve unreviewed ones behind them", async () => {
+    // Steady state: the two oldest open PRs are already reviewed. With
+    // maxPerRepo=2 the cap must still surface 2 UNreviewed PRs from behind them,
+    // not stop after examining the first 2 (which would yield zero and defer the
+    // rest indefinitely).
+    const gh = fakeGh(
+      {
+        "yo61/repo": [
+          { number: 1, title: "old reviewed", draft: false, authorLogin: "a" },
+          { number: 2, title: "old reviewed", draft: false, authorLogin: "b" },
+          { number: 3, title: "unreviewed", draft: false, authorLogin: "c" },
+          { number: 4, title: "unreviewed", draft: false, authorLogin: "d" },
+          { number: 5, title: "unreviewed", draft: false, authorLogin: "e" },
+        ],
+      },
+      new Set(["yo61/repo#1@sha-1", "yo61/repo#2@sha-2"]),
+    );
+    const out = await discoverPrsAwaitingReview(["yo61/repo"], gh, { maxPerRepo: 2 });
+    expect(out.map((p) => p.prNumber)).toEqual([3, 4]); // 2 dispatched, not starved by 1 & 2
+  });
 });

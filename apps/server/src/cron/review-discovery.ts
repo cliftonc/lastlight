@@ -55,9 +55,11 @@ export interface ReviewDiscoverOptions {
    */
   botLogin?: string;
   /**
-   * Cap candidates assessed per repo so one busy repo can't spin hundreds of
-   * runs; the next tick picks up any remainder. Runs queue against the global
-   * admission cap anyway — this just bounds the row count. Default 25.
+   * Cap the number of runs DISPATCHED per repo per tick (not candidates
+   * examined) so one busy repo can't spin hundreds of runs at once. The check
+   * walks all open PRs and stops after this many *unreviewed* ones, so
+   * already-reviewed PRs in the oldest positions never starve unreviewed PRs
+   * behind them. Runs also queue against the global admission cap. Default 25.
    */
   maxPerRepo?: number;
 }
@@ -93,10 +95,15 @@ export async function discoverPrsAwaitingReview(
 
     const candidates = open
       .filter((pr) => !pr.draft && pr.authorLogin !== botLogin)
-      .sort((a, b) => a.number - b.number) // oldest first — deterministic, fair
-      .slice(0, maxPerRepo);
+      .sort((a, b) => a.number - b.number); // oldest first — deterministic, fair
 
+    // Cap RUNS dispatched, not candidates examined: walk every open PR and stop
+    // once we've queued `maxPerRepo` UNreviewed ones. Slicing before the review
+    // check would starve unreviewed PRs behind a block of already-reviewed ones
+    // (the steady state), deferring them indefinitely.
+    let dispatched = 0;
     for (const pr of candidates) {
+      if (dispatched >= maxPerRepo) break;
       let reviewed: boolean;
       try {
         reviewed = !!(await gh.getLatestBotReview(owner, repo, pr.number, pr.headSha, botLogin));
@@ -109,6 +116,7 @@ export async function discoverPrsAwaitingReview(
       }
       if (reviewed) continue; // already reviewed at the current head SHA
       out.push({ repo: full, prNumber: pr.number, title: pr.title, branch: pr.headRef });
+      dispatched++;
     }
   }
 
