@@ -7,8 +7,8 @@ Start by reading {{issueDir}}/reviewer-verdict.md — fix ONLY those issues. The
 test/lint/typecheck commands are in {{issueDir}}/guardrails-report.md (and the
 architect plan).
 
-Follow the **building** skill: run the full test/lint/typecheck gate once before
-committing — all of it must pass before you commit.
+Follow the **building** skill: run the full gate (mirror CI — build + test + lint + typecheck)
+once before committing — all of it must pass before you commit.
 
 AFTER THE GATE PASSES:
 1. APPEND to {{issueDir}}/executor-summary.md under heading "## Fix Cycle {{fixCycle}}" (what was fixed, test/lint/typecheck results)

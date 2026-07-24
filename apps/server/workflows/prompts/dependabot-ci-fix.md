@@ -53,7 +53,7 @@ one slow or unreproducible check. Run tests cheaply per the **building** skill
    regeneration or a mechanical call-site/type update over a behavioural change.
    Do NOT widen the scope beyond making this update green.
 4. Follow the **building** skill: install dependencies with the repo's package
-   manager, then run the full test / lint / typecheck gate. Do NOT commit until
+   manager, then run the full gate (mirror CI — build + test + lint + typecheck). Do NOT commit until
    it all passes locally.
 
 AFTER FIXING:

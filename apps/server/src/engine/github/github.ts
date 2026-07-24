@@ -480,41 +480,17 @@ export class GitHubClient {
       const summaries = await Promise.all(failed.map(async (run) => {
         let logExcerpt = "";
 
-        // Try to fetch the actual job log (contains the real errors)
-        if (run.details_url) {
+        // Try to fetch the actual Actions job log using the job id from details_url.
+        const jobId = actionsJobIdFromDetailsUrl(run.details_url);
+        if (jobId !== null) {
           try {
-            // Extract the job ID from the check run — the run is linked to a workflow job
-            const jobId = run.id;
             const { data: logData } = await this.octokit.rest.actions.downloadJobLogsForWorkflowRun({
               owner,
               repo,
               job_id: jobId,
             });
-            // logData is a string with the full log
             const fullLog = typeof logData === "string" ? logData : String(logData);
-            // Extract the last N lines which typically contain the error
-            const lines = fullLog.split("\n");
-            // Find error lines and surrounding context
-            const errorLines: string[] = [];
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              if (line.match(/error|ERR!|FAIL|failed|Error:|npm ERR/i) && !line.match(/^$/)) {
-                // Include some context before and after
-                const start = Math.max(0, i - 2);
-                const end = Math.min(lines.length, i + 5);
-                for (let j = start; j < end; j++) {
-                  if (!errorLines.includes(lines[j])) {
-                    errorLines.push(lines[j]);
-                  }
-                }
-              }
-            }
-            if (errorLines.length > 0) {
-              logExcerpt = errorLines.slice(0, 50).join("\n");
-            } else {
-              // No error lines found — show the last 30 lines
-              logExcerpt = lines.slice(-30).join("\n");
-            }
+            logExcerpt = extractErrorExcerpt(fullLog);
           } catch {
             // Job logs may not be available — fall back to annotations
           }
@@ -522,28 +498,128 @@ export class GitHubClient {
 
         // Fall back to annotations if no job logs
         if (!logExcerpt) {
-          try {
-            const { data: annotations } = await this.octokit.rest.checks.listAnnotations({
-              owner,
-              repo,
-              check_run_id: run.id,
-            });
-            if (annotations.length > 0) {
-              logExcerpt = annotations
-                .filter((a) => a.annotation_level === "failure")
-                .slice(0, 10)
-                .map((a) => `${a.path}:${a.start_line} — ${a.message}`)
-                .join("\n");
-            }
-          } catch { /* annotations may not be available */ }
+          logExcerpt = await fetchAnnotationExcerpt(this.octokit, owner, repo, run.id);
         }
 
         return `### ${run.name}: ${run.conclusion}\n${logExcerpt || "No log details available."}`;
       }));
 
       return summaries.join("\n\n");
-    } catch (err: any) {
-      return `Could not fetch check runs: ${err.message}`;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return `Could not fetch check runs: ${message}`;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module-private helpers (exported for unit tests)
+// ---------------------------------------------------------------------------
+
+/** ISO-8601 timestamp prefix that Actions prepends to every log line. */
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s/;
+
+/** Lines that carry no actionable signal on their own. */
+const NOISE_RE = /Process completed with exit code|##\[error\]Process completed|^##\[error\]$/i;
+
+/**
+ * Parse the Actions job id from a check-run's `details_url`.
+ * Actions URLs look like: `.../actions/runs/<runId>/job/<jobId>`
+ * Returns `null` for non-Actions checks or unparseable URLs.
+ */
+export function actionsJobIdFromDetailsUrl(url: string | null | undefined): number | null {
+  if (!url) return null;
+  const m = url.match(/\/job\/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/**
+ * Strip the leading timestamp from a raw Actions log line.
+ */
+function stripTimestamp(line: string): string {
+  return line.replace(TIMESTAMP_RE, "");
+}
+
+/**
+ * Given the full text of an Actions job log, return a compact excerpt
+ * highlighting the real error lines with surrounding context.
+ * Timestamps are stripped; pure noise lines are deprioritised.
+ */
+export function extractErrorExcerpt(fullLog: string): string {
+  const rawLines = fullLog.split("\n");
+  const lines = rawLines.map(stripTimestamp);
+
+  // Collect indices of real (non-noise) error lines
+  const realErrorIndices: number[] = [];
+  const noiseOnlyIndices: number[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.match(/error|ERR!|FAIL|failed|Error:|npm ERR/i) || line.match(/^\s*$/)) continue;
+    if (NOISE_RE.test(line)) {
+      noiseOnlyIndices.push(i);
+    } else {
+      realErrorIndices.push(i);
+    }
+  }
+
+  // Prefer real error lines; fall back to noise-only if that's all we have
+  const anchorIndices = realErrorIndices.length > 0 ? realErrorIndices : noiseOnlyIndices;
+
+  if (anchorIndices.length > 0) {
+    return buildContextExcerpt(lines, anchorIndices);
+  }
+
+  // No error lines at all — return the last 30 lines as a tail
+  return lines.slice(-30).join("\n");
+}
+
+/**
+ * Build a de-duplicated context excerpt from the given anchor line indices.
+ */
+function buildContextExcerpt(lines: string[], anchorIndices: number[]): string {
+  const included = new Set<number>();
+  for (const i of anchorIndices) {
+    const start = Math.max(0, i - 2);
+    const end = Math.min(lines.length, i + 6);
+    for (let j = start; j < end; j++) included.add(j);
+  }
+  const sorted = Array.from(included).sort((a, b) => a - b);
+  return sorted.slice(0, 50).map((i) => lines[i]).join("\n");
+}
+
+/**
+ * Fetch annotation lines for a check run, trying failure-level first then
+ * warning-level so the block is never emptier than necessary.
+ */
+async function fetchAnnotationExcerpt(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  checkRunId: number
+): Promise<string> {
+  try {
+    const { data: annotations } = await octokit.rest.checks.listAnnotations({
+      owner,
+      repo,
+      check_run_id: checkRunId,
+    });
+    if (annotations.length === 0) return "";
+
+    const failures = annotations
+      .filter((a) => a.annotation_level === "failure")
+      .slice(0, 10)
+      .map((a) => `${a.path}:${a.start_line} — ${a.message}`);
+
+    if (failures.length > 0) return failures.join("\n");
+
+    // Fall back to warning-level annotations
+    return annotations
+      .filter((a) => a.annotation_level === "warning")
+      .slice(0, 10)
+      .map((a) => `${a.path}:${a.start_line} — ${a.message}`)
+      .join("\n");
+  } catch {
+    return "";
   }
 }
