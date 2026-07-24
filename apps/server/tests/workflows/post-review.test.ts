@@ -150,6 +150,20 @@ describe("post-review action (runPostReview)", () => {
     return { executor: { execute: (node: DagNode, outputs: Record<string, unknown>) => handler.execute(PHASE, node, outputs) }, rep };
   }
 
+  it("scan with nothing to review (skip, no PR number) is a clean no-op, not a failure", async () => {
+    // A cron `mode: scan` run on a repo with no open PRs: the agent writes a
+    // skip and no PR is handed in. This must succeed as a no-op rather than
+    // red-X every quiet repo every 30 min — the prNumber gate used to fail the
+    // run before the skip was ever read.
+    const taskId = "widget-pr-review-scan";
+    seedFindings(taskId, "widget", { skip: true, summary: "no open PRs to review" });
+    const { executor, rep } = makeExecutor(taskId, { issueNumber: 0 }); // scan: no PR handed in
+    const outcome = await executor.execute(NODE, {});
+    expect(rep.failed, "a scan skip must not fail the workflow").toEqual([]);
+    expect(outcome.status).toBe("succeeded");
+    expect(reviews).toHaveLength(0); // nothing posted
+  });
+
   it("posts a review from content-only findings (no pr_number/base_ref/head_sha)", async () => {
     const taskId = "widget-42-pr-review";
     seedFindings(taskId, "widget", {
