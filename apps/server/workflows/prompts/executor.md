@@ -16,8 +16,8 @@ commands:
 
 Follow the **building** skill for the mechanics: install dependencies first,
 write the failing test before implementing (TDD), and run the full
-test/lint/typecheck gate once before committing — all of it must pass before you
-commit or claim done.
+gate (mirror CI — build + test + lint + typecheck) once before committing —
+all of it must pass before you commit or claim done.
 
 Before committing, also honour the building skill's **decomposition budget** and
 **type-safety** rules: keep functions under ~15 cyclomatic complexity (a

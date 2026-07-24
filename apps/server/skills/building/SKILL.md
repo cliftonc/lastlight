@@ -62,15 +62,30 @@ feedback loop is what burns your time budget:
   it once.
 
 Then, **once before committing or claiming done, run the full gate and require
-all of it to pass:**
+all of it to pass.** Before running, determine the repo's real CI sequence —
+check `AGENTS.md`/`CLAUDE.md`/`CONTRIBUTING.md` first for documented build/test
+commands; only if those files contain no clear instructions should you fall back
+to reading `.github/workflows/*.yml` (the job that runs on PRs). Workflow
+definitions carry a high risk of invoking CI-only steps (Docker builds, secret
+injection, environment bootstrapping) that are not suitable for local dev and
+will fail or produce misleading results in the sandbox. **Prefer the commands
+explicitly documented for contributors over anything inferred from CI.** The
+generic list below is the fallback when no instructions are discoverable; it is
+a floor, not a ceiling.
 
-1. Full test command — zero failures.
-2. Lint command (if present) — fix all errors.
-3. Typecheck command (if present) — fix all errors.
+1. Build command (if present, e.g. `npm run build`, `vite build`,
+   `cargo build`) — must succeed. Many bundler/PostCSS/frontend failures
+   (and codemod-requiring major bumps) surface ONLY here, not in typecheck.
+   Note that a frontend build of `tsc && vite build` passes its `tsc` half
+   yet can still fail inside `vite build` — do not skip the build step just
+   because typecheck passes.
+2. Full test command — zero failures.
+3. Lint command (if present) — fix all errors.
+4. Typecheck command (if present) — fix all errors.
 
 If any step fails, fix it and re-run only what failed until clean. Do not commit
-or report done until the full suite, lint, and typecheck all pass. Cite the
-actual command output — static reasoning is not verification.
+or report done until the full build, test suite, lint, and typecheck all pass.
+Cite the actual command output — static reasoning is not verification.
 
 ## TDD (when implementing)
 
