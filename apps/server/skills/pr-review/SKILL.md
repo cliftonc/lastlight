@@ -46,7 +46,11 @@ If `prNumber` (or `issueNumber`) is set in the Context block, **that is your
 target** — go straight to `github_get_pull_request` with it. Do **not** call
 `github_list_pull_requests` to "find" or "confirm" it; you were handed it, and
 listing dumps a large payload for nothing. Only when no PR is given (a repo-wide
-`mode: scan`) do you list open PRs and pick the most recent unreviewed one.
+`mode: scan`) do you list open PRs and pick the most recent unreviewed one. **If
+the scan finds no open PRs, write `{"skip": true, "summary": "no open PRs to
+review"}` and stop** — an empty repo is a clean no-op, not a failure. (Do this
+only when the list genuinely comes back empty; if listing *errors*, do NOT write
+a skip — let it fail so the real problem surfaces.)
 
 **Stop conditions** (check before reviewing):
 - PR authored by `last-light[bot]` → skip. Never self-review.
@@ -135,8 +139,10 @@ Rules:
   `mkdir -p .lastlight/pr-review && echo '.lastlight/' >> .git/info/exclude`.
 
 **Stop / skip:** if a stop condition in §1 holds (bot-authored, merged, already
-reviewed at the current head SHA), write `{"skip": true, "summary": "<reason>"}`
-and stop — the follow-up step then posts nothing.
+reviewed at the current head SHA), or a `mode: scan` finds no open PRs to review,
+write `{"skip": true, "summary": "<reason>"}` and stop — the follow-up step then
+posts nothing. A skip is a clean no-op even in scan mode where no PR was handed
+in; only a *missing* findings file (never written) fails the run.
 
 ## Verification
 

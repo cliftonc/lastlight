@@ -163,7 +163,11 @@ deterministic `bash` / `script` pair (a command, no LLM).
   prod; a bearer token + `config.githubApiBaseUrl` against the eval mock, which
   serves no App-token or diff endpoint). A genuine failure — missing findings
   after a real review, or a GitHub error surviving the body-only retry — **fails
-  the phase**; a legitimate `skip` succeeds without posting. Idempotent on
+  the phase**; a legitimate `skip` succeeds without posting. The `skip` is
+  honoured **before** the PR-number requirement, so a `mode: scan` run over a
+  repo with **no open PRs** (the agent writes `{skip}`; no PR was handed in) is a
+  clean no-op rather than a "no PR number in run context" failure — a quiet
+  managed repo doesn't red-X every cron tick. Idempotent on
   resume (no-op when a bot review already exists on the head SHA). This replaced
   the earlier in-sandbox `type: script` poster, which depended on the AI
   hand-writing `pr_number`/`base_ref`/`head_sha` into the JSON and silently

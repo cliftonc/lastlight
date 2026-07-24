@@ -93,29 +93,38 @@ export class GitHubPostReviewHandler implements PhaseTypeHandler {
     const ctx = this.run.ctx;
     const owner = String(ctx.owner);
     const repo = String(ctx.repo);
+    // Read the agent's findings from the host checkout FIRST. The review phase
+    // writes it at `.lastlight/pr-review/findings.json` relative to the repo
+    // cwd; the workspace persists on the host between phases (see sandbox/index.ts).
+    const hostRepoDir = this.resolveHostRepoDir(repo);
+    const findingsPath = join(hostRepoDir, ".lastlight", "pr-review", "findings.json");
+    let doc: ReviewFindingsDoc | undefined;
+    let readErr: string | undefined;
+    try {
+      doc = JSON.parse(readFileSync(findingsPath, "utf8")) as ReviewFindingsDoc;
+    } catch (err) {
+      readErr = err instanceof Error ? err.message : String(err);
+    }
+
+    // A deliberate skip is a clean no-op even when scan handed us no PR: a repo
+    // with no open PRs has nothing to review and must not fail the run. This is
+    // checked BEFORE the prNumber gate so an empty-repo skip isn't rejected for
+    // lacking a PR it never needed (a cron `mode: scan` over quiet repos would
+    // otherwise red-X every 30 min). Only a review with real content to post
+    // needs a PR number, resolved below.
+    if (doc?.skip) {
+      return succeed(`skipped: ${doc.summary || "agent skipped review"}`);
+    }
+
     const prNumber =
       (typeof ctx.prNumber === "number" ? ctx.prNumber : undefined) ??
       (typeof ctx.issueNumber === "number" && ctx.issueNumber > 0 ? ctx.issueNumber : undefined);
     if (!prNumber) return fail("post-review: no PR number in run context; cannot post review");
 
-    // Read the agent's findings from the host checkout. The review phase writes
-    // it at `.lastlight/pr-review/findings.json` relative to the repo cwd; the
-    // workspace persists on the host between phases (see sandbox/index.ts).
-    const hostRepoDir = this.resolveHostRepoDir(repo);
-    const findingsPath = join(hostRepoDir, ".lastlight", "pr-review", "findings.json");
-    let doc: ReviewFindingsDoc;
-    try {
-      doc = JSON.parse(readFileSync(findingsPath, "utf8")) as ReviewFindingsDoc;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // A missing/unreadable file after a completed review means the review
-      // phase didn't honour its contract — surface it, don't post silently.
-      return fail(`post-review: could not read findings (${findingsPath}): ${msg}`);
-    }
-
-    if (doc.skip) {
-      return succeed(`skipped: ${doc.summary || "agent skipped review"}`);
-    }
+    // Findings must be present to post a real review. A missing/unreadable file
+    // for a targeted PR means the review phase didn't honour its contract (or
+    // the agent couldn't reach the repo) — surface it, never post silently.
+    if (!doc) return fail(`post-review: could not read findings (${findingsPath}): ${readErr}`);
 
     const github = this.buildReviewClient();
 
