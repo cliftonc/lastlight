@@ -63,10 +63,15 @@ feedback loop is what burns your time budget:
 
 Then, **once before committing or claiming done, run the full gate and require
 all of it to pass.** Before running, determine the repo's real CI sequence —
-read `.github/workflows/*.yml` (the job that runs on PRs) or the build/test
-commands documented in `AGENTS.md`/`CLAUDE.md`/`CONTRIBUTING.md` — and run
-**that exact sequence**. The generic list below is the fallback when no CI
-definition is discoverable; it is a floor, not a ceiling.
+check `AGENTS.md`/`CLAUDE.md`/`CONTRIBUTING.md` first for documented build/test
+commands; only if those files contain no clear instructions should you fall back
+to reading `.github/workflows/*.yml` (the job that runs on PRs). Workflow
+definitions carry a high risk of invoking CI-only steps (Docker builds, secret
+injection, environment bootstrapping) that are not suitable for local dev and
+will fail or produce misleading results in the sandbox. **Prefer the commands
+explicitly documented for contributors over anything inferred from CI.** The
+generic list below is the fallback when no instructions are discoverable; it is
+a floor, not a ceiling.
 
 1. Build command (if present, e.g. `npm run build`, `vite build`,
    `cargo build`) — must succeed. Many bundler/PostCSS/frontend failures
